@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html>
+    <head>
+     <style>
+            input[type=text], select {
+    
+    padding: 1% 0.01%;
+    
+    border: 1px solid #ccc;
+    border-radius: 5%;
+}
+         input[type=number], select {
+    padding: 1% 0.01%;
+    
+    border: 1px solid #ccc;
+    border-radius: 5%;
+}
+         input[type=button] {
+    padding: 1% 1%;
+             color: white;
+    background-color: #4CAF50;
+    border: 1px solid #ccc;
+    border-radius: 5%;
+}
+
+input[type=button]:hover {
+    background-color: #45a049;
+}
+          .button {
+                width: 100%;
+    background-color: #4CAF50;
+    color: white;
+    padding: 14px 20px;
+    margin: 8px 0;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+            }
+
+            .button1 {
+                width: 100%;
+    background-color: #4CAF50;
+    color: white;
+    padding: 14px 20px;
+    margin: 8px 0;
+    border: none;
+    border-radius: 4px;
+            }
+         .button:hover{
+             background-color: #45a049;
+         }
+          
+
+            h3{
+                font-size:300%; 
+                color:purple; 
+                text-align:center;
+                font-family:cursive;
+            }
+            p{
+                font-size:200%;
+                color:purple;
+                font-family:cursive;
+                text-align:center;
+            }
+         table
+         {
+             width:40%;
+             
+         }
+         th
+         {
+             text-align: center;
+             color:blueviolet;
+             font-size: 150%;
+             font-family: cursive;
+         }
+         td
+         {
+             text-align: center;
+             color:mediumvioletred;
+             font-size:90%; 
+             font-family: inherit;
+         }
+             
+            .container {
+    width: 120%;
+}
+.left {
+    max-width: 80%;
+  
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    -ms-text-overflow:ellipsis;
+    float: left;
+}
+.right {
+    
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    -ms-text-overflow:ellipsis;
+    text-align: right;
+}
+            
+             body
+            {
+                background-size: cover;
+                background-image:url("518164-backgrounds.jpg");
+            }
+            
+        </style>
+        <title>Search by IMDb ID</title>
+    </head>
+<body>
+
+<h3>Search By IMDb ID</h3>
+
+<form id="myForm" action="">
+ID: <input type="text" id="txt1" required> 
+    
+Year:<input type="number" id="txt2"> 
+    
+    Type:  <select name="Type" id="txt5">
+    <option value="movie">Movie</option>
+    <option value="series">Series</option>
+   <option value="episode">Episode</option>
+  </select>
+    
+   Plot:  <select name="Plot" id="txt3">
+    <option value="Short">Short</option>
+    <option value="Long">Full</option>
+  </select>
+    
+    Want Rotten Tomatoes rating:  <select name="Response" id="txt7">
+    <option value="False">False</option>
+    <option value="true">True</option>
+  </select>
+    
+    Response:  <select name="Response" id="txt4">
+    <option value="JSON">JSON</option>
+    <option value="XML">XML</option>
+    
+  </select>
+    Page: <input type="number" name="page" id="txt6" min="1" max="100" value="1">
+   
+    <input type="button" onclick="myFunction()" value="Reset form">
+</form>
+
+        <button class="button" onclick="show()">Submit</button>
+<p id="txtHint"></p>
+
+ <div class="container">
+        <div class="left">
+    <img id="myImg"/>
+    </div>
+        <div class="right">
+            <table>
+    <tr>
+        <th id="th1"></th>
+        <th id="th2"></th>
+    </tr>
+    <tr>
+        <td id="td1"></td>
+        <td id="t1"></td>
+    </tr>
+    <tr>
+        <td id="td2"></td>
+        <td id="t2"></td>
+    </tr>
+    <tr>
+        <td id="td3"></td>
+        <td id="t3"></td>
+    </tr>
+    <tr>
+        <td id="td4"></td>
+        <td id="t4"></td>
+    </tr>
+    <tr>
+        <td id="td5"></td>
+        <td id="t5"></td>
+    </tr>
+    <tr>
+        <td id="td6"></td>
+        <td id="t6"></td>
+    </tr>
+    <tr>
+        <td id="td7"></td>
+        <td id="t7"></td>
+    </tr>
+    <tr>
+        <td id="td8"></td>
+        <td id="t8"></td>
+    </tr>
+    <tr>
+        <td id="td9"></td>
+        <td id="t9"></td>
+    </tr>
+    <tr>
+        <td id="td10"></td>
+        <td id="t10"></td>
+    </tr>
+    <tr>
+        <td id="td11"></td>
+        <td id="t11"></td>
+    </tr>
+    <tr>
+        <td id="td12"></td>
+        <td id="t12"></td>
+    </tr>
+    <tr>
+        <td id="td13"></td>
+        <td id="t13"></td>
+    </tr>
+    <tr>
+        <td id="td14"></td>
+        <td id="t14"></td>
+    </tr>
+    <tr>
+        <td id="td15"></td>
+        <td id="t15"></td>
+    </tr>
+     <tr>
+        <td id="td16"></td>
+        <td id="t16"></td>
+    </tr>
+     <tr>
+        <td id="td17"></td>
+        <td id="t17"></td>
+    </tr>
+     <tr>
+        <td id="td18"></td>
+        <td id="t18"></td>
+    </tr>
+                <tr>
+        <td id="td19"></td>
+        <td id="t19"></td>
+    </tr>
+                <tr>
+        <td id="td20"></td>
+        <td id="t20"></td>
+    </tr>
+                <tr>
+        <td id="td21"></td>
+        <td id="t21"></td>
+    </tr>
+                <tr>
+        <td id="td22"></td>
+        <td id="t22"></td>
+    </tr>
+                <tr>
+        <td id="td23"></td>
+        <td id="t23"></td>
+    </tr>
+                <tr>
+        <td id="td24"></td>
+        <td id="t24"></td>
+    </tr>
+                
+                <tr>
+        <td id="td25"></td>
+        <td id="t25"></td>
+    </tr>
+    </table>
+        </div>
+    </div>
+<script>
+function myFunction() {
+    document.getElementById("myForm").reset();
+}
+
+function show() {
+var str = document.getElementById('txt1').value;
+var yr = document.getElementById('txt2').value;
+    var plt = document.getElementById('txt3').value;
+    var res = document.getElementById('txt4').value;
+ var typ = document.getElementById('txt5').value;
+    var pg = document.getElementById('txt6').value;
+    var tom = document.getElementById('txt7').value;
+  var xhttp;
+  if ((str.length == 0)&&((pg>100)||(pg<1))) {
+    document.getElementById("txtHint").innerHTML = "ID required and Page error(range 1-100)";
+    return;
+  }
+    else if(str.length == 0)
+        {
+          document.getElementById("txtHint").innerHTML = "ID required";
+    return;  
+        }
+    else if((pg>100)||(pg<1))
+        {
+           document.getElementById("txtHint").innerHTML = "Page error(range 1-100)";
+    return; 
+        }
+  xhttp = new XMLHttpRequest();
+  xhttp.onreadystatechange = function() {
+    if (xhttp.readyState == 4 && xhttp.status == 200) {
+      myFunction(xhttp.responseText);
+    }
+  };
+  xhttp.open("GET", "http://www.omdbapi.com/?i="+str+"&y="+yr+"&plot="+plt+"&r="+res+"&type="+typ+"&page="+pg+"&tomatoes="+tom, true);
+  xhttp.send();
+    function myFunction(response) {
+    var arr = JSON.parse(response);
+    
+    document.getElementById("th1").innerHTML = "Description";
+        document.getElementById("th2").innerHTML = "Movie";
+        
+        document.getElementById("td1").innerHTML = "Title";
+        document.getElementById("td2").innerHTML = "Year";
+        document.getElementById("td3").innerHTML = "Rated";
+        document.getElementById("td4").innerHTML = "Genre";
+        document.getElementById("td5").innerHTML = "Runtime";
+        document.getElementById("td6").innerHTML = "Director";
+        document.getElementById("td7").innerHTML = "Writer";
+        document.getElementById("td8").innerHTML = "Actors";
+        document.getElementById("td9").innerHTML = "Plot";
+        document.getElementById("td10").innerHTML = "Country";
+        document.getElementById("td11").innerHTML = "Awards";
+        document.getElementById("td12").innerHTML = "Language";
+        document.getElementById("td13").innerHTML = "Metascore";
+        document.getElementById("td14").innerHTML = "imdbRating";
+        document.getElementById("td15").innerHTML = "imdbvotes";
+        document.getElementById("td16").innerHTML = "imdbID";
+        document.getElementById("td17").innerHTML = "Response";
+        document.getElementById("td18").innerHTML = "Type";
+         document.getElementById("td19").innerHTML = "tomatoMeter";
+         document.getElementById("td20").innerHTML = "tomatoImage";
+         document.getElementById("td21").innerHTML = "tomatoRating";
+         document.getElementById("td22").innerHTML = "tomatoReviews";
+         document.getElementById("td23").innerHTML = "tomatoFresh";
+        document.getElementById("td24").innerHTML = "tomatoRotten";
+        document.getElementById("td25").innerHTML = "Production";
+        
+    document.getElementById("t1").innerHTML = arr.Title;
+        document.getElementById("t2").innerHTML = arr.Year;
+        document.getElementById("t3").innerHTML = arr.Rated;
+        document.getElementById("t4").innerHTML = arr.Genre;
+        document.getElementById("t5").innerHTML = arr.Runtime;
+        document.getElementById("t6").innerHTML = arr.Director;
+        document.getElementById("t7").innerHTML = arr.Writer;
+        document.getElementById("t8").innerHTML = arr.Actors;
+        document.getElementById("t9").innerHTML = arr.Plot;
+        document.getElementById("t10").innerHTML = arr.Country;
+        document.getElementById("t11").innerHTML = arr.Awards;
+        document.getElementById("t12").innerHTML = arr.Language;
+        document.getElementById("t13").innerHTML = arr.Metascore;
+        document.getElementById("t14").innerHTML = arr.imdbRating;
+        document.getElementById("t15").innerHTML = arr.imdbvotes;
+        document.getElementById("t16").innerHTML = arr.imdbID;
+        document.getElementById("t17").innerHTML = arr.Type;
+        document.getElementById("t18").innerHTML = arr.Response;
+        document.getElementById("t19").innerHTML = arr.tomatoMeter;
+        document.getElementById("t20").innerHTML = arr.tomatoImage;
+        document.getElementById("t21").innerHTML = arr.tomatoRating;
+        document.getElementById("t22").innerHTML = arr.tomatoReviews;
+        document.getElementById("t23").innerHTML = arr.tomatoFresh;
+        document.getElementById("t24").innerHTML = arr.tomatoRottten;
+        document.getElementById("t25").innerHTML = arr.Production;
+        
+        
+        
+        document.getElementById("myImg").src = arr.Poster;
+       
+}
+}
+</script>
+
+</body>
+</html>
+
+
+
