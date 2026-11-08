@@ -55,6 +55,30 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertGreater(out["stats"]["totalEpisodesWatched"], 0)
         self.assertGreater(out["stats"]["totalMoviesWatched"], 0)
 
+    def test_web_app_view_client_js_syntax(self):
+        view_path = os.path.join(ROOT_DIR, "cloudflare", "src", "ui", "WebAppView.js")
+        with open(view_path, "r", encoding="utf-8") as f:
+            view_src = f.read().replace("export const WEB_APP_HTML", "const WEB_APP_HTML")
+        harness = (
+            view_src
+            + """
+            const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+            const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+            const clientJs = WEB_APP_HTML.slice(sStart, sEnd);
+            new Function(clientJs);
+            const out = JSON.stringify({ ok: true, len: WEB_APP_HTML.length });
+            if (typeof console !== 'undefined' && console.log) console.log(out);
+            else if (typeof print !== 'undefined') print(out);
+            """
+        )
+        node_bin = shutil.which("node")
+        jsc_bin = "/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc"
+        cmd = [node_bin, "-e", harness] if node_bin else [jsc_bin, "-e", harness]
+        proc = subprocess.run(cmd, cwd=ROOT_DIR, capture_output=True, text=True, check=True)
+        out = json.loads(proc.stdout.strip().splitlines()[-1])
+        self.assertTrue(out["ok"])
+        self.assertGreater(out["len"], 50000)
+
     def test_local_python_server_helpers(self):
         import server
 

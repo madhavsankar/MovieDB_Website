@@ -1,5 +1,5 @@
 // TV Time: Show & Movie Tracker — Web App View (1:1 clone of iOS App id6792364354)
-export const WEB_APP_HTML = `<!DOCTYPE html>
+export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
   <meta charset="UTF-8" />
