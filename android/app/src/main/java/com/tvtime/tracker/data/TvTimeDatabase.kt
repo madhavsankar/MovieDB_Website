@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.Flow
 @Entity(tableName = "shows", indices = [Index("userId"), Index("externalId")])
 data class ShowEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val userId: String = "madhavsankar",
+    val userId: String = "default",
     val externalId: String,
     val tvmazeId: Int = 0,
     val tmdbId: Int = 0,
@@ -39,7 +39,7 @@ data class ShowEntity(
 @Entity(tableName = "movies", indices = [Index("userId"), Index("externalId")])
 data class MovieEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val userId: String = "madhavsankar",
+    val userId: String = "default",
     val externalId: String,
     val tmdbId: Int = 0,
     val title: String,
@@ -64,7 +64,7 @@ data class MovieEntity(
 @Entity(tableName = "followed_actors", indices = [Index("userId"), Index("externalId")])
 data class ActorEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val userId: String = "madhavsankar",
+    val userId: String = "default",
     val externalId: String,
     val name: String,
     val role: String = "Acting",

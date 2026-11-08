@@ -455,7 +455,7 @@ fun FollowingBottomSheet(
             }
 
             if (selectedTab == "users") {
-                val partnerId = if (currentUserId == "partner") "madhavsankar" else "partner"
+                val partnerId = "partner"
                 Surface(
                     shape = RoundedCornerShape(20.dp),
                     color = TvTimePalette.SurfaceCard,

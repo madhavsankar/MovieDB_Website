@@ -22,7 +22,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.tvtime.tracker"
+        applicationId = "com.tvtime.app"
         minSdk = 26
         targetSdk = 34
         val runNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
@@ -36,11 +36,11 @@ android {
         val firebaseProjectId = (localProps.getProperty("FIREBASE_PROJECT_ID")
             ?: project.findProperty("FIREBASE_PROJECT_ID")?.toString()
             ?: System.getenv("FIREBASE_PROJECT_ID")
-            ?: "").ifBlank { "places-tracker-989b5" }
+            ?: "").trim()
         val defaultUserId = (localProps.getProperty("DEFAULT_USER_ID")
             ?: project.findProperty("DEFAULT_USER_ID")?.toString()
             ?: System.getenv("DEFAULT_USER_ID")
-            ?: "madhavsankar").ifBlank { "madhavsankar" }
+            ?: "default").ifBlank { "default" }
         val allowedEmails = localProps.getProperty("ALLOWED_EMAILS")
             ?: project.findProperty("ALLOWED_EMAILS")?.toString()
             ?: System.getenv("ALLOWED_EMAILS")

@@ -30,7 +30,7 @@ export class HttpRouter {
     const cleanEmail = String(email || "").trim().toLowerCase();
     if (!cleanEmail) return false;
     const allowedRaw = String(this.env?.ALLOWED_EMAILS || "").trim();
-    if (!allowedRaw) return true;
+    if (!allowedRaw) return false;
     const allowedSet = new Set(
       allowedRaw
         .split(",")
@@ -63,13 +63,6 @@ export class HttpRouter {
       (url.searchParams.get("id_token") || "").trim();
 
     if (!token) {
-      const headerUser = (request.headers.get("X-User-Id") || "").trim();
-      if (headerUser && this._isEmailAllowed(headerUser)) {
-        return { ok: true, email: headerUser };
-      }
-      if (!this._getGoogleClientId() && !String(this.env?.ALLOWED_EMAILS || "").trim()) {
-        return { ok: true, email: "default" };
-      }
       return {
         ok: false,
         status: 401,
@@ -217,8 +210,7 @@ export class HttpRouter {
       }
 
       if (path === "/api/state") {
-        const targetUser = url.searchParams.get("user") || userParam;
-        const state = await this.repo.getUserState(targetUser);
+        const state = await this.repo.getUserState(userParam);
         return this.json({
           ...state,
           stats: LiveCatalogService.computeStats(state),
@@ -232,18 +224,17 @@ export class HttpRouter {
       }
 
       const body = await request.json().catch(() => ({}));
-      const userId = body.userId || userParam;
 
       if (path === "/api/state") {
         const state = {
-          userId: FirestoreRepository.sanitizeUserId(userId),
-          email: body.email || FirestoreRepository.displayUserLabel(userId),
+          userId: FirestoreRepository.sanitizeUserId(userParam),
+          email: userParam,
           shows: Array.isArray(body.shows) ? body.shows : [],
           movies: Array.isArray(body.movies) ? body.movies : [],
           actors: Array.isArray(body.actors) ? body.actors : [],
           followingUsers: Array.isArray(body.followingUsers) ? body.followingUsers : [],
         };
-        await this.repo.saveUserState(userId, state);
+        await this.repo.saveUserState(userParam, state);
         return this.json({
           ...state,
           stats: LiveCatalogService.computeStats(state),

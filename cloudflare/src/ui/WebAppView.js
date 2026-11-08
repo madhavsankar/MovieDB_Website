@@ -1,5 +1,5 @@
 // TV Time: Show & Movie Tracker — Web App View (1:1 clone of iOS App id6792364354)
-export const WEB_APP_HTML = `<!DOCTYPE html>
+export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
   <meta charset="UTF-8" />
@@ -215,23 +215,23 @@ export const WEB_APP_HTML = `<!DOCTYPE html>
               class="w-16 h-16 rounded-full bg-gradient-to-tr from-yellow-400 via-amber-500 to-orange-500 p-0.5 cursor-pointer"
             >
               <div class="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center text-xl font-extrabold text-yellow-400" id="profile-avatar-initials">
-                MS
+                TV
               </div>
             </div>
             <button
               onclick="app.openAccountModal()"
               class="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full tv-yellow-bg flex items-center justify-center text-[11px] font-bold shadow"
-              title="Switch Profile / Account"
+              title="Google Account & Sync"
             >
-              📷
+              🔐
             </button>
           </div>
           <div>
             <div class="flex items-center gap-1.5">
-              <h2 id="profile-display-name" class="text-lg font-extrabold text-white">Madhav S.</h2>
+              <h2 id="profile-display-name" class="text-lg font-extrabold text-white">Profile</h2>
               <button onclick="app.openAccountModal()" class="text-zinc-400 hover:text-white text-xs">✎</button>
             </div>
-            <p id="profile-handle" class="text-xs text-zinc-400">@madhavsankar</p>
+            <p id="profile-handle" class="text-xs text-zinc-400">@member</p>
           </div>
         </div>
 
@@ -434,32 +434,26 @@ export const WEB_APP_HTML = `<!DOCTYPE html>
   </div>
 
   <!-- ========================================================= -->
-  <!-- MODAL 4: ACCOUNT / 2-USER PROFILE SWITCHER                -->
+  <!-- MODAL 4: GOOGLE ACCOUNT & CLOUD SYNC                      -->
   <!-- ========================================================= -->
   <div id="account-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
     <div class="bg-[#18181d] rounded-3xl p-6 w-full max-w-sm border border-zinc-800 space-y-4">
       <div class="flex items-center justify-between">
-        <h3 class="text-base font-extrabold text-white">Switch Profile (2-User Sync)</h3>
+        <h3 class="text-base font-extrabold text-white">🔐 Google Account</h3>
         <button onclick="app.closeAccountModal()" class="text-zinc-400 hover:text-white text-sm">✕</button>
       </div>
       <p class="text-xs text-zinc-400">
-        Synced with Firebase Cloud Firestore (<code>tvtime_state/user_state_{userId}</code>). Switch between profiles or sign in with Google:
+        Synced with Firebase Cloud Firestore (<code>tvtime_state/user_state_{userId}</code>). Only allowlisted household Google accounts are permitted.
       </p>
       <div class="space-y-2">
-        <label class="text-[11px] font-bold uppercase text-zinc-400">Active Profile ID</label>
-        <input id="acc-user-input" type="text" placeholder="e.g. madhavsankar" class="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-white" />
+        <label class="text-[11px] font-bold uppercase text-zinc-400">Signed-In Google Account</label>
+        <input id="acc-user-input" type="text" readonly placeholder="Not signed in" class="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-200 focus:outline-none" />
       </div>
-      <div class="flex gap-2">
-        <button onclick="app.quickSwitchUser('madhavsankar')" class="flex-1 py-2 rounded-xl tv-pill-bar text-xs font-bold text-zinc-200 hover:text-yellow-400">
-          👤 User 1 (madhavsankar)
+      <div class="flex justify-between items-center gap-2 pt-2">
+        <button onclick="app.signOutGoogle()" class="px-4 py-2 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-extrabold hover:bg-rose-500/30">
+          Sign Out / Switch Account
         </button>
-        <button onclick="app.quickSwitchUser('partner')" class="flex-1 py-2 rounded-xl tv-pill-bar text-xs font-bold text-zinc-200 hover:text-yellow-400">
-          👤 User 2 (partner)
-        </button>
-      </div>
-      <div class="flex justify-end gap-2 pt-2">
-        <button onclick="app.closeAccountModal()" class="px-4 py-2 rounded-full text-xs text-zinc-400">Cancel</button>
-        <button onclick="app.saveAccountSwitch()" class="px-5 py-2 rounded-full tv-yellow-bg text-xs font-extrabold">Switch & Sync</button>
+        <button onclick="app.closeAccountModal()" class="px-5 py-2 rounded-full tv-yellow-bg text-xs font-extrabold">Done</button>
       </div>
     </div>
   </div>
@@ -479,8 +473,10 @@ export const WEB_APP_HTML = `<!DOCTYPE html>
 
     class TvTimeClient {
       constructor() {
-        this.userId = localStorage.getItem("tvtime_user_id") || "madhavsankar";
         this.googleIdToken = localStorage.getItem("tvtime_google_id_token") || "";
+        this.userEmail = localStorage.getItem("tvtime_user_email") || "";
+        const rawStored = (this.userEmail || localStorage.getItem("tvtime_user_id") || "").trim();
+        this.userId = rawStored && rawStored !== "default" ? rawStored.split("@")[0] : "default";
         this.activeTab = "home"; // "home" | "search" | "profile"
         this.homeSegment = "shows"; // "shows" | "movies" | "upcoming"
         this.mediaFilter = "in_progress"; // "all" | "in_progress" | "completed"
@@ -500,7 +496,7 @@ export const WEB_APP_HTML = `<!DOCTYPE html>
 
         this.state = {
           userId: this.userId,
-          email: this.userId,
+          email: this.userEmail || this.userId,
           shows: [],
           movies: [],
           actors: [],
@@ -509,8 +505,157 @@ export const WEB_APP_HTML = `<!DOCTYPE html>
 
         this.loadLocalCache();
         this.render();
-        this.loadState(false);
+        this.initAuthAndLoad();
         this.runDefaultDiscover();
+
+        document.addEventListener("visibilitychange", () => {
+          if (!document.hidden && this.googleIdToken) {
+            this.loadState(false);
+          }
+        });
+      }
+
+      decodeJwtPayload(token) {
+        try {
+          const parts = String(token || "").split(".");
+          if (parts.length < 2) return null;
+          const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+          return JSON.parse(atob(b64));
+        } catch (_) {
+          return null;
+        }
+      }
+
+      isGoogleTokenValid() {
+        if (!this.googleIdToken) return false;
+        const payload = this.decodeJwtPayload(this.googleIdToken);
+        if (!payload || !payload.email || !payload.exp) return false;
+        return payload.exp * 1000 > Date.now() + 30000;
+      }
+
+      async initAuthAndLoad() {
+        await this.ensureGoogleSignIn();
+        this.loadLocalCache();
+        await this.loadState(false);
+      }
+
+      ensureGoogleSignIn(initialError = "") {
+        if (this.isGoogleTokenValid() && !initialError) {
+          const payload = this.decodeJwtPayload(this.googleIdToken);
+          if (payload && payload.email) {
+            this.userEmail = String(payload.email).trim().toLowerCase();
+            this.userId = this.userEmail.split("@")[0];
+            localStorage.setItem("tvtime_user_email", this.userEmail);
+            localStorage.setItem("tvtime_user_id", this.userId);
+          }
+          return Promise.resolve(this.userId);
+        }
+
+        return new Promise((resolve) => {
+          const checkAndShow = async () => {
+            try {
+              const cfgRes = await fetch("/api/auth-config", { cache: "no-store" });
+              const cfg = await cfgRes.json();
+              const clientId = String(cfg.googleClientId || "").trim();
+              if (!clientId && !initialError) {
+                resolve(this.userId);
+                return;
+              }
+
+              let modal = document.getElementById("tvtime-auth-modal");
+              if (modal) modal.remove();
+              modal = document.createElement("div");
+              modal.id = "tvtime-auth-modal";
+              modal.className = "fixed inset-0 z-50 bg-[#09090b]/95 backdrop-blur-md flex items-center justify-center p-4";
+              modal.innerHTML =
+                '<div class="bg-[#16161a] rounded-3xl p-6 w-full max-w-sm border border-yellow-400/30 space-y-4 shadow-2xl text-center">' +
+                '<div>' +
+                '<div class="text-3xl mb-2">📺</div>' +
+                '<h2 class="text-base font-extrabold text-white">Sign in to TV Time</h2>' +
+                '<p class="text-xs text-zinc-400 mt-1">Sign in with your allowlisted Google account to access your shows &amp; movies:</p>' +
+                '</div>' +
+                '<div id="tvtime-google-btn" class="flex justify-center py-2 min-h-[48px] items-center">' +
+                '<span class="text-xs text-zinc-400">Loading Google Sign-In...</span>' +
+                '</div>' +
+                '<div id="tvtime-auth-error" class="' +
+                (initialError ? "" : "hidden ") +
+                'text-xs text-rose-400 font-medium bg-rose-500/10 border border-rose-500/30 rounded-xl p-2.5">' +
+                escapeHtml(initialError || "") +
+                '</div>' +
+                '</div>';
+              document.body.appendChild(modal);
+
+              const errEl = document.getElementById("tvtime-auth-error");
+              const btnContainer = document.getElementById("tvtime-google-btn");
+
+              let tries = 0;
+              while (!(window.google && window.google.accounts && window.google.accounts.id) && tries < 40) {
+                await new Promise((r) => setTimeout(r, 150));
+                tries++;
+              }
+              if (!(window.google && window.google.accounts && window.google.accounts.id)) {
+                if (errEl) {
+                  errEl.textContent = "Unable to load Google Sign-In SDK. Check your connection and reload.";
+                  errEl.classList.remove("hidden");
+                }
+                return;
+              }
+              window.google.accounts.id.initialize({
+                client_id: clientId,
+                callback: (resp) => {
+                  const token = resp && resp.credential ? resp.credential : "";
+                  const payload = this.decodeJwtPayload(token);
+                  if (!token || !payload || !payload.email) {
+                    if (errEl) {
+                      errEl.textContent = "Google Sign-In did not return a valid email token.";
+                      errEl.classList.remove("hidden");
+                    }
+                    return;
+                  }
+                  this.googleIdToken = token;
+                  this.userEmail = String(payload.email).trim().toLowerCase();
+                  this.userId = this.userEmail.split("@")[0];
+                  localStorage.setItem("tvtime_google_id_token", this.googleIdToken);
+                  localStorage.setItem("tvtime_user_email", this.userEmail);
+                  localStorage.setItem("tvtime_user_id", this.userId);
+                  modal.remove();
+                  resolve(this.userId);
+                },
+              });
+              if (btnContainer) {
+                btnContainer.innerHTML = "";
+                window.google.accounts.id.renderButton(btnContainer, {
+                  theme: "filled_black",
+                  size: "large",
+                  shape: "pill",
+                  text: "signin_with",
+                  width: 260,
+                });
+              }
+              try {
+                window.google.accounts.id.prompt();
+              } catch (_) {}
+            } catch (_) {
+              resolve(this.userId);
+            }
+          };
+          checkAndShow();
+        });
+      }
+
+      signOutGoogle() {
+        this.googleIdToken = "";
+        this.userEmail = "";
+        this.userId = "default";
+        localStorage.removeItem("tvtime_google_id_token");
+        localStorage.removeItem("tvtime_user_email");
+        localStorage.removeItem("tvtime_user_id");
+        try {
+          if (window.google && window.google.accounts && window.google.accounts.id) {
+            window.google.accounts.id.disableAutoSelect();
+          }
+        } catch (_) {}
+        window.location.reload();
       }
 
       loadLocalCache() {
@@ -544,12 +689,32 @@ export const WEB_APP_HTML = `<!DOCTYPE html>
 
       async loadState(showToast = false) {
         try {
-          const res = await fetch("/api/state?user=" + encodeURIComponent(this.userId), {
+          const res = await fetch("/api/state", {
             headers: this.getHeaders(),
           });
+          if (res.status === 401 || res.status === 403) {
+            const errBody = await res.json().catch(() => ({}));
+            this.googleIdToken = "";
+            localStorage.removeItem("tvtime_google_id_token");
+            try {
+              if (window.google && window.google.accounts && window.google.accounts.id) {
+                window.google.accounts.id.disableAutoSelect();
+              }
+            } catch (_) {}
+            await this.ensureGoogleSignIn(
+              errBody.error || "Please sign in with an allowlisted Google account."
+            );
+            return this.loadState(showToast);
+          }
           if (res.ok) {
             const data = await res.json();
             this.state = data;
+            if (data.email) {
+              this.userEmail = String(data.email).trim().toLowerCase();
+              this.userId = String(data.userId || this.userEmail.split("@")[0]);
+              localStorage.setItem("tvtime_user_email", this.userEmail);
+              localStorage.setItem("tvtime_user_id", this.userId);
+            }
             this.saveLocalCache();
             this.render();
           }
@@ -1600,7 +1765,7 @@ export const WEB_APP_HTML = `<!DOCTYPE html>
         const actors = Array.isArray(this.state.actors) ? this.state.actors : [];
         const users = Array.isArray(this.state.followingUsers) ? this.state.followingUsers : ["partner"];
 
-        const cleanUser = String(this.userId || "madhavsankar");
+        const cleanUser = String(this.userId || "member");
         const nameEl = document.getElementById("profile-display-name");
         const handleEl = document.getElementById("profile-handle");
         const initEl = document.getElementById("profile-avatar-initials");
@@ -1760,7 +1925,7 @@ export const WEB_APP_HTML = `<!DOCTYPE html>
         if (!bodyEl) return;
 
         if (tab === "users") {
-          const otherUser = this.userId === "partner" ? "madhavsankar" : "partner";
+          const otherUser = "partner";
           bodyEl.innerHTML =
             '<div class="tv-card rounded-2xl p-3.5 flex items-center justify-between">' +
             '<div class="flex items-center gap-3">' +
@@ -1771,9 +1936,7 @@ export const WEB_APP_HTML = `<!DOCTYPE html>
             escapeHtml(otherUser) +
             '</div><div class="text-xs tv-yellow-text font-semibold">Shared Household Profile · Synced</div></div>' +
             "</div>" +
-            '<button onclick="app.quickSwitchUser(&quot;' +
-            escapeHtml(otherUser) +
-            '&quot;); app.closeFollowingSheet();" class="px-3.5 py-1.5 rounded-full tv-yellow-bg text-xs font-extrabold">Switch</button>' +
+            '<button onclick="app.closeFollowingSheet(); app.openAccountModal();" class="px-3.5 py-1.5 rounded-full tv-yellow-bg text-xs font-extrabold">Account</button>' +
             "</div>";
           return;
         }
@@ -1845,27 +2008,12 @@ export const WEB_APP_HTML = `<!DOCTYPE html>
 
       openAccountModal() {
         const inp = document.getElementById("acc-user-input");
-        if (inp) inp.value = this.userId;
+        if (inp) inp.value = this.userEmail || this.userId || "Not signed in";
         document.getElementById("account-modal")?.classList.remove("hidden");
       }
 
       closeAccountModal() {
         document.getElementById("account-modal")?.classList.add("hidden");
-      }
-
-      async quickSwitchUser(nextUser) {
-        const clean = String(nextUser || "madhavsankar").trim().toLowerCase();
-        this.userId = clean;
-        localStorage.setItem("tvtime_user_id", clean);
-        this.closeAccountModal();
-        this.loadLocalCache();
-        await this.loadState(true);
-      }
-
-      async saveAccountSwitch() {
-        const inp = document.getElementById("acc-user-input");
-        const val = inp ? inp.value : "madhavsankar";
-        await this.quickSwitchUser(val);
       }
     }
 

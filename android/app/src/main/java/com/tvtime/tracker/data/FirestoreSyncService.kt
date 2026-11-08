@@ -19,10 +19,10 @@ import java.time.Instant
  */
 object FirestoreSyncService {
 
-    const val DEFAULT_USER_ID = "madhavsankar"
+    const val DEFAULT_USER_ID = "default"
 
     private val firebaseProjectId: String
-        get() = BuildConfig.FIREBASE_PROJECT_ID.trim().ifBlank { "places-tracker-989b5" }
+        get() = BuildConfig.FIREBASE_PROJECT_ID.trim()
 
     fun sanitizeUserId(raw: String?): String {
         val trimmed = (raw ?: "").trim().lowercase()
@@ -157,7 +157,7 @@ object FirestoreSyncService {
                 put("shows", showsArr)
                 put("movies", moviesArr)
                 put("actors", actorsArr)
-                put("followingUsers", JSONArray(listOf(if (cleanUser == "partner") "madhavsankar" else "partner")))
+                put("followingUsers", JSONArray(listOf("partner")))
                 put("updatedAt", Instant.now().toString())
             }
 

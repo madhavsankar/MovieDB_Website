@@ -78,7 +78,15 @@ fun TvTimeMainScreen(
     var selectedShowForDetail by remember { mutableStateOf<ShowEntity?>(null) }
     var showFollowingSheet by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
-    var showAccountSwitcherDialog by remember { mutableStateOf(false) }
+    var showAccountSwitcherDialog by remember(currentUserId) {
+        mutableStateOf(!FirestoreSyncService.isUserAllowed(currentUserId))
+    }
+
+    LaunchedEffect(currentUserId) {
+        if (FirestoreSyncService.isUserAllowed(currentUserId)) {
+            FirestoreSyncService.pullFromFirestoreIfNeeded(dao, currentUserId)
+        }
+    }
 
     val shows by dao.observeShowsForUser(currentUserId).collectAsState(initial = emptyList())
     val movies by dao.observeMoviesForUser(currentUserId).collectAsState(initial = emptyList())
@@ -326,9 +334,11 @@ fun TvTimeMainScreen(
         )
     }
 
-    // 2-User Account & Google Sign-In Switcher Dialog
+    // 2-User Account & Google Sign-In Gate Dialog (Matches PackTrack & PlacesTracker)
     if (showAccountSwitcherDialog) {
-        var manualInput by remember(currentUserId) { mutableStateOf(currentUserId) }
+        var errorText by remember { mutableStateOf("") }
+        val isInitialPrompt = !FirestoreSyncService.isUserAllowed(currentUserId)
+
         val googleLauncher = rememberLauncherForActivityResult(
             contract = ActivityResultContracts.StartActivityForResult()
         ) { result ->
@@ -336,75 +346,71 @@ fun TvTimeMainScreen(
                 val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
                 val account = task.getResult(ApiException::class.java)
                 val email = account?.email?.trim()?.lowercase() ?: ""
-                if (email.isNotBlank() && FirestoreSyncService.isUserAllowed(email)) {
-                    val clean = FirestoreSyncService.sanitizeUserId(email)
-                    currentUserId = clean
-                    onSwitchUser(clean)
-                    showAccountSwitcherDialog = false
-                    scope.launch {
-                        FirestoreSyncService.pullFromFirestoreIfNeeded(dao, clean)
+                if (email.isBlank() || !FirestoreSyncService.isUserAllowed(email)) {
+                    errorText = if (email.isBlank()) {
+                        "Google Sign-In did not return an email address."
+                    } else {
+                        "Access denied for $email. Only allowlisted Google accounts are permitted."
                     }
+                    return@rememberLauncherForActivityResult
                 }
-            } catch (_: ApiException) {}
+                val clean = FirestoreSyncService.sanitizeUserId(email)
+                currentUserId = clean
+                onSwitchUser(clean)
+                showAccountSwitcherDialog = false
+                scope.launch {
+                    FirestoreSyncService.pullFromFirestoreIfNeeded(dao, clean)
+                }
+            } catch (e: ApiException) {
+                if (result.resultCode != Activity.RESULT_CANCELED) {
+                    errorText = "Google Sign-In failed (code ${e.statusCode}). Make sure your SHA-1 fingerprint is registered in Firebase."
+                }
+            }
         }
 
         AlertDialog(
-            onDismissRequest = { showAccountSwitcherDialog = false },
+            onDismissRequest = {
+                if (!isInitialPrompt) {
+                    showAccountSwitcherDialog = false
+                }
+            },
             containerColor = Color(0xFF18181D),
-            title = { Text("Switch Profile (2-User Sync)", color = Color.White) },
+            title = {
+                Text(
+                    if (isInitialPrompt) "Sign in to TV Time" else "Switch Google Account",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        "Switch between your 2 household profiles or sign in with Google to sync with Cloud Firestore:",
+                        "Sign in with your allowlisted Google account to access and sync your shows & movies:",
                         style = MaterialTheme.typography.bodySmall,
                         color = TvTimePalette.TextSecondary
                     )
-                    OutlinedTextField(
-                        value = manualInput,
-                        onValueChange = { manualInput = it },
-                        singleLine = true,
-                        label = { Text("Profile Username") }
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = { manualInput = "madhavsankar" },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("User 1", color = TvTimePalette.Yellow, fontSize = 12.sp)
-                        }
-                        OutlinedButton(
-                            onClick = { manualInput = "partner" },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("User 2", color = TvTimePalette.Yellow, fontSize = 12.sp)
-                        }
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            val gsoBuilder = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-                                .requestEmail()
-                            val webClientId = BuildConfig.GOOGLE_CLIENT_ID.trim()
-                            if (webClientId.isNotEmpty()) {
-                                gsoBuilder.requestIdToken(webClientId)
-                            }
-                            val client = GoogleSignIn.getClient(context, gsoBuilder.build())
-                            googleLauncher.launch(client.signInIntent)
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("🔐 Sign in with Google", color = Color.White)
+                    if (errorText.isNotEmpty()) {
+                        Text(
+                            text = errorText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFF87171)
+                        )
                     }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        val clean = FirestoreSyncService.sanitizeUserId(manualInput)
-                        currentUserId = clean
-                        onSwitchUser(clean)
-                        showAccountSwitcherDialog = false
-                        scope.launch {
-                            FirestoreSyncService.pullFromFirestoreIfNeeded(dao, clean)
+                        errorText = ""
+                        val gsoBuilder = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                            .requestEmail()
+                        val webClientId = BuildConfig.GOOGLE_CLIENT_ID.trim()
+                        if (webClientId.isNotEmpty()) {
+                            gsoBuilder.requestIdToken(webClientId)
+                        }
+                        val client = GoogleSignIn.getClient(context, gsoBuilder.build())
+                        client.signOut().addOnCompleteListener {
+                            googleLauncher.launch(client.signInIntent)
                         }
                     },
                     colors = ButtonDefaults.buttonColors(
@@ -412,12 +418,14 @@ fun TvTimeMainScreen(
                         contentColor = TvTimePalette.OnYellow
                     )
                 ) {
-                    Text("Switch & Sync", fontWeight = FontWeight.Bold)
+                    Text("Sign in with Google", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showAccountSwitcherDialog = false }) {
-                    Text("Cancel", color = Color.White)
+                if (!isInitialPrompt) {
+                    TextButton(onClick = { showAccountSwitcherDialog = false }) {
+                        Text("Cancel", color = Color.White)
+                    }
                 }
             }
         )

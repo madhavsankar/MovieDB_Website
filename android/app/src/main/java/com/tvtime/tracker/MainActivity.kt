@@ -48,12 +48,17 @@ class MainActivity : ComponentActivity() {
 
         val prefs = getSharedPreferences("tvtime_prefs", Context.MODE_PRIVATE)
         val initialDefault = BuildConfig.DEFAULT_USER_ID.ifBlank { FirestoreSyncService.DEFAULT_USER_ID }
-        activeUserId = FirestoreSyncService.sanitizeUserId(
-            prefs.getString("active_user_id", initialDefault)
-        )
+        val savedUser = prefs.getString("active_user_id", initialDefault)
+        activeUserId = if (FirestoreSyncService.isUserAllowed(savedUser)) {
+            FirestoreSyncService.sanitizeUserId(savedUser)
+        } else {
+            FirestoreSyncService.DEFAULT_USER_ID
+        }
 
         lifecycleScope.launch(Dispatchers.IO) {
-            FirestoreSyncService.pullFromFirestoreIfNeeded(database.dao(), activeUserId)
+            if (FirestoreSyncService.isUserAllowed(activeUserId)) {
+                FirestoreSyncService.pullFromFirestoreIfNeeded(database.dao(), activeUserId)
+            }
         }
 
         setContent {
@@ -73,7 +78,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (::database.isInitialized) {
+        if (::database.isInitialized && FirestoreSyncService.isUserAllowed(activeUserId)) {
             lifecycleScope.launch(Dispatchers.IO) {
                 FirestoreSyncService.pullFromFirestoreIfNeeded(database.dao(), activeUserId)
             }
