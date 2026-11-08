@@ -1,0 +1,7 @@
+name = "tvtime-tracker"
+main = "cloudflare/worker.js"
+compatibility_date = "2025-03-01"
+keep_vars = true
+
+# Configure FIREBASE_PROJECT_ID, GEMINI_API_KEY, TMDB_API_KEY, GOOGLE_CLIENT_ID, and ALLOWED_EMAILS in Cloudflare Worker Settings -> Variables and Secrets
+

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- TV Antenna Ears -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FACC15"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M42,24L54,36L66,24" />
+    <!-- TV Screen Body -->
+    <path
+        android:fillColor="#18181B"
+        android:strokeColor="#FACC15"
+        android:strokeWidth="4.5"
+        android:pathData="M30,36h48c3.3,0 6,2.7 6,6v30c0,3.3 -2.7,6 -6,6H30c-3.3,0 -6,-2.7 -6,-6V42c0,-3.3 2.7,-6 6,-6z" />
+    <!-- Signature Yellow Play / Check Badge -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FACC15"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M43,57l8,8l16,-16" />
+</vector>
+

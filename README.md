@@ -1,13 +1,100 @@
-# Movie Database
-Get information about any movie using the OMDb API. The OMDb API is a RESTful web service to obtain movie information, all content and images on the site. 
+# 📺 TV Time: Show & Movie Tracker
 
-## Features
-* The search can based on IMDb ID or Movie Title. 
-* Comparisons between movies can be made. 
-* Top 5 movies based on IMDb ratings can be seen.
+An open-source, ad-free, paywall-free Android & Cloudflare Edge Web clone of **[TV Time: Show & Movie Tracker](https://apps.apple.com/us/app/tv-time-show-movie-tracker/id6792364354)** (`id6792364354`), built on the same multi-user **Android Room SQLite + Firebase Cloud Firestore + Cloudflare Workers + MCP Server** stack as [PackTrack](https://github.com/madhavsankar/PackTrack) and [PlacesTracker](https://github.com/madhavsankar/PlacesTracker).
 
-# Deployment 
-Run the begin.html to enter the start page of the website. The search icons guide you to the 4 possible information extraction methods. 
+---
 
-### Update
-As OMDb has become paid, the retrieval of information functionality is currently not working.
+## Features (1:1 Match with TV Time `id6792364354`)
+
+- **3-Tab Bottom Navigation (`Home ⌂` · `Search 🔍` · `Profile 👤`):**
+  - **🏠 Home Tab (`Shows` | `Movies` | `Upcoming`):**
+    - **Shows Queue:** Filter by `Watch List`, `In progress`, or `Completed`, with collapsible *"Haven't started yet ∧"* divider, green progress bars, remaining episode counts (`3 episodes left · S02·E04`), and 1-tap yellow eye button (`👁`) to mark the next episode watched.
+    - **Movies Queue:** Track movies in your Watch List vs. Completed, log rewatches (`↻`), and rate or react with emoji badges (`😍`, `🔥`, `🤯`).
+    - **Upcoming Schedule (`Watchlist` | `Actors`):** Grouped by relative air-date dividers (`5 days`, `1 week`) with air-date pills (`Thursday 30th`) and lead actor chips.
+    - **3D Shelf View (`⊞`):** Toggleable neon 3D shelf view displaying your Shows and Movies posters on wooden shelves.
+  - **🔍 Search / Discover Tab:**
+    - Live keyless search across **TVMaze Public API** (TV Shows, Seasons, Episodes, Air Dates & Actors) and **Apple iTunes Search API** (Movies, High-Res Posters, Directors & Runtime).
+    - Sort results by `Top`, `Newest`, or `Oldest` and add to your tracker with 1 tap (`+` → `✓`).
+  - **👤 Profile & Watch Time Stats Tab:**
+    - **TOTAL WATCH TIME Hero Card:** Displays cumulative watch time (`Xd Yh`) split across `Series · N eps` and `Movies · N`.
+    - **Horizontal Poster Carousels:** `Favorite Shows`, `Recently Watched Series` (with `S02·E03` badges & emoji reactions), and `Recently Watched Movies`.
+    - **Following Sheet (`Users` | `Actors`):** Follow favorite actors with 1-tap `IMDb` links, or switch between your 2 household user profiles (`@madhavsankar` & `@partner`).
+    - **Original TV Time Export Importer (`📥`):** *"Bring your original TV Time history over"* modal to import/export JSON backups directly on-device.
+  - **📋 Show Detail Bottom Sheet (`Info` | `Episodes`):**
+    - Expandable **Season Accordions** (`Season 1`, `Season 2`, ...) with 1-tap season-wide watch toggle and per-episode thumbnail rows (`1. Good News About Hell · Feb 18, 2022`).
+
+---
+
+## High-Level Design (Android & Cloudflare Worker Architecture)
+
+```mermaid
+flowchart TB
+    classDef client fill:#18181b,stroke:#facc15,stroke-width:2px,color:#fef08a,font-weight:bold
+    classDef api fill:#0c4a6e,stroke:#38bdf8,stroke-width:2px,color:#f0f9ff
+    classDef ext fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#ecfdf5,font-weight:bold
+    classDef db fill:#3b0764,stroke:#c084fc,stroke-width:2.5px,color:#faf5ff,font-weight:bold
+
+    subgraph Clients["📱 Client Touchpoints"]
+        Android(["🤖 Native Android App\n(Jetpack Compose + Room SQLite)"]):::client
+        WebPWA(["🌐 Cloudflare Edge Web PWA\n(TV Time Dark & Yellow UI)"]):::client
+        McpClient(["🔌 MCP Agent\n(/mcp JSON-RPC 2.0)"]):::client
+    end
+
+    subgraph WorkerAPIs["⚡ Cloudflare Worker APIs"]
+        StateAPI["GET & POST /api/state\n(2-User Profile Sync & Watch Stats)"]:::api
+        SearchAPI["GET /api/search & /api/show-details\n(Live Multi-Search & Episode Guide)"]:::api
+        McpAPI["POST /mcp\n(Watch Stats, Search & Episode Logging)"]:::api
+    end
+
+    subgraph Catalogs["🎬 Free Public Live Databases (No Key Required)"]
+        TvMaze[["📡 TVMaze Public API\n(Live Shows, Seasons, Episodes, Air Dates & Actors)"]]:::ext
+        iTunes[["🎞️ Apple iTunes Movie API\n(Movies, High-Res Posters, Directors & Runtime)"]]:::ext
+    end
+
+    subgraph Storage["🗄️ Shared Free Persistence Layer"]
+        RoomDB[("📱 Android Room SQLite\n(tvtime_local.db)")]:::db
+        FirestoreDB[("🔥 Firebase Cloud Firestore\n(tvtime_state/user_state_{userId})")]:::db
+    end
+
+    Android <-->|"100% Offline Read/Write"| RoomDB
+    RoomDB <-->|"Background Cloud Sync"| FirestoreDB
+    WebPWA & McpClient <--> StateAPI & SearchAPI & McpAPI
+    StateAPI & McpAPI <-->|"REST GET / PATCH"| FirestoreDB
+    Android & SearchAPI -->|"Live Catalog & Air Dates"| TvMaze & iTunes
+```
+
+---
+
+## Quick Start
+
+### 1. Native Android App (`android/`)
+
+```bash
+cd android
+# Optional in git-ignored android/local.properties:
+# FIREBASE_PROJECT_ID=places-tracker-989b5
+# DEFAULT_USER_ID=madhavsankar
+./gradlew testDebugUnitTest assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+### 2. Deploy Cloudflare Worker Web App (`cloudflare/`)
+
+```bash
+npx wrangler secret put FIREBASE_PROJECT_ID
+npx wrangler secret put GOOGLE_CLIENT_ID
+npx wrangler secret put ALLOWED_EMAILS
+npx wrangler deploy
+```
+
+### 3. Run Unit Tests (`tests/`)
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+---
+
+## License
+
+MIT

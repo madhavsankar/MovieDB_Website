@@ -1,0 +1,393 @@
+/**
+ * Live Catalog, Episode Schedule & Gemini AI Bulk-Logging Service for TV Time: Show & Movie Tracker.
+ *
+ * Uses:
+ *  - TVMaze Public API (`https://api.tvmaze.com`) — 100% Free, No API Key Required for Shows, Episodes, Cast & Airing Schedules
+ *  - Apple iTunes Search API (`https://itunes.apple.com/search`) — 100% Free, No API Key Required for Movies, Posters, Directors & Runtime
+ *  - Optional TMDB API (`TMDB_API_KEY`) when configured
+ *  - Google Gemini Dynamic Model Cascade (`/v1beta/models`) for natural-language watch logging & recommendations
+ */
+
+function stripHtml(raw) {
+  return String(raw || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function formatEpisodeCode(season, number) {
+  const s = Math.max(1, parseInt(season, 10) || 1);
+  const e = Math.max(1, parseInt(number, 10) || 1);
+  return `S${String(s).padStart(2, "0")}E${String(e).padStart(2, "0")}`;
+}
+
+export class LiveCatalogService {
+  static DEFAULT_MODEL_CASCADE = [
+    "gemini-flash-latest",
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-lite-latest",
+  ];
+
+  static _cachedCascade = null;
+  static _cachedCascadeAt = 0;
+  static _lastWorkingModel = null;
+
+  static scoreGeminiModelId(rawId, metadata = null) {
+    const id = String(rawId || "").replace(/^models\//, "").trim().toLowerCase();
+    if (!id.startsWith("gemini-")) return -1;
+
+    if (
+      /image|banana|omni|transcribe|tts|audio|video|music|lyria|veo|imagen|embedding|aqa|learnlm|robotics|computer-use|deep-research|antigravity|translate|thinking|live|vision|customtools/i.test(
+        id
+      )
+    ) {
+      return -1;
+    }
+
+    if (metadata && typeof metadata === "object") {
+      if (
+        Array.isArray(metadata.supportedGenerationMethods) &&
+        !metadata.supportedGenerationMethods.includes("generateContent")
+      ) {
+        return -1;
+      }
+      const desc = String(metadata.description || "").toLowerCase();
+      if (/shut down|deprecated|text-to-speech|speech-to-text|image generation|video generation/i.test(desc)) {
+        return -1;
+      }
+      if (typeof metadata.outputTokenLimit === "number" && metadata.outputTokenLimit > 0 && metadata.outputTokenLimit < 2048) {
+        return -1;
+      }
+    }
+
+    let tierScore = 0;
+    if (id.includes("flash-lite") || id.includes("lite")) {
+      tierScore = 20_000;
+    } else if (id.includes("flash")) {
+      tierScore = 30_000;
+    } else if (id.includes("pro") || id.includes("argon") || id.includes("ultra")) {
+      tierScore = 10_000;
+    } else {
+      return -1;
+    }
+
+    let versionScore = 0;
+    const verMatch = id.match(/^gemini-(\d+)(?:\.(\d+))?-(?:flash-lite|flash|pro|argon|ultra)(?:$|-[a-z0-9-]+$)/);
+    if (verMatch) {
+      const major = parseInt(verMatch[1], 10) || 0;
+      const minor = parseInt(verMatch[2] ?? "0", 10) || 0;
+      if (major < 3) return -1;
+      versionScore = major * 100 + minor * 10;
+    } else if (id === "gemini-flash-latest" || id === "gemini-flash-lite-latest" || id === "gemini-pro-latest") {
+      versionScore = 375;
+    } else {
+      return -1;
+    }
+
+    let stabilityScore = 0;
+    if (id.includes("exp") || id.includes("experimental")) {
+      stabilityScore = 1000;
+    } else if (id.includes("preview")) {
+      stabilityScore = 2000;
+    } else if (id.endsWith("-latest")) {
+      stabilityScore = 4500;
+    } else if (/^gemini-\d+(?:\.\d+)?-(?:flash-lite|flash|pro|argon|ultra)$/.test(id)) {
+      stabilityScore = 5000;
+    } else {
+      stabilityScore = 4000;
+    }
+
+    return tierScore + stabilityScore + versionScore;
+  }
+
+  static rankModelsFromList(modelsList = []) {
+    const scored = [];
+    for (const entry of modelsList || []) {
+      const rawName = typeof entry === "string" ? entry : entry?.name || entry?.baseModelId || "";
+      const id = String(rawName).replace(/^models\//, "").trim();
+      if (!id) continue;
+      const metadata = typeof entry === "object" ? entry : null;
+      const s = LiveCatalogService.scoreGeminiModelId(id, metadata);
+      if (s > 0) {
+        scored.push({ id, score: s });
+      }
+    }
+    scored.sort((a, b) => b.score - a.score);
+
+    const cascade = [];
+    const seen = new Set();
+    const pushUnique = (modelId) => {
+      const clean = String(modelId || "").replace(/^models\//, "").trim();
+      if (clean && !seen.has(clean)) {
+        seen.add(clean);
+        cascade.push(clean);
+      }
+    };
+
+    if (LiveCatalogService._lastWorkingModel) {
+      pushUnique(LiveCatalogService._lastWorkingModel);
+    }
+    for (const item of scored) {
+      pushUnique(item.id);
+    }
+    for (const fallbackId of LiveCatalogService.DEFAULT_MODEL_CASCADE) {
+      pushUnique(fallbackId);
+    }
+    return cascade;
+  }
+
+  static async resolveModelCascade(geminiApiKey, fetchImpl = fetch) {
+    const now = Date.now();
+    if (
+      LiveCatalogService._cachedCascade &&
+      LiveCatalogService._cachedCascade.length > 0 &&
+      now - LiveCatalogService._cachedCascadeAt < 3600_000
+    ) {
+      return LiveCatalogService.rankModelsFromList(LiveCatalogService._cachedCascade);
+    }
+
+    try {
+      const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(String(geminiApiKey).trim())}`;
+      const resp = await fetchImpl(listUrl, { method: "GET" });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (Array.isArray(data?.models) && data.models.length > 0) {
+          const ranked = LiveCatalogService.rankModelsFromList(data.models);
+          LiveCatalogService._cachedCascade = ranked;
+          LiveCatalogService._cachedCascadeAt = now;
+          return ranked;
+        }
+      }
+    } catch (_) {}
+    return LiveCatalogService.rankModelsFromList([]);
+  }
+
+  static async callGeminiWithModelCascade(requestBody, geminiApiKey, { fetchImpl = fetch, cascadeOverride = null } = {}) {
+    const cleanKey = String(geminiApiKey || "").trim();
+    if (!cleanKey) return null;
+
+    const cascade =
+      Array.isArray(cascadeOverride) && cascadeOverride.length > 0
+        ? cascadeOverride
+        : await LiveCatalogService.resolveModelCascade(cleanKey, fetchImpl);
+
+    for (const modelId of cascade) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelId)}:generateContent?key=${encodeURIComponent(cleanKey)}`;
+        const resp = await fetchImpl(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+        });
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        if (text.trim()) {
+          LiveCatalogService._lastWorkingModel = modelId;
+          return { data, modelUsed: modelId };
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  /**
+   * Searches live TV Shows, Movies, and Actors across free public APIs:
+   *  - TVMaze (`/search/shows?q=...`) for TV Shows
+   *  - iTunes Search API (`/search?term=...&entity=movie`) for Movies
+   *  - TVMaze (`/search/people?q=...`) for Actors
+   */
+  static async searchMulti(query, { fetchImpl = fetch } = {}) {
+    const q = String(query || "").trim();
+    if (!q) return { results: [] };
+
+    const results = [];
+    try {
+      const [showsRes, moviesRes, peopleRes] = await Promise.allSettled([
+        fetchImpl(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(q)}`),
+        fetchImpl(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=movie&limit=10`),
+        fetchImpl(`https://api.tvmaze.com/search/people?q=${encodeURIComponent(q)}`),
+      ]);
+
+      if (showsRes.status === "fulfilled" && showsRes.value.ok) {
+        const showsData = await showsRes.value.json();
+        for (const entry of (showsData || []).slice(0, 12)) {
+          const show = entry?.show;
+          if (!show || !show.id) continue;
+          const premiered = String(show.premiered || "");
+          const year = premiered ? parseInt(premiered.slice(0, 4), 10) || 2024 : 2024;
+          const network = show.network?.name || show.webChannel?.name || "Streaming";
+          const posterUrl = show.image?.medium || show.image?.original || "";
+          results.push({
+            id: `tvmaze_${show.id}`,
+            tvmazeId: show.id,
+            mediaType: "show",
+            title: show.name || "Untitled Show",
+            year,
+            network,
+            status: show.status || "Running",
+            runtimeMins: Number(show.averageRuntime || show.runtime) || 45,
+            genres: Array.isArray(show.genres) ? show.genres : [],
+            rating: Number(show.rating?.average) || 7.8,
+            posterUrl: posterUrl.replace(/^http:\/\//i, "https://"),
+            overview: stripHtml(show.summary),
+          });
+        }
+      }
+
+      if (moviesRes.status === "fulfilled" && moviesRes.value.ok) {
+        const moviesData = await moviesRes.value.json();
+        for (const item of (moviesData?.results || []).slice(0, 10)) {
+          if (!item || !item.trackId) continue;
+          const rel = String(item.releaseDate || "");
+          const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
+          const runtimeMins = item.trackTimeMillis ? Math.max(45, Math.round(item.trackTimeMillis / 60000)) : 120;
+          const artwork = String(item.artworkUrl100 || "").replace("100x100bb.jpg", "600x900bb.jpg");
+          results.push({
+            id: `movie_${item.trackId}`,
+            tmdbId: item.trackId,
+            mediaType: "movie",
+            title: item.trackName || "Untitled Movie",
+            year,
+            director: item.artistName || "",
+            runtimeMins,
+            genres: item.primaryGenreName ? [item.primaryGenreName] : ["Movie"],
+            streamingService: "Digital / Streaming",
+            rating: 7.7,
+            posterUrl: artwork,
+            overview: stripHtml(item.longDescription || item.shortDescription || ""),
+          });
+        }
+      }
+
+      if (peopleRes.status === "fulfilled" && peopleRes.value.ok) {
+        const peopleData = await peopleRes.value.json();
+        for (const entry of (peopleData || []).slice(0, 5)) {
+          const p = entry?.person;
+          if (!p || !p.id || !p.name) continue;
+          const img = (p.image?.medium || p.image?.original || "").replace(/^http:\/\//i, "https://");
+          results.push({
+            id: `actor_${p.id}`,
+            mediaType: "actor",
+            name: p.name,
+            title: p.name,
+            year: p.birthday ? parseInt(String(p.birthday).slice(0, 4), 10) || 1985 : 1985,
+            role: "Acting",
+            posterUrl: img,
+            imageUrl: img,
+            imdbUrl: `https://www.imdb.com/find/?q=${encodeURIComponent(p.name)}`,
+            overview: `Actor (${p.country?.name || "International"})`,
+          });
+        }
+      }
+    } catch (_) {}
+
+    return { results };
+  }
+
+  /**
+   * Fetches full TV show details + complete episode list + cast from TVMaze (`/shows/:id?embed[]=episodes&embed[]=cast`).
+   */
+  static async fetchFullShowFromTvMaze(tvmazeId, { fetchImpl = fetch } = {}) {
+    const cleanId = Number(String(tvmazeId || "").replace(/^tvmaze_/, ""));
+    if (!cleanId) return null;
+
+    try {
+      const resp = await fetchImpl(`https://api.tvmaze.com/shows/${cleanId}?embed[]=episodes&embed[]=cast`);
+      if (!resp.ok) return null;
+      const show = await resp.json();
+      const premiered = String(show.premiered || "");
+      const year = premiered ? parseInt(premiered.slice(0, 4), 10) || 2024 : 2024;
+      const network = show.network?.name || show.webChannel?.name || "Streaming";
+      const posterUrl = (show.image?.medium || show.image?.original || "").replace(/^http:\/\//i, "https://");
+      const castList = (show._embedded?.cast || [])
+        .slice(0, 8)
+        .map((c) => c?.person?.name)
+        .filter(Boolean);
+      const rawEps = show._embedded?.episodes || [];
+      const episodes = rawEps.map((ep) => ({
+        code: formatEpisodeCode(ep.season, ep.number),
+        season: Number(ep.season) || 1,
+        number: Number(ep.number) || 1,
+        title: ep.name || `Episode ${ep.number || 1}`,
+        airDate: ep.airdate || "",
+        runtimeMins: Number(ep.runtime || show.averageRuntime || show.runtime) || 45,
+        imageUrl: (ep.image?.medium || ep.image?.original || "").replace(/^http:\/\//i, "https://"),
+        overview: stripHtml(ep.summary),
+      }));
+
+      return {
+        id: `tvmaze_${show.id}`,
+        tvmazeId: show.id,
+        title: show.name || "Untitled Show",
+        year,
+        network,
+        status: show.status || "Running",
+        runtimeMins: Number(show.averageRuntime || show.runtime) || 45,
+        genres: Array.isArray(show.genres) ? show.genres : [],
+        cast: castList,
+        rating: Number(show.rating?.average) || 7.9,
+        posterUrl,
+        overview: stripHtml(show.summary),
+        episodes,
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * Computes the TV Time "Watch Next" / "In Progress" queue and statistics for a user state.
+   */
+  static computeStats(state) {
+    const shows = Array.isArray(state?.shows) ? state.shows : [];
+    const movies = Array.isArray(state?.movies) ? state.movies : [];
+
+    let totalEpisodesWatched = 0;
+    let showMinutesWatched = 0;
+    for (const s of shows) {
+      const watchedSet = new Set(s.watchedEpisodes || []);
+      const rewatchMultiplier = 1 + (Number(s.rewatchCount) || 0);
+      totalEpisodesWatched += watchedSet.size * rewatchMultiplier;
+      const defaultEpRuntime = Number(s.runtimeMins) || 45;
+      if (Array.isArray(s.episodes) && s.episodes.length > 0) {
+        for (const ep of s.episodes) {
+          if (watchedSet.has(ep.code)) {
+            showMinutesWatched += (Number(ep.runtimeMins) || defaultEpRuntime) * rewatchMultiplier;
+          }
+        }
+      } else {
+        showMinutesWatched += watchedSet.size * defaultEpRuntime * rewatchMultiplier;
+      }
+    }
+
+    let totalMoviesWatched = 0;
+    let movieMinutesWatched = 0;
+    for (const m of movies) {
+      if (m.watched) {
+        const mult = 1 + (Number(m.rewatchCount) || 0);
+        totalMoviesWatched += mult;
+        movieMinutesWatched += (Number(m.runtimeMins) || 120) * mult;
+      }
+    }
+
+    const totalMinutes = showMinutesWatched + movieMinutesWatched;
+    return {
+      totalMinutes,
+      showMinutesWatched,
+      movieMinutesWatched,
+      totalEpisodesWatched,
+      totalMoviesWatched,
+      totalDays: Math.floor(totalMinutes / (60 * 24)),
+      totalHoursRemainder: Math.floor((totalMinutes % (60 * 24)) / 60),
+      showDays: Math.floor(showMinutesWatched / (60 * 24)),
+      showHoursRemainder: Math.floor((showMinutesWatched % (60 * 24)) / 60),
+      movieDays: Math.floor(movieMinutesWatched / (60 * 24)),
+      movieHoursRemainder: Math.floor((movieMinutesWatched % (60 * 24)) / 60),
+    };
+  }
+}
+
