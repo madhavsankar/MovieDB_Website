@@ -1,5 +1,5 @@
 // TV Time: Show & Movie Tracker — Web App View (1:1 clone of iOS App id6792364354)
-export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
+export const WEB_APP_HTML = `<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
   <meta charset="UTF-8" />
@@ -718,9 +718,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           arr
             .map(
               (it) =>
-                '<div onclick="app.openItemById(\'' +
+                '<div onclick="app.openItemById(&quot;' +
                 escapeHtml(it.id) +
-                '\')" class="w-20 shrink-0 cursor-pointer transform hover:-translate-y-1.5 transition">' +
+                '&quot;)" class="w-20 shrink-0 cursor-pointer transform hover:-translate-y-1.5 transition">' +
                 '<img src="' +
                 escapeHtml(it.posterUrl || "https://via.placeholder.com/160x240/1f1f28/facc15?text=" + encodeURIComponent(it.title)) +
                 '" class="w-20 h-28 object-cover rounded-md shadow-lg border border-white/10" />' +
@@ -749,7 +749,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           show.posterUrl ||
           "https://via.placeholder.com/200x300/1c1c22/facc15?text=" + encodeURIComponent(show.title || "Show");
         const nextCodeFormatted = prog.nextEp
-          ? prog.nextEp.code.replace(/^S(\d+)E(\d+)$/, "S$1·E$2")
+          ? prog.nextEp.code.replace(/^S([0-9]+)E([0-9]+)$/, "S$1·E$2")
           : "Caught up";
 
         let statusLineHtml = "";
@@ -759,9 +759,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             '<div class="text-[11px] font-bold tv-yellow-text">TV Show</div>' +
             '<div class="text-xs text-zinc-400">Caught up · <span class="font-bold tv-yellow-text">All episodes watched</span></div>';
           actionBtnHtml =
-            '<button onclick="event.stopPropagation(); app.openItemById(\'' +
+            '<button onclick="event.stopPropagation(); app.openItemById(&quot;' +
             escapeHtml(show.id) +
-            '\')" class="w-10 h-10 flex items-center justify-center text-emerald-400 font-bold">' +
+            '&quot;)" class="w-10 h-10 flex items-center justify-center text-emerald-400 font-bold">' +
             CHECK_SVG +
             "</button>";
         } else {
@@ -781,17 +781,17 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           actionBtnHtml =
             '<button title="Mark ' +
             escapeHtml(nextCodeFormatted) +
-            ' watched" onclick="event.stopPropagation(); app.markNextEpisodeWatched(\'' +
+            ' watched" onclick="event.stopPropagation(); app.markNextEpisodeWatched(&quot;' +
             escapeHtml(show.id) +
-            '\')" class="tv-eye-btn">' +
+            '&quot;)" class="tv-eye-btn">' +
             EYE_SVG +
             "</button>";
         }
 
         return (
-          '<div onclick="app.openItemById(\'' +
+          '<div onclick="app.openItemById(&quot;' +
           escapeHtml(show.id) +
-          '\')" class="tv-card rounded-2xl p-3 flex items-center gap-3.5 cursor-pointer hover:border-zinc-700 transition">' +
+          '&quot;)" class="tv-card rounded-2xl p-3 flex items-center gap-3.5 cursor-pointer hover:border-zinc-700 transition">' +
           '<img src="' +
           escapeHtml(poster) +
           '" alt="' +
@@ -830,21 +830,21 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           : movie.director || movie.streamingService || "Feature Film";
 
         const rightBtn = movie.watched
-          ? '<button title="Toggle watched" onclick="event.stopPropagation(); app.toggleMovieWatched(\'' +
+          ? '<button title="Toggle watched" onclick="event.stopPropagation(); app.toggleMovieWatched(&quot;' +
             escapeHtml(movie.id) +
-            '\')" class="tv-check-btn">' +
+            '&quot;)" class="tv-check-btn">' +
             CHECK_SVG +
             "</button>"
-          : '<button title="Mark movie watched" onclick="event.stopPropagation(); app.toggleMovieWatched(\'' +
+          : '<button title="Mark movie watched" onclick="event.stopPropagation(); app.toggleMovieWatched(&quot;' +
             escapeHtml(movie.id) +
-            '\')" class="tv-eye-btn">' +
+            '&quot;)" class="tv-eye-btn">' +
             EYE_SVG +
             "</button>";
 
         return (
-          '<div onclick="app.openItemById(\'' +
+          '<div onclick="app.openItemById(&quot;' +
           escapeHtml(movie.id) +
-          '\')" class="tv-card rounded-2xl p-3 flex items-center gap-3.5 cursor-pointer hover:border-zinc-700 transition">' +
+          '&quot;)" class="tv-card rounded-2xl p-3 flex items-center gap-3.5 cursor-pointer hover:border-zinc-700 transition">' +
           '<img src="' +
           escapeHtml(poster) +
           '" alt="' +
@@ -919,7 +919,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               html +=
                 '<div class="flex items-center gap-3 py-2 cursor-pointer" onclick="app.havenStartedCollapsed = !app.havenStartedCollapsed; app.renderHome();">' +
                 '<div class="h-px bg-zinc-800 flex-1"></div>' +
-                '<span class="text-xs font-medium text-zinc-400">Haven\'t started yet ' +
+                '<span class="text-xs font-medium text-zinc-400">Haven&apos;t started yet ' +
                 (this.havenStartedCollapsed ? "∨" : "∧") +
                 "</span>" +
                 '<div class="h-px bg-zinc-800 flex-1"></div>' +
@@ -1000,11 +1000,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               '<div class="h-px bg-zinc-800 flex-1"></div>' +
               "</div>";
           }
-          const codeFormatted = item.ep.code.replace(/^S(\d+)E(\d+)$/, "S$1·E$2");
+          const codeFormatted = item.ep.code.replace(/^S([0-9]+)E([0-9]+)$/, "S$1·E$2");
           html +=
-            '<div onclick="app.openItemById(\'' +
+            '<div onclick="app.openItemById(&quot;' +
             escapeHtml(item.show.id) +
-            '\')" class="tv-card rounded-2xl p-3.5 flex items-center gap-3.5 cursor-pointer hover:border-zinc-700 transition">' +
+            '&quot;)" class="tv-card rounded-2xl p-3.5 flex items-center gap-3.5 cursor-pointer hover:border-zinc-700 transition">' +
             '<img src="' +
             escapeHtml(item.show.posterUrl || "") +
             '" class="w-16 h-24 object-cover rounded-xl shrink-0 bg-zinc-900" />' +
@@ -1152,21 +1152,21 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 "https://via.placeholder.com/200x300/1c1c22/facc15?text=" + encodeURIComponent(item.title || "Item");
 
               const rightBtn = isInLib
-                ? '<button onclick="event.stopPropagation(); app.openItemById(\'' +
+                ? '<button onclick="event.stopPropagation(); app.openItemById(&quot;' +
                   escapeHtml(item.id) +
-                  '\')" class="tv-check-btn">' +
+                  '&quot;)" class="tv-check-btn">' +
                   CHECK_SVG +
                   "</button>"
-                : '<button title="Add to Watch List" onclick="event.stopPropagation(); app.addSearchResult(\'' +
+                : '<button title="Add to Watch List" onclick="event.stopPropagation(); app.addSearchResult(&quot;' +
                   escapeHtml(item.id) +
-                  '\')" class="tv-eye-btn">' +
+                  '&quot;)" class="tv-eye-btn">' +
                   PLUS_SVG +
                   "</button>";
 
               return (
-                '<div onclick="app.addOrOpenSearchResult(\'' +
+                '<div onclick="app.addOrOpenSearchResult(&quot;' +
                 escapeHtml(item.id) +
-                '\')" class="tv-card rounded-2xl p-3 flex items-center gap-3.5 cursor-pointer hover:border-zinc-700 transition">' +
+                '&quot;)" class="tv-card rounded-2xl p-3 flex items-center gap-3.5 cursor-pointer hover:border-zinc-700 transition">' +
                 '<img src="' +
                 escapeHtml(poster) +
                 '" class="w-16 h-24 object-cover rounded-xl shrink-0 bg-zinc-900" />' +
@@ -1442,11 +1442,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const reactHtml = reactions
             .map(
               (em) =>
-                '<button onclick="app.setItemReaction(\'' +
+                '<button onclick="app.setItemReaction(&quot;' +
                 escapeHtml(item.id) +
                 "', '" +
                 em +
-                '\')" class="w-9 h-9 rounded-full ' +
+                '&quot;)" class="w-9 h-9 rounded-full ' +
                 (item.reaction === em ? "tv-yellow-bg" : "bg-zinc-800") +
                 ' text-base flex items-center justify-center">' +
                 em +
@@ -1471,16 +1471,16 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             (Number(item.runtimeMins) || 45) +
             "m</p>" +
             '<div class="flex items-center gap-2 pt-1 flex-wrap">' +
-            '<button onclick="app.toggleFavoriteItem(\'' +
+            '<button onclick="app.toggleFavoriteItem(&quot;' +
             escapeHtml(item.id) +
-            '\')" class="px-3 py-1.5 rounded-full text-xs font-bold ' +
+            '&quot;)" class="px-3 py-1.5 rounded-full text-xs font-bold ' +
             (item.isFavorite ? "tv-yellow-bg" : "bg-zinc-800 text-zinc-200") +
             '">' +
             (item.isFavorite ? "★ Favorited" : "☆ Favorite") +
             "</button>" +
-            '<button onclick="app.incrementRewatch(\'' +
+            '<button onclick="app.incrementRewatch(&quot;' +
             escapeHtml(item.id) +
-            '\')" class="px-3 py-1.5 rounded-full bg-zinc-800 text-xs font-bold text-zinc-200">↻ Rewatch (' +
+            '&quot;)" class="px-3 py-1.5 rounded-full bg-zinc-800 text-xs font-bold text-zinc-200">↻ Rewatch (' +
             (Number(item.rewatchCount) || 0) +
             ")</button>" +
             "</div>" +
@@ -1495,13 +1495,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             reactHtml +
             "</div></div>" +
             '<div class="pt-3 border-t border-zinc-800 flex justify-between items-center">' +
-            '<button onclick="app.removeItemFromLibrary(\'' +
+            '<button onclick="app.removeItemFromLibrary(&quot;' +
             escapeHtml(item.id) +
-            '\')" class="text-xs font-bold text-rose-400 hover:underline">Remove from Watch List</button>' +
+            '&quot;)" class="text-xs font-bold text-rose-400 hover:underline">Remove from Watch List</button>' +
             (this.detailType === "movie"
-              ? '<button onclick="app.toggleMovieWatched(\'' +
+              ? '<button onclick="app.toggleMovieWatched(&quot;' +
                 escapeHtml(item.id) +
-                '\')" class="px-4 py-2 rounded-full tv-yellow-bg text-xs font-extrabold">' +
+                '&quot;)" class="px-4 py-2 rounded-full tv-yellow-bg text-xs font-extrabold">' +
                 (item.watched ? "✓ Watched" : "Mark Watched") +
                 "</button>"
               : "") +
@@ -1529,7 +1529,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             seasonNum +
             ')" class="p-3.5 flex items-center justify-between cursor-pointer hover:bg-zinc-800/40">' +
             '<div class="flex items-center gap-3">' +
-            '<button onclick="event.stopPropagation(); app.toggleSeasonWatched(\'' +
+            '<button onclick="event.stopPropagation(); app.toggleSeasonWatched(&quot;' +
             escapeHtml(item.id) +
             "', " +
             seasonNum +
@@ -1558,11 +1558,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 item.posterUrl ||
                 "https://via.placeholder.com/160x90/1f1f26/facc15?text=" + encodeURIComponent(ep.code);
               html +=
-                '<div onclick="app.toggleEpisodeCode(\'' +
+                '<div onclick="app.toggleEpisodeCode(&quot;' +
                 escapeHtml(item.id) +
                 "', '" +
                 escapeHtml(ep.code) +
-                '\')" class="py-3 flex items-center gap-3 cursor-pointer">' +
+                '&quot;)" class="py-3 flex items-center gap-3 cursor-pointer">' +
                 '<img src="' +
                 escapeHtml(thumb) +
                 '" class="w-24 h-14 object-cover rounded-xl bg-zinc-900 shrink-0" />' +
@@ -1655,9 +1655,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           favEl.innerHTML = list
             .map(
               (s) =>
-                '<div onclick="app.openItemById(\'' +
+                '<div onclick="app.openItemById(&quot;' +
                 escapeHtml(s.id) +
-                '\')" class="w-28 shrink-0 cursor-pointer space-y-1">' +
+                '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
                 '<div class="relative">' +
                 '<img src="' +
                 escapeHtml(s.posterUrl || "") +
@@ -1676,11 +1676,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           recSeriesEl.innerHTML = shows
             .map((s) => {
               const watched = s.watchedEpisodes || [];
-              const lastCode = (watched[watched.length - 1] || "S01E01").replace(/^S(\d+)E(\d+)$/, "S$1·E$2");
+              const lastCode = (watched[watched.length - 1] || "S01E01").replace(/^S([0-9]+)E([0-9]+)$/, "S$1·E$2");
               return (
-                '<div onclick="app.openItemById(\'' +
+                '<div onclick="app.openItemById(&quot;' +
                 escapeHtml(s.id) +
-                '\')" class="w-28 shrink-0 cursor-pointer space-y-1">' +
+                '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
                 '<div class="relative">' +
                 '<img src="' +
                 escapeHtml(s.posterUrl || "") +
@@ -1710,9 +1710,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           recMoviesEl.innerHTML = list
             .map(
               (m) =>
-                '<div onclick="app.openItemById(\'' +
+                '<div onclick="app.openItemById(&quot;' +
                 escapeHtml(m.id) +
-                '\')" class="w-28 shrink-0 cursor-pointer space-y-1">' +
+                '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
                 '<div class="relative">' +
                 '<img src="' +
                 escapeHtml(m.posterUrl || "") +
@@ -1771,9 +1771,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             escapeHtml(otherUser) +
             '</div><div class="text-xs tv-yellow-text font-semibold">Shared Household Profile · Synced</div></div>' +
             "</div>" +
-            '<button onclick="app.quickSwitchUser(\'' +
+            '<button onclick="app.quickSwitchUser(&quot;' +
             escapeHtml(otherUser) +
-            '\'); app.closeFollowingSheet();" class="px-3.5 py-1.5 rounded-full tv-yellow-bg text-xs font-extrabold">Switch</button>' +
+            '&quot;); app.closeFollowingSheet();" class="px-3.5 py-1.5 rounded-full tv-yellow-bg text-xs font-extrabold">Switch</button>' +
             "</div>";
           return;
         }
