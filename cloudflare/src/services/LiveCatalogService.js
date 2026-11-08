@@ -194,50 +194,166 @@ export class LiveCatalogService {
     return null;
   }
 
+  static _buildTmdbRequest(path, env = null) {
+    const readToken = String(env?.TMDB_READ_TOKEN || "").trim();
+    const apiKey = String(env?.TMDB_API_KEY || "").trim();
+    if (!readToken && !apiKey) return null;
+    const sep = path.includes("?") ? "&" : "?";
+    const url = apiKey && !readToken
+      ? `https://api.themoviedb.org/3${path}${sep}api_key=${encodeURIComponent(apiKey)}`
+      : `https://api.themoviedb.org/3${path}`;
+    const headers = { accept: "application/json" };
+    if (readToken) {
+      headers["Authorization"] = `Bearer ${readToken}`;
+    }
+    return { url, headers };
+  }
+
   /**
-   * Searches live TV Shows, Movies, and Actors across free public APIs:
-   *  - TVMaze (`/search/shows?q=...`) for TV Shows
-   *  - iTunes Search API (`/search?term=...&entity=movie`) for Movies
-   *  - TVMaze (`/search/people?q=...`) for Actors
+   * Searches live TV Shows, Movies, and Actors across:
+   *  - TMDB v3 (`/3/search/multi`) when `TMDB_READ_TOKEN` or `TMDB_API_KEY` is configured
+   *  - TVMaze (`/search/shows?q=...` & `/search/people?q=...`) for TV Shows & Actors
+   *  - IMDb Suggestion API + Apple iTunes Search API for Movies
    */
-  static async searchMulti(query, { fetchImpl = fetch } = {}) {
+  static async searchMulti(query, { fetchImpl = fetch, env = null } = {}) {
     const q = String(query || "").trim();
     if (!q) return { results: [] };
 
     const results = [];
+    const seenShowTitles = new Set();
     const seenMovieTitles = new Set();
+    const seenActorNames = new Set();
     try {
-      const [showsRes, imdbRes, moviesRes, peopleRes] = await Promise.allSettled([
+      const tmdbReq = LiveCatalogService._buildTmdbRequest(
+        `/search/multi?query=${encodeURIComponent(q)}&include_adult=false&language=en-US&page=1`,
+        env
+      );
+      const [tmdbRes, showsRes, imdbRes, moviesRes, peopleRes] = await Promise.allSettled([
+        tmdbReq ? fetchImpl(tmdbReq.url, { headers: tmdbReq.headers }) : Promise.resolve(null),
         fetchImpl(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(q)}`),
         fetchImpl(`https://v3.sg.media-imdb.com/suggestion/x/${encodeURIComponent(q)}.json`),
         fetchImpl(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&country=US&entity=movie&limit=10`),
         fetchImpl(`https://api.tvmaze.com/search/people?q=${encodeURIComponent(q)}`),
       ]);
 
-      if (showsRes.status === "fulfilled" && showsRes.value.ok) {
-        const showsData = await showsRes.value.json();
-        for (const entry of (showsData || []).slice(0, 12)) {
-          const show = entry?.show;
-          if (!show || !show.id) continue;
-          const premiered = String(show.premiered || "");
-          const year = premiered ? parseInt(premiered.slice(0, 4), 10) || 2024 : 2024;
-          const network = show.network?.name || show.webChannel?.name || "Streaming";
-          const posterUrl = show.image?.medium || show.image?.original || "";
-          results.push({
-            id: `tvmaze_${show.id}`,
-            tvmazeId: show.id,
-            mediaType: "show",
-            title: show.name || "Untitled Show",
-            year,
-            network,
-            status: show.status || "Running",
-            runtimeMins: Number(show.averageRuntime || show.runtime) || 45,
-            genres: Array.isArray(show.genres) ? show.genres : [],
-            rating: Number(show.rating?.average) || 7.8,
-            posterUrl: posterUrl.replace(/^http:\/\//i, "https://"),
-            overview: stripHtml(show.summary),
-          });
+      // Map TVMaze shows by normalized title so TMDB TV results can also carry tvmazeId for instant full-episode lookup
+      const tvmazeByTitle = new Map();
+      let showsData = [];
+      if (showsRes.status === "fulfilled" && showsRes.value && showsRes.value.ok) {
+        showsData = (await showsRes.value.json()) || [];
+        for (const entry of showsData) {
+          const s = entry?.show;
+          if (s?.id && s?.name) {
+            const k = String(s.name).trim().toLowerCase();
+            if (!tvmazeByTitle.has(k)) tvmazeByTitle.set(k, s);
+          }
         }
+      }
+
+      if (tmdbRes.status === "fulfilled" && tmdbRes.value && tmdbRes.value.ok) {
+        const tmdbData = await tmdbRes.value.json();
+        for (const item of (tmdbData?.results || []).slice(0, 18)) {
+          if (!item || !item.id) continue;
+          const mType = String(item.media_type || "").toLowerCase();
+          if (mType === "tv") {
+            const title = item.name || item.original_name || "Untitled Show";
+            const normTitle = String(title).trim().toLowerCase();
+            if (seenShowTitles.has(normTitle)) continue;
+            seenShowTitles.add(normTitle);
+            const firstAir = String(item.first_air_date || "");
+            const year = firstAir ? parseInt(firstAir.slice(0, 4), 10) || 2024 : 2024;
+            const matchedTvMaze = tvmazeByTitle.get(normTitle);
+            const posterUrl = item.poster_path
+              ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
+              : (matchedTvMaze?.image?.medium || "").replace(/^http:\/\//i, "https://");
+            results.push({
+              id: matchedTvMaze ? `tvmaze_${matchedTvMaze.id}` : `tmdb_tv_${item.id}`,
+              tvmazeId: matchedTvMaze ? matchedTvMaze.id : 0,
+              tmdbId: item.id,
+              mediaType: "show",
+              title,
+              year,
+              network: matchedTvMaze?.network?.name || matchedTvMaze?.webChannel?.name || "Streaming",
+              status: matchedTvMaze?.status || "Running",
+              runtimeMins: Number(matchedTvMaze?.averageRuntime || matchedTvMaze?.runtime) || 45,
+              genres: Array.isArray(matchedTvMaze?.genres) ? matchedTvMaze.genres : ["TV Series"],
+              rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 8.0,
+              posterUrl,
+              overview: stripHtml(item.overview || matchedTvMaze?.summary || ""),
+            });
+          } else if (mType === "movie") {
+            const title = item.title || item.original_title || "Untitled Movie";
+            const rel = String(item.release_date || "");
+            const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
+            const key = `${String(title).toLowerCase()}_${year}`;
+            if (seenMovieTitles.has(key)) continue;
+            seenMovieTitles.add(key);
+            const posterUrl = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : "";
+            results.push({
+              id: `movie_${item.id}`,
+              tmdbId: item.id,
+              mediaType: "movie",
+              title,
+              year,
+              director: "",
+              runtimeMins: 125,
+              genres: ["Movie"],
+              streamingService: "Theaters / Streaming",
+              rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 7.8,
+              posterUrl,
+              overview: stripHtml(item.overview || ""),
+            });
+          } else if (mType === "person") {
+            const name = item.name || "";
+            if (!name || seenActorNames.has(name.toLowerCase())) continue;
+            seenActorNames.add(name.toLowerCase());
+            const img = item.profile_path ? `https://image.tmdb.org/t/p/w300${item.profile_path}` : "";
+            const knownForTitles = (item.known_for || [])
+              .map((k) => k?.title || k?.name)
+              .filter(Boolean)
+              .slice(0, 3)
+              .join(", ");
+            results.push({
+              id: `actor_tmdb_${item.id}`,
+              tmdbId: item.id,
+              mediaType: "actor",
+              name,
+              title: name,
+              year: 1985,
+              role: item.known_for_department || "Acting",
+              posterUrl: img,
+              imageUrl: img,
+              imdbUrl: `https://www.imdb.com/find/?q=${encodeURIComponent(name)}`,
+              overview: knownForTitles ? `Known for ${knownForTitles}` : "Actor",
+            });
+          }
+        }
+      }
+
+      for (const entry of showsData.slice(0, 12)) {
+        const show = entry?.show;
+        if (!show || !show.id) continue;
+        const normTitle = String(show.name || "").trim().toLowerCase();
+        if (seenShowTitles.has(normTitle)) continue;
+        seenShowTitles.add(normTitle);
+        const premiered = String(show.premiered || "");
+        const year = premiered ? parseInt(premiered.slice(0, 4), 10) || 2024 : 2024;
+        const network = show.network?.name || show.webChannel?.name || "Streaming";
+        const posterUrl = show.image?.medium || show.image?.original || "";
+        results.push({
+          id: `tvmaze_${show.id}`,
+          tvmazeId: show.id,
+          mediaType: "show",
+          title: show.name || "Untitled Show",
+          year,
+          network,
+          status: show.status || "Running",
+          runtimeMins: Number(show.averageRuntime || show.runtime) || 45,
+          genres: Array.isArray(show.genres) ? show.genres : [],
+          rating: Number(show.rating?.average) || 7.8,
+          posterUrl: posterUrl.replace(/^http:\/\//i, "https://"),
+          overview: stripHtml(show.summary),
+        });
       }
 
       if (imdbRes.status === "fulfilled" && imdbRes.value.ok) {
@@ -323,10 +439,81 @@ export class LiveCatalogService {
   }
 
   /**
-   * Fetches full TV show details + complete episode list + cast from TVMaze (`/shows/:id?embed[]=episodes&embed[]=cast`).
+   * Fetches full TV show details + complete episode list + cast from TMDB (`/3/tv/:id`) or TVMaze (`/shows/:id?embed[]=episodes&embed[]=cast`).
    */
-  static async fetchFullShowFromTvMaze(tvmazeId, { fetchImpl = fetch } = {}) {
-    const cleanId = Number(String(tvmazeId || "").replace(/^tvmaze_/, ""));
+  static async fetchFullShowFromTvMaze(tvmazeId, { fetchImpl = fetch, env = null } = {}) {
+    const rawStr = String(tvmazeId || "").trim();
+    if (rawStr.startsWith("tmdb_tv_")) {
+      const tmdbId = Number(rawStr.replace(/^tmdb_tv_/, ""));
+      const tmdbReq = LiveCatalogService._buildTmdbRequest(
+        `/tv/${tmdbId}?append_to_response=credits&language=en-US`,
+        env
+      );
+      if (tmdbId && tmdbReq) {
+        try {
+          const resp = await fetchImpl(tmdbReq.url, { headers: tmdbReq.headers });
+          if (resp.ok) {
+            const show = await resp.json();
+            const firstAir = String(show.first_air_date || "");
+            const year = firstAir ? parseInt(firstAir.slice(0, 4), 10) || 2024 : 2024;
+            const network = show.networks?.[0]?.name || "Streaming";
+            const posterUrl = show.poster_path ? `https://image.tmdb.org/t/p/w500${show.poster_path}` : "";
+            const castList = (show.credits?.cast || [])
+              .slice(0, 8)
+              .map((c) => c?.name)
+              .filter(Boolean);
+            const defaultRuntime = Number(show.episode_run_time?.[0]) || 45;
+            const seasonNums = (show.seasons || [])
+              .map((s) => Number(s.season_number))
+              .filter((n) => n >= 1)
+              .slice(0, 8);
+            const seasonReqs = seasonNums.map((sNum) => {
+              const sReq = LiveCatalogService._buildTmdbRequest(`/tv/${tmdbId}/season/${sNum}?language=en-US`, env);
+              return sReq ? fetchImpl(sReq.url, { headers: sReq.headers }) : Promise.resolve(null);
+            });
+            const seasonResps = await Promise.allSettled(seasonReqs);
+            const episodes = [];
+            for (const sRes of seasonResps) {
+              if (sRes.status === "fulfilled" && sRes.value && sRes.value.ok) {
+                const sData = await sRes.value.json();
+                const sNum = Number(sData.season_number) || 1;
+                for (const ep of sData.episodes || []) {
+                  const eNum = Number(ep.episode_number) || 1;
+                  episodes.push({
+                    code: formatEpisodeCode(sNum, eNum),
+                    season: sNum,
+                    number: eNum,
+                    title: ep.name || `Episode ${eNum}`,
+                    airDate: ep.air_date || "",
+                    runtimeMins: Number(ep.runtime) || defaultRuntime,
+                    imageUrl: ep.still_path ? `https://image.tmdb.org/t/p/w300${ep.still_path}` : "",
+                    overview: stripHtml(ep.overview),
+                  });
+                }
+              }
+            }
+            return {
+              id: `tmdb_tv_${show.id}`,
+              tvmazeId: 0,
+              tmdbId: show.id,
+              title: show.name || "Untitled Show",
+              year,
+              network,
+              status: show.status || "Running",
+              runtimeMins: defaultRuntime,
+              genres: (show.genres || []).map((g) => g?.name).filter(Boolean),
+              cast: castList,
+              rating: show.vote_average ? Math.round(Number(show.vote_average) * 10) / 10 : 8.0,
+              posterUrl,
+              overview: stripHtml(show.overview),
+              episodes,
+            };
+          }
+        } catch (_) {}
+      }
+    }
+
+    const cleanId = Number(rawStr.replace(/^tvmaze_/, ""));
     if (!cleanId) return null;
 
     try {

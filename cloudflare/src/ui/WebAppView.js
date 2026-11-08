@@ -1406,12 +1406,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           return;
         }
 
-        // TV Show -> fetch full episode guide from TVMaze
+        // TV Show -> fetch full episode guide from TMDB or TVMaze
         if (!(this.state.shows || []).some((s) => s.id === item.id)) {
           let fullShow = null;
-          if (item.tvmazeId) {
+          const lookupKey = item.tvmazeId || item.id;
+          if (lookupKey) {
             try {
-              const res = await fetch("/api/show-details?tvmazeId=" + encodeURIComponent(item.tvmazeId));
+              const res = await fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey));
               if (res.ok) fullShow = await res.json();
             } catch (_) {}
           }
@@ -1446,9 +1447,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           this.detailItem = show;
           this.detailType = "show";
           this.detailTab = "episodes";
-          // Lazily enrich episodes from TVMaze if only stub episodes exist
-          if (show.tvmazeId && (!show.episodes || show.episodes.length <= 1)) {
-            fetch("/api/show-details?tvmazeId=" + encodeURIComponent(show.tvmazeId))
+          // Lazily enrich episodes from TMDB or TVMaze if only stub episodes exist
+          const lookupKey = show.tvmazeId || show.id;
+          if (lookupKey && (!show.episodes || show.episodes.length <= 1)) {
+            fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey))
               .then((r) => (r.ok ? r.json() : null))
               .then((full) => {
                 if (full && Array.isArray(full.episodes) && full.episodes.length > 0) {
@@ -1609,7 +1611,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               (em) =>
                 '<button onclick="app.setItemReaction(&quot;' +
                 escapeHtml(item.id) +
-                "', '" +
+                "&quot;, &quot;" +
                 em +
                 '&quot;)" class="w-9 h-9 rounded-full ' +
                 (item.reaction === em ? "tv-yellow-bg" : "bg-zinc-800") +

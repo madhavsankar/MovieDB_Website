@@ -49,12 +49,22 @@ android {
             ?: project.findProperty("GOOGLE_CLIENT_ID")?.toString()
             ?: System.getenv("GOOGLE_CLIENT_ID")
             ?: ""
+        val tmdbApiKey = localProps.getProperty("TMDB_API_KEY")
+            ?: project.findProperty("TMDB_API_KEY")?.toString()
+            ?: System.getenv("TMDB_API_KEY")
+            ?: ""
+        val tmdbReadToken = localProps.getProperty("TMDB_READ_TOKEN")
+            ?: project.findProperty("TMDB_READ_TOKEN")?.toString()
+            ?: System.getenv("TMDB_READ_TOKEN")
+            ?: ""
 
         buildConfigField("String", "GEMINI_API_KEY", "\"$geminiKey\"")
         buildConfigField("String", "FIREBASE_PROJECT_ID", "\"$firebaseProjectId\"")
         buildConfigField("String", "DEFAULT_USER_ID", "\"$defaultUserId\"")
         buildConfigField("String", "ALLOWED_EMAILS", "\"$allowedEmails\"")
         buildConfigField("String", "GOOGLE_CLIENT_ID", "\"$googleClientId\"")
+        buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
+        buildConfigField("String", "TMDB_READ_TOKEN", "\"$tmdbReadToken\"")
     }
 
     val keystorePath = localProps.getProperty("KEYSTORE_FILE")

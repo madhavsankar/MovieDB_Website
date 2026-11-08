@@ -1,5 +1,6 @@
 package com.tvtime.tracker.data
 
+import com.tvtime.tracker.BuildConfig
 import com.tvtime.tracker.domain.EpisodeModel
 import com.tvtime.tracker.domain.SearchResultItem
 import com.tvtime.tracker.domain.TvTimeProgressCalculator
@@ -12,10 +13,10 @@ import java.net.URL
 import java.net.URLEncoder
 
 /**
- * Live Public Catalog Service for TV Time: Show & Movie Tracker:
- *  - TVMaze Public API (`https://api.tvmaze.com`) — 100% Free, Keyless Live Shows, Seasons, Episodes, Air Dates & Actors
- *  - Apple iTunes Search API (`https://itunes.apple.com/search`) — 100% Free, Keyless Movies, Posters & Directors
- *  - Starter Seed Catalog (`Severance`, `The Bear`, `Silo`, `Dune: Part Two`, `Oppenheimer`, `Conclave`)
+ * Live Catalog Service for TV Time: Show & Movie Tracker:
+ *  - TMDB API v3 (`https://api.themoviedb.org/3/search/multi`) — Official Movies, TV Shows & Actors when `TMDB_READ_TOKEN` or `TMDB_API_KEY` is configured
+ *  - TVMaze Public API (`https://api.tvmaze.com`) — Live Shows, Seasons, Episodes, Air Dates & Actors
+ *  - IMDb Suggestion API & Apple iTunes Search API — Fallback Movie Search
  */
 object LiveMediaCatalogService {
 
@@ -26,6 +27,107 @@ object LiveMediaCatalogService {
         val q = query.trim().ifEmpty { "Game of Thrones" }
         val encoded = URLEncoder.encode(q, "UTF-8")
         val results = mutableListOf<SearchResultItem>()
+        val seenShows = mutableSetOf<String>()
+        val seenMovies = mutableSetOf<String>()
+
+        // 0. TMDB v3 Multi Search (Movies, TV Shows & People)
+        val tmdbToken = BuildConfig.TMDB_READ_TOKEN.trim()
+        val tmdbKey = BuildConfig.TMDB_API_KEY.trim()
+        if (tmdbToken.isNotEmpty() || tmdbKey.isNotEmpty()) {
+            try {
+                val tmdbUrl = if (tmdbToken.isNotEmpty()) {
+                    "https://api.themoviedb.org/3/search/multi?query=$encoded&include_adult=false&language=en-US&page=1"
+                } else {
+                    "https://api.themoviedb.org/3/search/multi?query=$encoded&include_adult=false&language=en-US&page=1&api_key=$tmdbKey"
+                }
+                val conn = (URL(tmdbUrl).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    setRequestProperty("Accept", "application/json")
+                    if (tmdbToken.isNotEmpty()) {
+                        setRequestProperty("Authorization", "Bearer $tmdbToken")
+                    }
+                    connectTimeout = 5000
+                    readTimeout = 5000
+                }
+                if (conn.responseCode in 200..299) {
+                    val text = conn.inputStream.bufferedReader().use { it.readText() }
+                    val arr = JSONObject(text).optJSONArray("results") ?: JSONArray()
+                    for (i in 0 until minOf(16, arr.length())) {
+                        val item = arr.optJSONObject(i) ?: continue
+                        val id = item.optInt("id", 0)
+                        if (id <= 0) continue
+                        val mType = item.optString("media_type", "").lowercase()
+                        if (mType == "movie") {
+                            val title = item.optString("title", item.optString("original_title", "Untitled Movie"))
+                            val year = item.optString("release_date", "").take(4).toIntOrNull() ?: 2024
+                            val key = "${title.lowercase()}_$year"
+                            if (!seenMovies.add(key)) continue
+                            val posterPath = item.optString("poster_path", "")
+                            val poster = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else ""
+                            val rating = (item.optDouble("vote_average", 7.8).takeIf { !it.isNaN() && it > 0 } ?: 7.8)
+                            results.add(
+                                SearchResultItem(
+                                    externalId = "movie_$id",
+                                    tmdbId = id,
+                                    mediaType = "movie",
+                                    title = title,
+                                    year = year,
+                                    networkOrDirector = "TMDB Feature Film",
+                                    status = "Released",
+                                    runtimeMins = 125,
+                                    genresCsv = "Movie",
+                                    rating = Math.round(rating * 10.0) / 10.0,
+                                    posterUrl = poster,
+                                    overview = stripHtml(item.optString("overview", ""))
+                                )
+                            )
+                        } else if (mType == "tv") {
+                            val title = item.optString("name", item.optString("original_name", "Untitled Show"))
+                            if (!seenShows.add(title.lowercase())) continue
+                            val year = item.optString("first_air_date", "").take(4).toIntOrNull() ?: 2024
+                            val posterPath = item.optString("poster_path", "")
+                            val poster = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else ""
+                            val rating = (item.optDouble("vote_average", 8.0).takeIf { !it.isNaN() && it > 0 } ?: 8.0)
+                            results.add(
+                                SearchResultItem(
+                                    externalId = "tmdb_tv_$id",
+                                    tvmazeId = 0,
+                                    tmdbId = id,
+                                    mediaType = "show",
+                                    title = title,
+                                    year = year,
+                                    networkOrDirector = "Streaming",
+                                    status = "Running",
+                                    runtimeMins = 45,
+                                    genresCsv = "TV Series",
+                                    rating = Math.round(rating * 10.0) / 10.0,
+                                    posterUrl = poster,
+                                    overview = stripHtml(item.optString("overview", ""))
+                                )
+                            )
+                        } else if (mType == "person") {
+                            val name = item.optString("name", "")
+                            if (name.isBlank()) continue
+                            val profilePath = item.optString("profile_path", "")
+                            val img = if (profilePath.isNotBlank() && profilePath != "null") "https://image.tmdb.org/t/p/w300$profilePath" else ""
+                            results.add(
+                                SearchResultItem(
+                                    externalId = "actor_tmdb_$id",
+                                    tmdbId = id,
+                                    mediaType = "actor",
+                                    title = name,
+                                    year = 1985,
+                                    networkOrDirector = item.optString("known_for_department", "Acting"),
+                                    posterUrl = img,
+                                    imdbUrl = "https://www.imdb.com/find/?q=${URLEncoder.encode(name, "UTF-8")}",
+                                    overview = "Actor"
+                                )
+                            )
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
 
         // 1. TVMaze Shows Search
         try {
@@ -41,6 +143,17 @@ object LiveMediaCatalogService {
                     val show = arr.optJSONObject(i)?.optJSONObject("show") ?: continue
                     val id = show.optInt("id", 0)
                     if (id <= 0) continue
+                    val showTitle = show.optString("name", "Untitled Show")
+                    // Attach tvmazeId if already added via TMDB
+                    val existingIdx = results.indexOfFirst { it.mediaType == "show" && it.title.equals(showTitle, ignoreCase = true) }
+                    if (existingIdx >= 0) {
+                        val existing = results[existingIdx]
+                        if (existing.tvmazeId == 0) {
+                            results[existingIdx] = existing.copy(externalId = "tvmaze_$id", tvmazeId = id)
+                        }
+                        continue
+                    }
+                    seenShows.add(showTitle.lowercase())
                     val premiered = show.optString("premiered", "")
                     val year = premiered.take(4).toIntOrNull() ?: 2024
                     val network = show.optJSONObject("network")?.optString("name")
@@ -58,7 +171,7 @@ object LiveMediaCatalogService {
                             externalId = "tvmaze_$id",
                             tvmazeId = id,
                             mediaType = "show",
-                            title = show.optString("name", "Untitled Show"),
+                            title = showTitle,
                             year = year,
                             networkOrDirector = network,
                             status = show.optString("status", "Running"),
@@ -74,7 +187,6 @@ object LiveMediaCatalogService {
         } catch (_: Exception) {}
 
         // 2. IMDb + iTunes Movies Search
-        val seenMovies = mutableSetOf<String>()
         try {
             val conn = (URL("https://v3.sg.media-imdb.com/suggestion/x/$encoded.json").openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"

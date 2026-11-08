@@ -255,6 +255,48 @@ def search_multi(query):
     def fetch_movies():
         out = []
         seen = set()
+        tmdb_token = (CONFIG.get("TMDB_READ_TOKEN") or os.environ.get("TMDB_READ_TOKEN") or "").strip()
+        tmdb_key = (CONFIG.get("TMDB_API_KEY") or os.environ.get("TMDB_API_KEY") or "").strip()
+        if tmdb_token or tmdb_key:
+            try:
+                tmdb_url = (
+                    f"https://api.themoviedb.org/3/search/movie?query={enc}&include_adult=false&language=en-US&page=1"
+                    if tmdb_token
+                    else f"https://api.themoviedb.org/3/search/movie?query={enc}&include_adult=false&language=en-US&page=1&api_key={urllib.parse.quote(tmdb_key)}"
+                )
+                req_headers = {"User-Agent": "TVTimeTracker/1.0", "Accept": "application/json"}
+                if tmdb_token:
+                    req_headers["Authorization"] = f"Bearer {tmdb_token}"
+                req = urllib.request.Request(tmdb_url, headers=req_headers)
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    tmdb_data = json.loads(r.read().decode("utf-8"))
+                for item in (tmdb_data.get("results") or [])[:12]:
+                    title = item.get("title") or item.get("original_title")
+                    if not item.get("id") or not title:
+                        continue
+                    rel = str(item.get("release_date") or "2024")[:4]
+                    yr = int(rel) if rel.isdigit() else 2024
+                    key = f"{title.lower()}_{yr}"
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    poster_path = item.get("poster_path") or ""
+                    out.append({
+                        "id": f"movie_{item['id']}",
+                        "tmdbId": item["id"],
+                        "mediaType": "movie",
+                        "title": title,
+                        "year": yr,
+                        "runtimeMins": 125,
+                        "genres": ["Movie"],
+                        "director": "",
+                        "streamingService": "Theaters / Streaming",
+                        "rating": round(float(item.get("vote_average") or 7.8), 1),
+                        "posterUrl": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else "",
+                        "overview": item.get("overview") or "",
+                    })
+            except Exception:
+                pass
         try:
             imdb_data = http_get_json(f"https://v3.sg.media-imdb.com/suggestion/x/{enc}.json")
             for item in (imdb_data.get("d") or []):

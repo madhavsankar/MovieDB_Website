@@ -156,16 +156,16 @@ export class HttpRouter {
       });
     }
 
-    // Public catalog endpoints so live TVMaze / iTunes search works seamlessly
+    // Public catalog endpoints so live TMDB / TVMaze / iTunes search works seamlessly
     if (request.method === "GET" && path === "/api/search") {
       const q = url.searchParams.get("q") || "";
-      const data = await LiveCatalogService.searchMulti(q);
+      const data = await LiveCatalogService.searchMulti(q, { env: this.env });
       return this.json(data);
     }
 
     if (request.method === "GET" && path === "/api/show-details") {
-      const id = url.searchParams.get("tvmazeId") || "";
-      const show = await LiveCatalogService.fetchFullShowFromTvMaze(id);
+      const id = url.searchParams.get("tvmazeId") || url.searchParams.get("id") || "";
+      const show = await LiveCatalogService.fetchFullShowFromTvMaze(id, { env: this.env });
       if (!show) return this.json({ error: "Show not found" }, 404);
       return this.json(show);
     }
