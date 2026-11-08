@@ -8,8 +8,8 @@
 
 export const STARTER_SHOWS = [
   {
-    id: "tvmaze_49059",
-    tvmazeId: 49059,
+    id: "tvmaze_44933",
+    tvmazeId: 44933,
     tmdbId: 95396,
     title: "Severance",
     year: 2022,
@@ -19,7 +19,7 @@ export const STARTER_SHOWS = [
     genres: ["Drama", "Sci-Fi", "Mystery"],
     cast: ["Adam Scott", "Britt Lower", "John Turturro", "Patricia Arquette"],
     rating: 8.7,
-    posterUrl: "https://static.tvmaze.com/uploads/images/medium_portrait/548/1371268.jpg",
+    posterUrl: "https://static.tvmaze.com/uploads/images/medium_portrait/548/1371406.jpg",
     overview: "Mark leads a team of office workers whose memories have been surgically divided between their work and personal lives.",
     userStatus: "watching",
     userRating: 5,
@@ -52,8 +52,8 @@ export const STARTER_SHOWS = [
     ]
   },
   {
-    id: "tvmaze_55554",
-    tvmazeId: 55554,
+    id: "tvmaze_54198",
+    tvmazeId: 54198,
     tmdbId: 136315,
     title: "The Bear",
     year: 2022,
@@ -63,7 +63,7 @@ export const STARTER_SHOWS = [
     genres: ["Drama", "Comedy"],
     cast: ["Jeremy Allen White", "Ayo Edebiri", "Ebon Moss-Bachrach"],
     rating: 8.6,
-    posterUrl: "https://static.tvmaze.com/uploads/images/medium_portrait/523/1309665.jpg",
+    posterUrl: "https://static.tvmaze.com/uploads/images/medium_portrait/629/1574642.jpg",
     overview: "A young chef from the fine dining world comes home to Chicago to run his family sandwich shop.",
     userStatus: "watching",
     userRating: 5,
@@ -85,8 +85,8 @@ export const STARTER_SHOWS = [
     ]
   },
   {
-    id: "tvmaze_58957",
-    tvmazeId: 58957,
+    id: "tvmaze_38052",
+    tvmazeId: 38052,
     tmdbId: 125988,
     title: "Silo",
     year: 2023,
@@ -96,7 +96,7 @@ export const STARTER_SHOWS = [
     genres: ["Drama", "Sci-Fi", "Thriller"],
     cast: ["Rebecca Ferguson", "Common", "Tim Robbins", "Harriet Walter"],
     rating: 8.1,
-    posterUrl: "https://static.tvmaze.com/uploads/images/medium_portrait/539/1349746.jpg",
+    posterUrl: "https://static.tvmaze.com/uploads/images/medium_portrait/631/1577677.jpg",
     overview: "In a ruined and toxic future, thousands live in a giant silo deep underground. After its sheriff breaks a cardinal rule and residents die mysteriously, engineer Juliette starts to uncover shocking secrets.",
     userStatus: "watching",
     userRating: 4,
@@ -128,7 +128,7 @@ export const STARTER_MOVIES = [
     director: "Denis Villeneuve",
     streamingService: "Max",
     rating: 8.5,
-    posterUrl: "https://is1-ssl.mzstatic.com/image/thumb/Video221/v4/71/15/3d/71153d6a-0c85-8f5b-6e87-91d7d7d96f9d/pr_source.lsr/600x900bb.jpg",
+    posterUrl: "https://m.media-amazon.com/images/M/MV5BNTc0YmQxMjEtODI5MC00NjFiLTlkMWUtOGQ5NjFmYWUyZGJhXkEyXkFqcGc@._V1_.jpg",
     overview: "Paul Atreides unites with Chani and the Fremen while on a warpath of revenge against the conspirators who destroyed his family.",
     watched: true,
     watchedAt: "2026-09-12",
@@ -149,7 +149,7 @@ export const STARTER_MOVIES = [
     director: "Christopher Nolan",
     streamingService: "Peacock / Prime Video",
     rating: 8.9,
-    posterUrl: "https://is1-ssl.mzstatic.com/image/thumb/Video116/v4/68/98/48/68984863-8884-30e5-0038-1b91e066e775/pr_source.lsr/600x900bb.jpg",
+    posterUrl: "https://m.media-amazon.com/images/M/MV5BN2JkMDc5MGQtZjg3YS00NmFiLWIyZmQtZTJmNTM5MjVmYTQ4XkEyXkFqcGc@._V1_.jpg",
     overview: "The story of J. Robert Oppenheimer's role in the development of the atomic bomb during World War II.",
     watched: true,
     watchedAt: "2026-08-04",
@@ -170,7 +170,7 @@ export const STARTER_MOVIES = [
     director: "Edward Berger",
     streamingService: "Peacock",
     rating: 7.6,
-    posterUrl: "",
+    posterUrl: "https://m.media-amazon.com/images/M/MV5BYjgxMDI5NmMtNTU3OS00ZDQxLTgxZmEtNzY1ZTBmMDY4NDRkXkEyXkFqcGc@._V1_.jpg",
     overview: "After the unexpected death of the Pope, Cardinal Lawrence is tasked with managing the covert and ancient ritual of electing a new one.",
     watched: false,
     watchedAt: "",
@@ -219,7 +219,7 @@ export const STARTER_ACTORS = [
 
 export class FirestoreRepository {
   constructor(env) {
-    this.projectId = (env?.FIREBASE_PROJECT_ID || "").trim();
+    this.projectId = (env?.FIREBASE_PROJECT_ID || "places-tracker-989b5").trim();
   }
 
   static sanitizeUserId(raw) {

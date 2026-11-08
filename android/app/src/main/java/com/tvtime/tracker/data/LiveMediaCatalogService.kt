@@ -73,9 +73,54 @@ object LiveMediaCatalogService {
             }
         } catch (_: Exception) {}
 
-        // 2. iTunes Movies Search
+        // 2. IMDb + iTunes Movies Search
+        val seenMovies = mutableSetOf<String>()
         try {
-            val conn = (URL("https://itunes.apple.com/search?term=$encoded&entity=movie&limit=8").openConnection() as HttpURLConnection).apply {
+            val conn = (URL("https://v3.sg.media-imdb.com/suggestion/x/$encoded.json").openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 5000
+                readTimeout = 5000
+            }
+            if (conn.responseCode in 200..299) {
+                val text = conn.inputStream.bufferedReader().use { it.readText() }
+                val root = JSONObject(text)
+                val arr = root.optJSONArray("d") ?: JSONArray()
+                for (i in 0 until arr.length()) {
+                    val m = arr.optJSONObject(i) ?: continue
+                    val id = m.optString("id", "")
+                    val title = m.optString("l", "")
+                    val qid = m.optString("qid", "").lowercase()
+                    if (id.isBlank() || title.isBlank()) continue
+                    if (qid == "movie" || qid == "feature" || qid == "tvmovie") {
+                        val year = m.optInt("y", 2024)
+                        val key = "${title.lowercase()}_$year"
+                        if (!seenMovies.add(key)) continue
+                        val stars = m.optString("s", "")
+                        val poster = m.optJSONObject("i")?.optString("imageUrl", "") ?: ""
+                        results.add(
+                            SearchResultItem(
+                                externalId = "movie_$id",
+                                tmdbId = id.filter { it.isDigit() }.toIntOrNull() ?: 0,
+                                mediaType = "movie",
+                                title = title,
+                                year = year,
+                                networkOrDirector = stars.split(",").firstOrNull()?.trim() ?: "Feature Film",
+                                status = "Released",
+                                runtimeMins = 125,
+                                genresCsv = "Movie",
+                                castCsv = stars,
+                                rating = 8.0,
+                                posterUrl = poster,
+                                overview = if (stars.isNotBlank()) "Starring $stars" else "Feature Film"
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        try {
+            val conn = (URL("https://itunes.apple.com/search?term=$encoded&country=US&entity=movie&limit=8").openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = 5000
                 readTimeout = 5000
@@ -88,8 +133,11 @@ object LiveMediaCatalogService {
                     val m = arr.optJSONObject(i) ?: continue
                     val trackId = m.optInt("trackId", 0)
                     if (trackId <= 0) continue
+                    val title = m.optString("trackName", "Untitled Movie")
                     val rel = m.optString("releaseDate", "")
                     val year = rel.take(4).toIntOrNull() ?: 2024
+                    val key = "${title.lowercase()}_$year"
+                    if (!seenMovies.add(key)) continue
                     val runtimeMins = (m.optLong("trackTimeMillis", 7200000L) / 60000L).toInt().coerceAtLeast(45)
                     val poster = m.optString("artworkUrl100", "").replace("100x100bb.jpg", "600x900bb.jpg")
                     results.add(
@@ -97,7 +145,7 @@ object LiveMediaCatalogService {
                             externalId = "movie_$trackId",
                             tmdbId = trackId,
                             mediaType = "movie",
-                            title = m.optString("trackName", "Untitled Movie"),
+                            title = title,
                             year = year,
                             networkOrDirector = m.optString("artistName", "Feature Film"),
                             status = "Released",
@@ -238,8 +286,8 @@ object LiveMediaCatalogService {
         return listOf(
             ShowEntity(
                 userId = userId,
-                externalId = "tvmaze_49059",
-                tvmazeId = 49059,
+                externalId = "tvmaze_44933",
+                tvmazeId = 44933,
                 tmdbId = 95396,
                 title = "Severance",
                 year = 2022,
@@ -249,7 +297,7 @@ object LiveMediaCatalogService {
                 genresCsv = "Drama, Sci-Fi, Mystery",
                 castCsv = "Adam Scott, Britt Lower, John Turturro, Patricia Arquette",
                 rating = 8.7,
-                posterUrl = "https://static.tvmaze.com/uploads/images/medium_portrait/548/1371268.jpg",
+                posterUrl = "https://static.tvmaze.com/uploads/images/medium_portrait/548/1371406.jpg",
                 overview = "Mark leads a team of office workers whose memories have been surgically divided between their work and personal lives.",
                 userStatus = "watching",
                 userRating = 5,
@@ -260,8 +308,8 @@ object LiveMediaCatalogService {
             ),
             ShowEntity(
                 userId = userId,
-                externalId = "tvmaze_55554",
-                tvmazeId = 55554,
+                externalId = "tvmaze_54198",
+                tvmazeId = 54198,
                 tmdbId = 136315,
                 title = "The Bear",
                 year = 2022,
@@ -271,7 +319,7 @@ object LiveMediaCatalogService {
                 genresCsv = "Drama, Comedy",
                 castCsv = "Jeremy Allen White, Ayo Edebiri, Ebon Moss-Bachrach",
                 rating = 8.6,
-                posterUrl = "https://static.tvmaze.com/uploads/images/medium_portrait/523/1309665.jpg",
+                posterUrl = "https://static.tvmaze.com/uploads/images/medium_portrait/629/1574642.jpg",
                 overview = "A young chef from the fine dining world comes home to Chicago to run his family sandwich shop.",
                 userStatus = "watching",
                 userRating = 5,
@@ -282,8 +330,8 @@ object LiveMediaCatalogService {
             ),
             ShowEntity(
                 userId = userId,
-                externalId = "tvmaze_58957",
-                tvmazeId = 58957,
+                externalId = "tvmaze_38052",
+                tvmazeId = 38052,
                 tmdbId = 125988,
                 title = "Silo",
                 year = 2023,
@@ -293,7 +341,7 @@ object LiveMediaCatalogService {
                 genresCsv = "Drama, Sci-Fi, Thriller",
                 castCsv = "Rebecca Ferguson, Common, Tim Robbins",
                 rating = 8.1,
-                posterUrl = "https://static.tvmaze.com/uploads/images/medium_portrait/539/1349746.jpg",
+                posterUrl = "https://static.tvmaze.com/uploads/images/medium_portrait/631/1577677.jpg",
                 overview = "In a ruined and toxic future, thousands live in a giant silo deep underground.",
                 userStatus = "watching",
                 userRating = 4,
@@ -318,6 +366,7 @@ object LiveMediaCatalogService {
             director = "Denis Villeneuve",
             streamingService = "Max",
             rating = 8.5,
+            posterUrl = "https://m.media-amazon.com/images/M/MV5BNTc0YmQxMjEtODI5MC00NjFiLTlkMWUtOGQ5NjFmYWUyZGJhXkEyXkFqcGc@._V1_.jpg",
             overview = "Paul Atreides unites with Chani and the Fremen while on a warpath of revenge.",
             watched = true,
             watchedAt = "2026-09-12",
@@ -338,6 +387,7 @@ object LiveMediaCatalogService {
             director = "Christopher Nolan",
             streamingService = "Peacock / Prime Video",
             rating = 8.9,
+            posterUrl = "https://m.media-amazon.com/images/M/MV5BN2JkMDc5MGQtZjg3YS00NmFiLWIyZmQtZTJmNTM5MjVmYTQ4XkEyXkFqcGc@._V1_.jpg",
             overview = "The story of J. Robert Oppenheimer's role in the development of the atomic bomb.",
             watched = true,
             watchedAt = "2026-08-04",
@@ -357,6 +407,7 @@ object LiveMediaCatalogService {
             director = "Edward Berger",
             streamingService = "Peacock",
             rating = 7.6,
+            posterUrl = "https://m.media-amazon.com/images/M/MV5BYjgxMDI5NmMtNTU3OS00ZDQxLTgxZmEtNzY1ZTBmMDY4NDRkXkEyXkFqcGc@._V1_.jpg",
             overview = "Cardinal Lawrence is tasked with managing the covert election of a new Pope.",
             watched = false
         )

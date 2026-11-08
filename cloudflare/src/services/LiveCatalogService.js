@@ -205,10 +205,12 @@ export class LiveCatalogService {
     if (!q) return { results: [] };
 
     const results = [];
+    const seenMovieTitles = new Set();
     try {
-      const [showsRes, moviesRes, peopleRes] = await Promise.allSettled([
+      const [showsRes, imdbRes, moviesRes, peopleRes] = await Promise.allSettled([
         fetchImpl(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(q)}`),
-        fetchImpl(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=movie&limit=10`),
+        fetchImpl(`https://v3.sg.media-imdb.com/suggestion/x/${encodeURIComponent(q)}.json`),
+        fetchImpl(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&country=US&entity=movie&limit=10`),
         fetchImpl(`https://api.tvmaze.com/search/people?q=${encodeURIComponent(q)}`),
       ]);
 
@@ -238,12 +240,44 @@ export class LiveCatalogService {
         }
       }
 
+      if (imdbRes.status === "fulfilled" && imdbRes.value.ok) {
+        const imdbData = await imdbRes.value.json();
+        for (const item of imdbData?.d || []) {
+          if (!item || !item.id || !item.l) continue;
+          const qid = String(item.qid || "").toLowerCase();
+          if (qid === "movie" || qid === "feature" || qid === "tvmovie") {
+            const key = `${item.l.toLowerCase()}_${item.y || 2024}`;
+            if (seenMovieTitles.has(key)) continue;
+            seenMovieTitles.add(key);
+            const castArr = item.s ? String(item.s).split(",").map((c) => c.trim()).filter(Boolean) : [];
+            results.push({
+              id: `movie_${item.id}`,
+              tmdbId: parseInt(String(item.id).replace(/\D/g, ""), 10) || 0,
+              mediaType: "movie",
+              title: item.l,
+              year: Number(item.y) || 2024,
+              director: castArr[0] || "",
+              cast: castArr,
+              runtimeMins: 125,
+              genres: ["Movie"],
+              streamingService: "Theaters / Streaming",
+              rating: 8.0,
+              posterUrl: item.i?.imageUrl || "",
+              overview: item.s ? `Starring ${item.s}` : "Feature Film",
+            });
+          }
+        }
+      }
+
       if (moviesRes.status === "fulfilled" && moviesRes.value.ok) {
         const moviesData = await moviesRes.value.json();
         for (const item of (moviesData?.results || []).slice(0, 10)) {
           if (!item || !item.trackId) continue;
           const rel = String(item.releaseDate || "");
           const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
+          const key = `${String(item.trackName || "").toLowerCase()}_${year}`;
+          if (seenMovieTitles.has(key)) continue;
+          seenMovieTitles.add(key);
           const runtimeMins = item.trackTimeMillis ? Math.max(45, Math.round(item.trackTimeMillis / 60000)) : 120;
           const artwork = String(item.artworkUrl100 || "").replace("100x100bb.jpg", "600x900bb.jpg");
           results.push({

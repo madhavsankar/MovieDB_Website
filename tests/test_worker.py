@@ -55,6 +55,16 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertGreater(out["stats"]["totalEpisodesWatched"], 0)
         self.assertGreater(out["stats"]["totalMoviesWatched"], 0)
 
+    def test_local_python_server_helpers(self):
+        import server
+
+        st = server.default_user_state("madhavsankar")
+        stats = server.compute_stats(st)
+        self.assertEqual(st["userId"], "madhavsankar")
+        self.assertEqual(len(st["shows"]), 3)
+        self.assertEqual(st["shows"][0]["tvmazeId"], 44933)
+        self.assertGreater(stats["totalMins"], 1000)
+
 
 if __name__ == "__main__":
     unittest.main()
