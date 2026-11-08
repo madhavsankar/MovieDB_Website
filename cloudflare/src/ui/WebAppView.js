@@ -1,25 +1,4 @@
-/**
- * TV Time: Show & Movie Tracker — Web App View (1:1 clone of iOS App id6792364354).
- *
- * Screens & Features:
- *  1. Home Tab (`⌂`):
- *     - Top Segmented Pill: `Shows` | `Movies` | `Upcoming`
- *     - Sub-filter (`Shows` & `Movies`): `Watch List` | `In progress` | `Completed` (+ 3D Shelf View toggle `⊞`)
- *     - Collapsible `"Haven't started yet ^"` section on Shows
- *     - Sub-filter (`Upcoming`): `Watchlist` | `Actors` grouped by relative date headers (`Today`, `5 days`, `1 week`)
- *  2. Search Tab (`🔍`):
- *     - Live search across TVMaze (Shows & Actors) and iTunes (Movies)
- *     - Result count + `Top` | `Newest` | `Oldest` sort pills
- *     - `+` / `👁` / `✓` action buttons on every card
- *  3. Profile Tab (`👤`):
- *     - Avatar, `@handle`, Followers / Following (opens Following sheet: `Users` | `Actors` with IMDb links)
- *     - `TOTAL WATCH TIME` hero card (`Xd Yh`, Series days/hours + eps, Movies days/hours + count)
- *     - Horizontal poster carousels: `Favorite Shows`, `Recently Watched Series`, `Recently Watched Movies`
- *     - `Bring your original TV Time history over` `.zip` / `.json` local importer modal
- *  4. Show / Movie Detail Bottom Sheet:
- *     - `Info` | `Episodes` tabs, collapsible Season accordions, episode thumbnails, air dates, and 1-tap `👁` / `✓`
- */
-
+// TV Time: Show & Movie Tracker — Web App View (1:1 clone of iOS App id6792364354)
 export const WEB_APP_HTML = `<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>

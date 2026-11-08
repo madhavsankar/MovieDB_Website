@@ -60,6 +60,9 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
 
         st = server.default_user_state("madhavsankar")
         stats = server.compute_stats(st)
+        html = server.load_web_app_html()
+        self.assertTrue(html.startswith("<!DOCTYPE html>"))
+        self.assertNotIn("export const WEB_APP_HTML", html)
         self.assertEqual(st["userId"], "madhavsankar")
         self.assertEqual(len(st["shows"]), 3)
         self.assertEqual(st["shows"][0]["tvmazeId"], 44933)

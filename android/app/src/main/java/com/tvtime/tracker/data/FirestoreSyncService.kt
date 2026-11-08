@@ -22,7 +22,7 @@ object FirestoreSyncService {
     const val DEFAULT_USER_ID = "madhavsankar"
 
     private val firebaseProjectId: String
-        get() = BuildConfig.FIREBASE_PROJECT_ID.trim()
+        get() = BuildConfig.FIREBASE_PROJECT_ID.trim().ifBlank { "places-tracker-989b5" }
 
     fun sanitizeUserId(raw: String?): String {
         val trimmed = (raw ?: "").trim().lowercase()

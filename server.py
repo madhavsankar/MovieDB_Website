@@ -47,10 +47,10 @@ def load_web_app_html():
     view_path = os.path.join(ROOT_DIR, "cloudflare", "src", "ui", "WebAppView.js")
     with open(view_path, "r", encoding="utf-8") as f:
         src = f.read()
-    start = src.find("`")
-    end = src.rfind("`")
+    start = src.find("<!DOCTYPE html>")
+    end = src.rfind("</html>")
     if start != -1 and end != -1 and end > start:
-        return src[start + 1 : end]
+        return src[start : end + len("</html>")]
     return "<h1>Error loading WebAppView.js</h1>"
 
 

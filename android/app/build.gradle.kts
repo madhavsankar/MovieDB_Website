@@ -33,14 +33,14 @@ android {
             ?: project.findProperty("GEMINI_API_KEY")?.toString()
             ?: System.getenv("GEMINI_API_KEY")
             ?: ""
-        val firebaseProjectId = localProps.getProperty("FIREBASE_PROJECT_ID")
+        val firebaseProjectId = (localProps.getProperty("FIREBASE_PROJECT_ID")
             ?: project.findProperty("FIREBASE_PROJECT_ID")?.toString()
             ?: System.getenv("FIREBASE_PROJECT_ID")
-            ?: ""
-        val defaultUserId = localProps.getProperty("DEFAULT_USER_ID")
+            ?: "").ifBlank { "places-tracker-989b5" }
+        val defaultUserId = (localProps.getProperty("DEFAULT_USER_ID")
             ?: project.findProperty("DEFAULT_USER_ID")?.toString()
             ?: System.getenv("DEFAULT_USER_ID")
-            ?: "madhavsankar"
+            ?: "madhavsankar").ifBlank { "madhavsankar" }
         val allowedEmails = localProps.getProperty("ALLOWED_EMAILS")
             ?: project.findProperty("ALLOWED_EMAILS")?.toString()
             ?: System.getenv("ALLOWED_EMAILS")
