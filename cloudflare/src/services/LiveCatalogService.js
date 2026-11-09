@@ -210,9 +210,9 @@ export class LiveCatalogService {
   }
 
   /**
-   * Searches live TV Shows, Movies, and Actors across:
+   * Searches live TV Shows and Movies across:
    *  - TMDB v3 (`/3/search/multi`) when `TMDB_READ_TOKEN` or `TMDB_API_KEY` is configured
-   *  - TVMaze (`/search/shows?q=...` & `/search/people?q=...`) for TV Shows & Actors
+   *  - TVMaze (`/search/shows?q=...`) for TV Shows
    *  - IMDb Suggestion API + Apple iTunes Search API for Movies
    */
   static async searchMulti(query, { fetchImpl = fetch, env = null } = {}) {
@@ -222,18 +222,16 @@ export class LiveCatalogService {
     const results = [];
     const seenShowTitles = new Set();
     const seenMovieTitles = new Set();
-    const seenActorNames = new Set();
     try {
       const tmdbReq = LiveCatalogService._buildTmdbRequest(
         `/search/multi?query=${encodeURIComponent(q)}&include_adult=false&language=en-US&page=1`,
         env
       );
-      const [tmdbRes, showsRes, imdbRes, moviesRes, peopleRes] = await Promise.allSettled([
+      const [tmdbRes, showsRes, imdbRes, moviesRes] = await Promise.allSettled([
         tmdbReq ? fetchImpl(tmdbReq.url, { headers: tmdbReq.headers }) : Promise.resolve(null),
         fetchImpl(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(q)}`),
         fetchImpl(`https://v3.sg.media-imdb.com/suggestion/x/${encodeURIComponent(q)}.json`),
         fetchImpl(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&country=US&entity=movie&limit=10`),
-        fetchImpl(`https://api.tvmaze.com/search/people?q=${encodeURIComponent(q)}`),
       ]);
 
       // Map TVMaze shows by normalized title so TMDB TV results can also carry tvmazeId for instant full-episode lookup
@@ -302,29 +300,6 @@ export class LiveCatalogService {
               rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 7.8,
               posterUrl,
               overview: stripHtml(item.overview || ""),
-            });
-          } else if (mType === "person") {
-            const name = item.name || "";
-            if (!name || seenActorNames.has(name.toLowerCase())) continue;
-            seenActorNames.add(name.toLowerCase());
-            const img = item.profile_path ? `https://image.tmdb.org/t/p/w300${item.profile_path}` : "";
-            const knownForTitles = (item.known_for || [])
-              .map((k) => k?.title || k?.name)
-              .filter(Boolean)
-              .slice(0, 3)
-              .join(", ");
-            results.push({
-              id: `actor_tmdb_${item.id}`,
-              tmdbId: item.id,
-              mediaType: "actor",
-              name,
-              title: name,
-              year: 1985,
-              role: item.known_for_department || "Acting",
-              posterUrl: img,
-              imageUrl: img,
-              imdbUrl: `https://www.imdb.com/find/?q=${encodeURIComponent(name)}`,
-              overview: knownForTitles ? `Known for ${knownForTitles}` : "Actor",
             });
           }
         }
@@ -409,27 +384,6 @@ export class LiveCatalogService {
             rating: 7.7,
             posterUrl: artwork,
             overview: stripHtml(item.longDescription || item.shortDescription || ""),
-          });
-        }
-      }
-
-      if (peopleRes.status === "fulfilled" && peopleRes.value.ok) {
-        const peopleData = await peopleRes.value.json();
-        for (const entry of (peopleData || []).slice(0, 5)) {
-          const p = entry?.person;
-          if (!p || !p.id || !p.name) continue;
-          const img = (p.image?.medium || p.image?.original || "").replace(/^http:\/\//i, "https://");
-          results.push({
-            id: `actor_${p.id}`,
-            mediaType: "actor",
-            name: p.name,
-            title: p.name,
-            year: p.birthday ? parseInt(String(p.birthday).slice(0, 4), 10) || 1985 : 1985,
-            role: "Acting",
-            posterUrl: img,
-            imageUrl: img,
-            imdbUrl: `https://www.imdb.com/find/?q=${encodeURIComponent(p.name)}`,
-            overview: `Actor (${p.country?.name || "International"})`,
           });
         }
       }
@@ -561,7 +515,7 @@ export class LiveCatalogService {
   }
 
   /**
-   * Computes the TV Time "Watch Next" / "In Progress" queue and statistics for a user state.
+   * Computes watch hours and library counts for a user state (without rewatch multipliers).
    */
   static computeStats(state) {
     const shows = Array.isArray(state?.shows) ? state.shows : [];
@@ -571,17 +525,16 @@ export class LiveCatalogService {
     let showMinutesWatched = 0;
     for (const s of shows) {
       const watchedSet = new Set(s.watchedEpisodes || []);
-      const rewatchMultiplier = 1 + (Number(s.rewatchCount) || 0);
-      totalEpisodesWatched += watchedSet.size * rewatchMultiplier;
+      totalEpisodesWatched += watchedSet.size;
       const defaultEpRuntime = Number(s.runtimeMins) || 45;
       if (Array.isArray(s.episodes) && s.episodes.length > 0) {
         for (const ep of s.episodes) {
           if (watchedSet.has(ep.code)) {
-            showMinutesWatched += (Number(ep.runtimeMins) || defaultEpRuntime) * rewatchMultiplier;
+            showMinutesWatched += Number(ep.runtimeMins) || defaultEpRuntime;
           }
         }
       } else {
-        showMinutesWatched += watchedSet.size * defaultEpRuntime * rewatchMultiplier;
+        showMinutesWatched += watchedSet.size * defaultEpRuntime;
       }
     }
 
@@ -589,9 +542,8 @@ export class LiveCatalogService {
     let movieMinutesWatched = 0;
     for (const m of movies) {
       if (m.watched) {
-        const mult = 1 + (Number(m.rewatchCount) || 0);
-        totalMoviesWatched += mult;
-        movieMinutesWatched += (Number(m.runtimeMins) || 120) * mult;
+        totalMoviesWatched += 1;
+        movieMinutesWatched += Number(m.runtimeMins) || 120;
       }
     }
 
@@ -600,8 +552,13 @@ export class LiveCatalogService {
       totalMinutes,
       showMinutesWatched,
       movieMinutesWatched,
+      totalHours: Math.round((totalMinutes / 60) * 10) / 10,
+      showHours: Math.round((showMinutesWatched / 60) * 10) / 10,
+      movieHours: Math.round((movieMinutesWatched / 60) * 10) / 10,
       totalEpisodesWatched,
       totalMoviesWatched,
+      totalSeriesCount: shows.length,
+      totalMoviesCount: movies.length,
       totalDays: Math.floor(totalMinutes / (60 * 24)),
       totalHoursRemainder: Math.floor((totalMinutes % (60 * 24)) / 60),
       showDays: Math.floor(showMinutesWatched / (60 * 24)),

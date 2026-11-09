@@ -105,24 +105,6 @@ object LiveMediaCatalogService {
                                     overview = stripHtml(item.optString("overview", ""))
                                 )
                             )
-                        } else if (mType == "person") {
-                            val name = item.optString("name", "")
-                            if (name.isBlank()) continue
-                            val profilePath = item.optString("profile_path", "")
-                            val img = if (profilePath.isNotBlank() && profilePath != "null") "https://image.tmdb.org/t/p/w300$profilePath" else ""
-                            results.add(
-                                SearchResultItem(
-                                    externalId = "actor_tmdb_$id",
-                                    tmdbId = id,
-                                    mediaType = "actor",
-                                    title = name,
-                                    year = 1985,
-                                    networkOrDirector = item.optString("known_for_department", "Acting"),
-                                    posterUrl = img,
-                                    imdbUrl = "https://www.imdb.com/find/?q=${URLEncoder.encode(name, "UTF-8")}",
-                                    overview = "Actor"
-                                )
-                            )
                         }
                     }
                 }
@@ -272,90 +254,180 @@ object LiveMediaCatalogService {
             }
         } catch (_: Exception) {}
 
-        // 3. TVMaze Actors Search
-        try {
-            val conn = (URL("https://api.tvmaze.com/search/people?q=$encoded").openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 5000
-                readTimeout = 5000
-            }
-            if (conn.responseCode in 200..299) {
-                val text = conn.inputStream.bufferedReader().use { it.readText() }
-                val arr = JSONArray(text)
-                for (i in 0 until minOf(4, arr.length())) {
-                    val p = arr.optJSONObject(i)?.optJSONObject("person") ?: continue
-                    val id = p.optInt("id", 0)
-                    val name = p.optString("name", "")
-                    if (id <= 0 || name.isBlank()) continue
-                    val imgObj = p.optJSONObject("image")
-                    val poster = (imgObj?.optString("medium") ?: imgObj?.optString("original") ?: "")
-                        .replace("http://", "https://")
-                    results.add(
-                        SearchResultItem(
-                            externalId = "actor_$id",
-                            mediaType = "actor",
-                            title = name,
-                            year = p.optString("birthday", "1985").take(4).toIntOrNull() ?: 1985,
-                            networkOrDirector = "Acting",
-                            posterUrl = poster,
-                            overview = "Actor · Follow for upcoming release alerts",
-                            imdbUrl = "https://www.imdb.com/find/?q=${URLEncoder.encode(name, "UTF-8")}"
-                        )
-                    )
-                }
-            }
-        } catch (_: Exception) {}
-
         results
     }
 
     /**
-     * Fetches the full episode guide & cast list for a TVMaze show ID (`/shows/{id}?embed[]=episodes&embed[]=cast`).
+     * Fetches the full episode guide & cast list for a TV show via:
+     *  1. TMDB v3 (`/3/tv/{id}` + `/3/tv/{id}/season/{n}`) when `tmdbId > 0`
+     *  2. TVMaze by ID (`/shows/{id}?embed[]=episodes&embed[]=cast`) when `tvmazeId > 0`
+     *  3. TVMaze single-search by title (`/singlesearch/shows?q={title}&embed[]=episodes&embed[]=cast`) fallback
      */
-    suspend fun fetchFullShowEpisodesAndCast(tvmazeId: Int): Pair<List<EpisodeModel>, List<String>> = withContext(Dispatchers.IO) {
-        if (tvmazeId <= 0) return@withContext emptyList<EpisodeModel>() to emptyList<String>()
-        try {
-            val url = "https://api.tvmaze.com/shows/$tvmazeId?embed[]=episodes&embed[]=cast"
-            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 6000
-                readTimeout = 6000
-            }
-            if (conn.responseCode in 200..299) {
-                val text = conn.inputStream.bufferedReader().use { it.readText() }
-                val root = JSONObject(text)
-                val embedded = root.optJSONObject("_embedded") ?: JSONObject()
-                val epsArr = embedded.optJSONArray("episodes") ?: JSONArray()
-                val episodes = mutableListOf<EpisodeModel>()
-                for (i in 0 until epsArr.length()) {
-                    val e = epsArr.optJSONObject(i) ?: continue
-                    val sNum = e.optInt("season", 1).coerceAtLeast(1)
-                    val eNum = e.optInt("number", i + 1).coerceAtLeast(1)
-                    val imgObj = e.optJSONObject("image")
-                    val thumb = (imgObj?.optString("medium") ?: imgObj?.optString("original") ?: "")
-                        .replace("http://", "https://")
-                    episodes.add(
-                        EpisodeModel(
-                            code = EpisodeModel.formatCode(sNum, eNum),
-                            season = sNum,
-                            number = eNum,
-                            title = e.optString("name", "Episode $eNum"),
-                            airDate = e.optString("airdate", ""),
-                            runtimeMins = e.optInt("runtime", 45).coerceAtLeast(15),
-                            imageUrl = thumb,
-                            overview = stripHtml(e.optString("summary", ""))
-                        )
+    suspend fun fetchFullShowEpisodesAndCast(
+        tvmazeId: Int,
+        tmdbId: Int = 0,
+        title: String = "",
+        externalId: String = ""
+    ): Pair<List<EpisodeModel>, List<String>> = withContext(Dispatchers.IO) {
+        val resolvedTmdbId = when {
+            tmdbId > 0 -> tmdbId
+            externalId.startsWith("tmdb_tv_") -> externalId.removePrefix("tmdb_tv_").toIntOrNull() ?: 0
+            else -> 0
+        }
+        val resolvedTvmazeId = when {
+            tvmazeId > 0 -> tvmazeId
+            externalId.startsWith("tvmaze_") -> externalId.removePrefix("tvmaze_").toIntOrNull() ?: 0
+            else -> 0
+        }
+
+        // 1. Try TMDB API v3 if tmdbId is available
+        val tmdbToken = BuildConfig.TMDB_READ_TOKEN.trim()
+        val tmdbKey = BuildConfig.TMDB_API_KEY.trim()
+        if (resolvedTmdbId > 0 && (tmdbToken.isNotEmpty() || tmdbKey.isNotEmpty())) {
+            try {
+                fun buildTmdbUrl(path: String): String {
+                    val sep = if (path.contains("?")) "&" else "?"
+                    return if (tmdbToken.isNotEmpty()) {
+                        "https://api.themoviedb.org/3$path"
+                    } else {
+                        "https://api.themoviedb.org/3$path${sep}api_key=$tmdbKey"
+                    }
+                }
+                fun openTmdb(path: String): HttpURLConnection =
+                    (URL(buildTmdbUrl(path)).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        setRequestProperty("Accept", "application/json")
+                        if (tmdbToken.isNotEmpty()) {
+                            setRequestProperty("Authorization", "Bearer $tmdbToken")
+                        }
+                        connectTimeout = 6000
+                        readTimeout = 6000
+                    }
+
+                val tvConn = openTmdb("/tv/$resolvedTmdbId?append_to_response=credits&language=en-US")
+                if (tvConn.responseCode in 200..299) {
+                    val tvJson = JSONObject(tvConn.inputStream.bufferedReader().use { it.readText() })
+                    val defaultRuntime = tvJson.optJSONArray("episode_run_time")?.optInt(0, 45)?.takeIf { it > 0 } ?: 45
+                    val castNames = mutableListOf<String>()
+                    val castArr = tvJson.optJSONObject("credits")?.optJSONArray("cast") ?: JSONArray()
+                    for (i in 0 until minOf(8, castArr.length())) {
+                        val name = castArr.optJSONObject(i)?.optString("name", "") ?: ""
+                        if (name.isNotBlank()) castNames.add(name)
+                    }
+
+                    val seasonsArr = tvJson.optJSONArray("seasons") ?: JSONArray()
+                    val seasonNums = mutableListOf<Int>()
+                    for (i in 0 until seasonsArr.length()) {
+                        val sNum = seasonsArr.optJSONObject(i)?.optInt("season_number", 0) ?: 0
+                        if (sNum >= 1) seasonNums.add(sNum)
+                    }
+
+                    val episodes = mutableListOf<EpisodeModel>()
+                    for (sNum in seasonNums.take(12)) {
+                        try {
+                            val sConn = openTmdb("/tv/$resolvedTmdbId/season/$sNum?language=en-US")
+                            if (sConn.responseCode in 200..299) {
+                                val sJson = JSONObject(sConn.inputStream.bufferedReader().use { it.readText() })
+                                val epsArr = sJson.optJSONArray("episodes") ?: JSONArray()
+                                for (j in 0 until epsArr.length()) {
+                                    val ep = epsArr.optJSONObject(j) ?: continue
+                                    val eNum = ep.optInt("episode_number", j + 1).coerceAtLeast(1)
+                                    val stillPath = ep.optString("still_path", "")
+                                    val thumb = if (stillPath.isNotBlank() && stillPath != "null") {
+                                        "https://image.tmdb.org/t/p/w300$stillPath"
+                                    } else ""
+                                    episodes.add(
+                                        EpisodeModel(
+                                            code = EpisodeModel.formatCode(sNum, eNum),
+                                            season = sNum,
+                                            number = eNum,
+                                            title = ep.optString("name", "Episode $eNum"),
+                                            airDate = ep.optString("air_date", ""),
+                                            runtimeMins = ep.optInt("runtime", defaultRuntime).coerceAtLeast(15),
+                                            imageUrl = thumb,
+                                            overview = stripHtml(ep.optString("overview", ""))
+                                        )
+                                    )
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                    if (episodes.isNotEmpty()) {
+                        return@withContext episodes to castNames
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // Helper to parse TVMaze show JSON with embedded episodes & cast
+        fun parseTvMazeRoot(root: JSONObject): Pair<List<EpisodeModel>, List<String>> {
+            val embedded = root.optJSONObject("_embedded") ?: JSONObject()
+            val epsArr = embedded.optJSONArray("episodes") ?: JSONArray()
+            val episodes = mutableListOf<EpisodeModel>()
+            for (i in 0 until epsArr.length()) {
+                val e = epsArr.optJSONObject(i) ?: continue
+                val sNum = e.optInt("season", 1).coerceAtLeast(1)
+                val eNum = e.optInt("number", i + 1).coerceAtLeast(1)
+                val imgObj = e.optJSONObject("image")
+                val thumb = (imgObj?.optString("medium") ?: imgObj?.optString("original") ?: "")
+                    .replace("http://", "https://")
+                episodes.add(
+                    EpisodeModel(
+                        code = EpisodeModel.formatCode(sNum, eNum),
+                        season = sNum,
+                        number = eNum,
+                        title = e.optString("name", "Episode $eNum"),
+                        airDate = e.optString("airdate", ""),
+                        runtimeMins = e.optInt("runtime", 45).coerceAtLeast(15),
+                        imageUrl = thumb,
+                        overview = stripHtml(e.optString("summary", ""))
                     )
-                }
-                val castArr = embedded.optJSONArray("cast") ?: JSONArray()
-                val castNames = mutableListOf<String>()
-                for (i in 0 until minOf(8, castArr.length())) {
-                    val name = castArr.optJSONObject(i)?.optJSONObject("person")?.optString("name", "") ?: ""
-                    if (name.isNotBlank()) castNames.add(name)
-                }
-                return@withContext episodes to castNames
+                )
             }
-        } catch (_: Exception) {}
+            val castArr = embedded.optJSONArray("cast") ?: JSONArray()
+            val castNames = mutableListOf<String>()
+            for (i in 0 until minOf(8, castArr.length())) {
+                val name = castArr.optJSONObject(i)?.optJSONObject("person")?.optString("name", "") ?: ""
+                if (name.isNotBlank()) castNames.add(name)
+            }
+            return episodes to castNames
+        }
+
+        // 2. Try TVMaze by ID
+        if (resolvedTvmazeId > 0) {
+            try {
+                val url = "https://api.tvmaze.com/shows/$resolvedTvmazeId?embed[]=episodes&embed[]=cast"
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 6000
+                    readTimeout = 6000
+                }
+                if (conn.responseCode in 200..299) {
+                    val text = conn.inputStream.bufferedReader().use { it.readText() }
+                    val parsed = parseTvMazeRoot(JSONObject(text))
+                    if (parsed.first.isNotEmpty()) return@withContext parsed
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 3. Fallback: TVMaze single-search by title
+        if (title.isNotBlank()) {
+            try {
+                val encTitle = URLEncoder.encode(title.trim(), "UTF-8")
+                val url = "https://api.tvmaze.com/singlesearch/shows?q=$encTitle&embed[]=episodes&embed[]=cast"
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 6000
+                    readTimeout = 6000
+                }
+                if (conn.responseCode in 200..299) {
+                    val text = conn.inputStream.bufferedReader().use { it.readText() }
+                    val parsed = parseTvMazeRoot(JSONObject(text))
+                    if (parsed.first.isNotEmpty()) return@withContext parsed
+                }
+            } catch (_: Exception) {}
+        }
+
         emptyList<EpisodeModel>() to emptyList<String>()
     }
 
@@ -411,9 +483,9 @@ object LiveMediaCatalogService {
                 rating = 8.7,
                 posterUrl = "https://static.tvmaze.com/uploads/images/medium_portrait/548/1371406.jpg",
                 overview = "Mark leads a team of office workers whose memories have been surgically divided between their work and personal lives.",
-                userStatus = "watching",
+                userStatus = "in_progress",
                 userRating = 5,
-                reaction = "😍",
+                reaction = "",
                 isFavorite = true,
                 watchedCodesCsv = "S01E01,S01E02,S01E03,S01E04,S01E05,S01E06,S01E07,S01E08,S01E09,S02E01,S02E02,S02E03",
                 episodesJson = TvTimeProgressCalculator.serializeEpisodeList(severanceEps)
@@ -433,9 +505,9 @@ object LiveMediaCatalogService {
                 rating = 8.6,
                 posterUrl = "https://static.tvmaze.com/uploads/images/medium_portrait/629/1574642.jpg",
                 overview = "A young chef from the fine dining world comes home to Chicago to run his family sandwich shop.",
-                userStatus = "watching",
+                userStatus = "in_progress",
                 userRating = 5,
-                reaction = "🔥",
+                reaction = "",
                 isFavorite = true,
                 watchedCodesCsv = "S01E01,S01E02,S01E03,S01E04",
                 episodesJson = TvTimeProgressCalculator.serializeEpisodeList(bearEps)
@@ -455,9 +527,9 @@ object LiveMediaCatalogService {
                 rating = 8.1,
                 posterUrl = "https://static.tvmaze.com/uploads/images/medium_portrait/631/1577677.jpg",
                 overview = "In a ruined and toxic future, thousands live in a giant silo deep underground.",
-                userStatus = "watching",
+                userStatus = "interested",
                 userRating = 4,
-                reaction = "🤯",
+                reaction = "",
                 isFavorite = false,
                 watchedCodesCsv = "",
                 episodesJson = TvTimeProgressCalculator.serializeEpisodeList(siloEps)
@@ -483,8 +555,8 @@ object LiveMediaCatalogService {
             watched = true,
             watchedAt = "2026-09-12",
             userRating = 5,
-            reaction = "😍",
-            rewatchCount = 1,
+            reaction = "",
+            rewatchCount = 0,
             isFavorite = true
         ),
         MovieEntity(
@@ -504,7 +576,7 @@ object LiveMediaCatalogService {
             watched = true,
             watchedAt = "2026-08-04",
             userRating = 5,
-            reaction = "🤯",
+            reaction = "",
             isFavorite = true
         ),
         MovieEntity(
@@ -525,39 +597,6 @@ object LiveMediaCatalogService {
         )
     )
 
-    fun buildStarterActors(userId: String): List<ActorEntity> = listOf(
-        ActorEntity(
-            userId = userId,
-            externalId = "actor_rebecca_ferguson",
-            name = "Rebecca Ferguson",
-            role = "Acting",
-            imdbUrl = "https://www.imdb.com/find/?q=Rebecca+Ferguson",
-            knownFor = "Silo, Dune: Part Two"
-        ),
-        ActorEntity(
-            userId = userId,
-            externalId = "actor_adam_scott",
-            name = "Adam Scott",
-            role = "Acting",
-            imdbUrl = "https://www.imdb.com/find/?q=Adam+Scott",
-            knownFor = "Severance, Parks and Recreation"
-        ),
-        ActorEntity(
-            userId = userId,
-            externalId = "actor_rami_malek",
-            name = "Rami Malek",
-            role = "Acting",
-            imdbUrl = "https://www.imdb.com/find/?q=Rami+Malek",
-            knownFor = "Mr. Robot, Oppenheimer"
-        ),
-        ActorEntity(
-            userId = userId,
-            externalId = "actor_bob_odenkirk",
-            name = "Bob Odenkirk",
-            role = "Acting",
-            imdbUrl = "https://www.imdb.com/find/?q=Bob+Odenkirk",
-            knownFor = "Better Call Saul, The Bear"
-        )
-    )
+    fun buildStarterActors(userId: String): List<ActorEntity> = emptyList()
 }
 

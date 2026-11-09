@@ -54,11 +54,21 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["showsCount"], 3)
         self.assertGreater(out["stats"]["totalEpisodesWatched"], 0)
         self.assertGreater(out["stats"]["totalMoviesWatched"], 0)
+        self.assertGreater(out["stats"]["totalHours"], 0)
+        self.assertEqual(out["stats"]["totalSeriesCount"], 3)
+        self.assertEqual(out["stats"]["totalMoviesCount"], 3)
 
     def test_web_app_view_client_js_syntax(self):
         view_path = os.path.join(ROOT_DIR, "cloudflare", "src", "ui", "WebAppView.js")
         with open(view_path, "r", encoding="utf-8") as f:
             view_src = f.read().replace("export const WEB_APP_HTML", "const WEB_APP_HTML")
+        self.assertNotIn("Search TV shows, movies, or actors", view_src)
+        self.assertIn("Search TV shows or movies...", view_src)
+        self.assertNotIn("Your Reaction Badge", view_src)
+        self.assertIn("Series Watch Hours", view_src)
+        self.assertIn("Movie Watch Hours", view_src)
+        self.assertIn("carousel-series-watchlist", view_src)
+        self.assertIn("carousel-movie-watchlist", view_src)
         harness = (
             view_src
             + """

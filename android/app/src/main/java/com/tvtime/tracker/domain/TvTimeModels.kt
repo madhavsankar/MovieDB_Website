@@ -64,7 +64,9 @@ data class WatchStatsSummary(
     val showMinutes: Int,
     val movieMinutes: Int,
     val totalEpisodesWatched: Int,
-    val totalMoviesWatched: Int
+    val totalMoviesWatched: Int,
+    val totalSeriesCount: Int = 0,
+    val totalMoviesCount: Int = 0
 ) {
     val totalDays: Int get() = totalMinutes / 1440
     val totalHoursRemainder: Int get() = (totalMinutes % 1440) / 60
@@ -72,6 +74,14 @@ data class WatchStatsSummary(
     val showHoursRemainder: Int get() = (showMinutes % 1440) / 60
     val movieDays: Int get() = movieMinutes / 1440
     val movieHoursRemainder: Int get() = (movieMinutes % 1440) / 60
+
+    val totalHoursDecimal: Double get() = Math.round((totalMinutes / 60.0) * 10.0) / 10.0
+    val seriesHoursDecimal: Double get() = Math.round((showMinutes / 60.0) * 10.0) / 10.0
+    val movieHoursDecimal: Double get() = Math.round((movieMinutes / 60.0) * 10.0) / 10.0
+
+    val formattedTotalHours: String get() = "${totalHoursDecimal} hrs"
+    val formattedSeriesHours: String get() = "${seriesHoursDecimal} hrs"
+    val formattedMoviesHours: String get() = "${movieHoursDecimal} hrs"
 
     val formattedTotal: String get() = "${totalDays}d ${totalHoursRemainder}h"
     val formattedSeries: String get() = "${showDays}d ${showHoursRemainder}h"

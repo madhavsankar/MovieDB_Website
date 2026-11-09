@@ -21,9 +21,9 @@ export const STARTER_SHOWS = [
     rating: 8.7,
     posterUrl: "https://static.tvmaze.com/uploads/images/medium_portrait/548/1371406.jpg",
     overview: "Mark leads a team of office workers whose memories have been surgically divided between their work and personal lives.",
-    userStatus: "watching",
+    userStatus: "in_progress",
     userRating: 5,
-    reaction: "😍",
+    reaction: "",
     isFavorite: true,
     rewatchCount: 0,
     addedAt: "2026-01-15T00:00:00Z",
@@ -65,9 +65,9 @@ export const STARTER_SHOWS = [
     rating: 8.6,
     posterUrl: "https://static.tvmaze.com/uploads/images/medium_portrait/629/1574642.jpg",
     overview: "A young chef from the fine dining world comes home to Chicago to run his family sandwich shop.",
-    userStatus: "watching",
+    userStatus: "in_progress",
     userRating: 5,
-    reaction: "🔥",
+    reaction: "",
     isFavorite: true,
     rewatchCount: 0,
     addedAt: "2026-02-10T00:00:00Z",
@@ -98,9 +98,9 @@ export const STARTER_SHOWS = [
     rating: 8.1,
     posterUrl: "https://static.tvmaze.com/uploads/images/medium_portrait/631/1577677.jpg",
     overview: "In a ruined and toxic future, thousands live in a giant silo deep underground. After its sheriff breaks a cardinal rule and residents die mysteriously, engineer Juliette starts to uncover shocking secrets.",
-    userStatus: "watching",
+    userStatus: "interested",
     userRating: 4,
-    reaction: "🤯",
+    reaction: "",
     isFavorite: false,
     rewatchCount: 0,
     addedAt: "2026-03-01T00:00:00Z",
@@ -133,8 +133,8 @@ export const STARTER_MOVIES = [
     watched: true,
     watchedAt: "2026-09-12",
     userRating: 5,
-    reaction: "😍",
-    rewatchCount: 1,
+    reaction: "",
+    rewatchCount: 0,
     isFavorite: true,
     notes: "Watched in IMAX"
   },
@@ -154,7 +154,7 @@ export const STARTER_MOVIES = [
     watched: true,
     watchedAt: "2026-08-04",
     userRating: 5,
-    reaction: "🤯",
+    reaction: "",
     rewatchCount: 0,
     isFavorite: true,
     notes: ""
@@ -182,40 +182,7 @@ export const STARTER_MOVIES = [
   }
 ];
 
-export const STARTER_ACTORS = [
-  {
-    id: "actor_rebecca_ferguson",
-    name: "Rebecca Ferguson",
-    role: "Acting",
-    imageUrl: "https://static.tvmaze.com/uploads/images/medium_portrait/454/1136976.jpg",
-    imdbUrl: "https://www.imdb.com/find/?q=Rebecca+Ferguson",
-    knownFor: "Silo, Dune: Part Two"
-  },
-  {
-    id: "actor_adam_scott",
-    name: "Adam Scott",
-    role: "Acting",
-    imageUrl: "https://static.tvmaze.com/uploads/images/medium_portrait/392/981251.jpg",
-    imdbUrl: "https://www.imdb.com/find/?q=Adam+Scott",
-    knownFor: "Severance, Parks and Recreation"
-  },
-  {
-    id: "actor_rami_malek",
-    name: "Rami Malek",
-    role: "Acting",
-    imageUrl: "https://static.tvmaze.com/uploads/images/medium_portrait/61/154952.jpg",
-    imdbUrl: "https://www.imdb.com/find/?q=Rami+Malek",
-    knownFor: "Mr. Robot, Oppenheimer"
-  },
-  {
-    id: "actor_bob_odenkirk",
-    name: "Bob Odenkirk",
-    role: "Acting",
-    imageUrl: "https://static.tvmaze.com/uploads/images/medium_portrait/0/1079.jpg",
-    imdbUrl: "https://www.imdb.com/find/?q=Bob+Odenkirk",
-    knownFor: "Better Call Saul, The Bear"
-  }
-];
+export const STARTER_ACTORS = [];
 
 export class FirestoreRepository {
   constructor(env) {

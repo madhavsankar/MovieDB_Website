@@ -107,7 +107,7 @@ def compute_stats(state):
             episode_mins += int(ep_map.get(code) or default_rt)
     watched_movies = [m for m in movies if m.get("watched")]
     movie_mins = sum(
-        int(m.get("runtimeMins") or 120) * (1 + int(m.get("rewatchCount") or 0))
+        int(m.get("runtimeMins") or 120)
         for m in watched_movies
     )
     return {
@@ -356,42 +356,15 @@ def search_multi(query):
             pass
         return out
 
-    def fetch_actors():
-        try:
-            items = http_get_json(f"https://api.tvmaze.com/search/people?q={enc}")
-            out = []
-            for item in items[:6]:
-                p = item.get("person") or {}
-                if not p.get("id") or not p.get("name"):
-                    continue
-                img = ((p.get("image") or {}).get("medium") or (p.get("image") or {}).get("original") or "").replace("http://", "https://")
-                out.append({
-                    "id": f"actor_{p['id']}",
-                    "mediaType": "actor",
-                    "name": p["name"],
-                    "title": p["name"],
-                    "year": int(str(p.get("birthday") or "1985")[:4]) if str(p.get("birthday") or "")[:4].isdigit() else 1985,
-                    "role": "Acting",
-                    "posterUrl": img,
-                    "imageUrl": img,
-                    "imdbUrl": f"https://www.imdb.com/find/?q={urllib.parse.quote(p['name'])}",
-                    "knownFor": (p.get("country") or {}).get("name") or "Film & Television",
-                    "overview": f"Actor ({(p.get('country') or {}).get('name') or 'International'})",
-                })
-            return out
-        except Exception:
-            return []
-
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         f_s = pool.submit(fetch_shows)
         f_m = pool.submit(fetch_movies)
-        f_a = pool.submit(fetch_actors)
-        shows, movies, actors = f_s.result(), f_m.result(), f_a.result()
+        shows, movies = f_s.result(), f_m.result()
         return {
-            "results": shows + movies + actors,
+            "results": shows + movies,
             "shows": shows,
             "movies": movies,
-            "actors": actors,
+            "actors": [],
         }
 
 

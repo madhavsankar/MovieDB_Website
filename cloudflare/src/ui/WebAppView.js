@@ -119,42 +119,40 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         </button>
       </div>
 
-      <!-- Sub-Filter Row for Shows & Movies: Watch List | [In progress | Completed] | 3D Toggle -->
+      <!-- Sub-Filter Row for Shows & Movies -->
       <div id="home-subfilter-media" class="flex items-center justify-between gap-2">
-        <button id="sub-watchlist-label" onclick="app.setMediaFilter('all')" class="text-sm font-semibold text-zinc-400 hover:text-white transition px-1">
-          Watch List
+        <button id="sub-watchlist-label" onclick="app.setMediaFilter('all')" class="text-xs font-semibold text-zinc-400 hover:text-white transition px-1 shrink-0">
+          All
         </button>
-        <div class="flex items-center gap-2">
-          <div class="tv-pill-bar p-1 rounded-full flex items-center gap-1">
-            <button id="sub-inprogress-btn" onclick="app.setMediaFilter('in_progress')" class="px-4 py-1.5 rounded-full text-xs font-bold tv-yellow-bg transition">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <div class="tv-pill-bar p-1 rounded-full flex items-center gap-1 overflow-x-auto no-scrollbar">
+            <button id="sub-inprogress-btn" onclick="app.setMediaFilter('in_progress')" class="px-3 py-1.5 rounded-full text-xs font-bold tv-yellow-bg transition whitespace-nowrap">
               In progress
             </button>
-            <button id="sub-completed-btn" onclick="app.setMediaFilter('completed')" class="px-4 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition">
+            <button id="sub-interested-btn" onclick="app.setMediaFilter('interested')" class="px-3 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition whitespace-nowrap">
+              Interested
+            </button>
+            <button id="sub-completed-btn" onclick="app.setMediaFilter('completed')" class="px-3 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition whitespace-nowrap">
               Completed
+            </button>
+            <button id="sub-stopped-btn" onclick="app.setMediaFilter('stopped')" class="px-3 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition whitespace-nowrap">
+              Stopped
             </button>
           </div>
           <button
             id="btn-3d-toggle"
             onclick="app.toggle3DView()"
             title="3D Watch List Shelf View"
-            class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-yellow-400 transition"
+            class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-yellow-400 transition shrink-0"
           >
             ⊞
           </button>
         </div>
       </div>
 
-      <!-- Sub-Filter Row for Upcoming: Upcoming | [Watchlist | Actors] -->
+      <!-- Sub-Filter Row for Upcoming -->
       <div id="home-subfilter-upcoming" class="hidden flex items-center justify-between gap-2">
-        <span class="text-sm font-semibold text-zinc-400 px-1">Upcoming</span>
-        <div class="tv-pill-bar p-1 rounded-full flex items-center gap-1">
-          <button id="up-watchlist-btn" onclick="app.setUpcomingFilter('watchlist')" class="px-4 py-1.5 rounded-full text-xs font-bold tv-yellow-bg transition">
-            Watchlist
-          </button>
-          <button id="up-actors-btn" onclick="app.setUpcomingFilter('actors')" class="px-4 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition">
-            Actors
-          </button>
-        </div>
+        <span class="text-sm font-semibold text-zinc-400 px-1">Upcoming Episodes</span>
       </div>
 
       <!-- 3D Shelf View Container (Toggleable) -->
@@ -174,7 +172,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         <input
           id="search-input"
           type="text"
-          placeholder="Search TV shows, movies, or actors..."
+          placeholder="Search TV shows or movies..."
           oninput="app.onSearchInput(this.value)"
           class="w-full bg-transparent text-white text-sm focus:outline-none placeholder-zinc-500"
         />
@@ -205,7 +203,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
     <!-- TAB 3: PROFILE & STATS (👤)                               -->
     <!-- ========================================================= -->
     <section id="tab-profile" class="hidden space-y-6">
-      <!-- Top Profile Header: Avatar, Name + Edit, @handle, Yellow Action Button -->
+      <!-- Top Profile Header: Avatar, Name + Edit, @handle, Export & Sync Buttons -->
       <div class="flex items-center justify-between gap-3 pt-1">
         <div class="flex items-center gap-3.5">
           <div class="relative">
@@ -236,84 +234,72 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         </div>
 
         <div class="flex items-center gap-2">
-          <!-- TV Time Import Button -->
-          <button
-            onclick="app.openImportModal()"
-            title="Import Original TV Time Export"
-            class="tv-pill-bar w-11 h-11 rounded-full flex items-center justify-center text-yellow-400 hover:bg-zinc-800 transition text-base"
-          >
-            📥
-          </button>
-          <!-- Follow / Following Modal Trigger -->
-          <button
-            onclick="app.openFollowingSheet()"
-            title="Following & Actors"
-            class="w-11 h-11 rounded-full tv-yellow-bg flex items-center justify-center text-base font-bold shadow"
-          >
-            👤+
-          </button>
-        </div>
-      </div>
-
-      <!-- Followers / Following Row -->
-      <div class="flex items-center gap-6 px-1">
-        <button onclick="app.openFollowingSheet('users')" class="text-left group">
-          <div id="profile-followers-count" class="text-base font-extrabold text-white group-hover:text-yellow-400">2</div>
-          <div class="text-xs text-zinc-400">Followers</div>
-        </button>
-        <button onclick="app.openFollowingSheet('actors')" class="text-left group">
-          <div id="profile-following-count" class="text-base font-extrabold text-white group-hover:text-yellow-400">5</div>
-          <div class="text-xs text-zinc-400">Following</div>
-        </button>
-        <div class="ml-auto flex items-center gap-2">
-          <button onclick="app.openImportModal()" class="tv-pill-bar px-3.5 py-1.5 rounded-full text-xs font-semibold text-white hover:text-yellow-400 transition">
+          <button onclick="app.openImportModal()" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold text-white hover:text-yellow-400 transition">
             📤 Export
           </button>
-          <button onclick="app.loadState(true)" class="tv-pill-bar px-3.5 py-1.5 rounded-full text-xs font-semibold text-yellow-400 hover:text-white transition">
+          <button onclick="app.loadState(true)" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold text-yellow-400 hover:text-white transition">
             ↻ Sync
           </button>
         </div>
       </div>
 
-      <!-- TOTAL WATCH TIME Card -->
+      <!-- WATCH STATS Card (Total Watch Hours, Series Watch Hours, Movie Watch Hours, Number of Series & Movies) -->
       <div class="tv-card rounded-3xl p-5 space-y-4">
-        <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">TOTAL WATCH TIME</div>
-        <div id="stat-total-time" class="text-4xl font-black tv-yellow-text tracking-tight">0d 0h</div>
-        <div class="flex items-center justify-between pt-1">
+        <div class="flex items-center justify-between">
+          <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">WATCH STATS</div>
+          <div id="stat-counts-badge" class="text-xs font-extrabold tv-yellow-text">0 Series · 0 Movies</div>
+        </div>
+        <div>
+          <div id="stat-total-time" class="text-4xl font-black tv-yellow-text tracking-tight">0.0 hrs</div>
+          <div id="stat-total-sub" class="text-xs text-zinc-400 mt-0.5">Total Watch Hours (0d 0h)</div>
+        </div>
+        <div class="h-px bg-zinc-800"></div>
+        <div class="grid grid-cols-2 gap-4 pt-1">
           <div>
-            <div id="stat-series-time" class="text-base font-extrabold text-white">0d 0h</div>
-            <div id="stat-series-sub" class="text-xs text-zinc-400">Series · 0 eps</div>
+            <div id="stat-series-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
+            <div class="text-[11px] font-bold tv-yellow-text">Series Watch Hours</div>
+            <div id="stat-series-sub" class="text-xs text-zinc-400 mt-0.5">0 Series · 0 eps watched</div>
           </div>
           <div class="text-right">
-            <div id="stat-movies-time" class="text-base font-extrabold text-white">0d 0h</div>
-            <div id="stat-movies-sub" class="text-xs text-zinc-400">Movies · 0</div>
+            <div id="stat-movies-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
+            <div class="text-[11px] font-bold tv-yellow-text">Movie Watch Hours</div>
+            <div id="stat-movies-sub" class="text-xs text-zinc-400 mt-0.5">0 Movies (0 watched)</div>
           </div>
         </div>
       </div>
 
-      <!-- Favorite Shows Carousel -->
+      <!-- Series Watchlist (Interested / Yet to be watched) Carousel -->
       <div class="space-y-2.5">
         <div class="flex items-center justify-between">
-          <h3 class="text-base font-extrabold text-white">Favorite <span class="font-normal text-zinc-400">Shows</span></h3>
-          <button onclick="app.switchTab('home'); app.setHomeSegment('shows');" class="text-xs font-semibold tv-yellow-text">See all</button>
+          <h3 class="text-base font-extrabold text-white">Series <span id="label-series-watchlist-count" class="font-normal text-zinc-400">Watchlist</span></h3>
+          <button onclick="app.switchTab('home'); app.setHomeSegment('shows'); app.setMediaFilter('interested');" class="text-xs font-semibold tv-yellow-text">Interested</button>
         </div>
-        <div id="carousel-favorites" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
+        <div id="carousel-series-watchlist" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
       </div>
 
-      <!-- Recently Watched Series Carousel -->
+      <!-- Movie Watchlist (Interested) Carousel -->
       <div class="space-y-2.5">
         <div class="flex items-center justify-between">
-          <h3 class="text-base font-extrabold text-white">Recently <span class="font-normal text-zinc-400">Watched Series</span></h3>
-          <button onclick="app.switchTab('home'); app.setHomeSegment('shows');" class="text-xs font-semibold tv-yellow-text">See all</button>
+          <h3 class="text-base font-extrabold text-white">Movie <span id="label-movie-watchlist-count" class="font-normal text-zinc-400">Watchlist</span></h3>
+          <button onclick="app.switchTab('home'); app.setHomeSegment('movies'); app.setMediaFilter('interested');" class="text-xs font-semibold tv-yellow-text">Interested</button>
+        </div>
+        <div id="carousel-movie-watchlist" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
+      </div>
+
+      <!-- Watched & In Progress Series Carousel -->
+      <div class="space-y-2.5">
+        <div class="flex items-center justify-between">
+          <h3 class="text-base font-extrabold text-white">Watched &amp; In Progress <span id="label-recent-series-count" class="font-normal text-zinc-400">Series</span></h3>
+          <button onclick="app.switchTab('home'); app.setHomeSegment('shows'); app.setMediaFilter('in_progress');" class="text-xs font-semibold tv-yellow-text">See all</button>
         </div>
         <div id="carousel-recent-series" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
       </div>
 
-      <!-- Recently Watched Movies Carousel -->
+      <!-- Watched Movies Carousel -->
       <div class="space-y-2.5">
         <div class="flex items-center justify-between">
-          <h3 class="text-base font-extrabold text-white">Recently <span class="font-normal text-zinc-400">Watched Movies</span></h3>
-          <button onclick="app.switchTab('home'); app.setHomeSegment('movies');" class="text-xs font-semibold tv-yellow-text">See all</button>
+          <h3 class="text-base font-extrabold text-white">Watched <span id="label-recent-movies-count" class="font-normal text-zinc-400">Movies</span></h3>
+          <button onclick="app.switchTab('home'); app.setHomeSegment('movies'); app.setMediaFilter('completed');" class="text-xs font-semibold tv-yellow-text">See all</button>
         </div>
         <div id="carousel-recent-movies" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
       </div>
@@ -779,51 +765,54 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const upSub = document.getElementById("home-subfilter-upcoming");
         if (mediaSub) mediaSub.classList.toggle("hidden", seg === "upcoming");
         if (upSub) upSub.classList.toggle("hidden", seg !== "upcoming");
-        this.renderHome();
+
+        const ipBtn = document.getElementById("sub-inprogress-btn");
+        const intBtn = document.getElementById("sub-interested-btn");
+        const cpBtn = document.getElementById("sub-completed-btn");
+        const stBtn = document.getElementById("sub-stopped-btn");
+        if (seg === "movies") {
+          if (ipBtn) ipBtn.classList.add("hidden");
+          if (stBtn) stBtn.classList.add("hidden");
+          if (intBtn) intBtn.textContent = "Interested (Watchlist)";
+          if (cpBtn) cpBtn.textContent = "Watched";
+          if (this.mediaFilter === "in_progress" || this.mediaFilter === "stopped") {
+            this.mediaFilter = "all";
+          }
+        } else if (seg === "shows") {
+          if (ipBtn) ipBtn.classList.remove("hidden");
+          if (stBtn) stBtn.classList.remove("hidden");
+          if (intBtn) intBtn.textContent = "Interested";
+          if (cpBtn) cpBtn.textContent = "Completed";
+        }
+        this.setMediaFilter(this.mediaFilter);
       }
 
       setMediaFilter(filter) {
         this.mediaFilter = filter;
         const wl = document.getElementById("sub-watchlist-label");
         const ip = document.getElementById("sub-inprogress-btn");
+        const intr = document.getElementById("sub-interested-btn");
         const cp = document.getElementById("sub-completed-btn");
+        const st = document.getElementById("sub-stopped-btn");
         if (wl) {
           wl.className =
             filter === "all"
-              ? "text-sm font-extrabold tv-yellow-text transition px-1"
-              : "text-sm font-semibold text-zinc-400 hover:text-white transition px-1";
+              ? "text-xs font-extrabold tv-yellow-text transition px-1 shrink-0"
+              : "text-xs font-semibold text-zinc-400 hover:text-white transition px-1 shrink-0";
         }
-        if (ip) {
-          ip.className =
-            filter === "in_progress"
-              ? "px-4 py-1.5 rounded-full text-xs font-bold tv-yellow-bg transition"
-              : "px-4 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition";
-        }
-        if (cp) {
-          cp.className =
-            filter === "completed"
-              ? "px-4 py-1.5 rounded-full text-xs font-bold tv-yellow-bg transition"
-              : "px-4 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition";
-        }
-        this.renderHome();
-      }
-
-      setUpcomingFilter(filter) {
-        this.upcomingFilter = filter;
-        const wl = document.getElementById("up-watchlist-btn");
-        const ac = document.getElementById("up-actors-btn");
-        if (wl) {
-          wl.className =
-            filter === "watchlist"
-              ? "px-4 py-1.5 rounded-full text-xs font-bold tv-yellow-bg transition"
-              : "px-4 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition";
-        }
-        if (ac) {
-          ac.className =
-            filter === "actors"
-              ? "px-4 py-1.5 rounded-full text-xs font-bold tv-yellow-bg transition"
-              : "px-4 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition";
-        }
+        const styleBtn = (el, key) => {
+          if (!el) return;
+          const hiddenCls = el.classList.contains("hidden") ? " hidden" : "";
+          el.className =
+            (filter === key
+              ? "px-3 py-1.5 rounded-full text-xs font-bold tv-yellow-bg transition whitespace-nowrap"
+              : "px-3 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition whitespace-nowrap") +
+            hiddenCls;
+        };
+        styleBtn(ip, "in_progress");
+        styleBtn(intr, "interested");
+        styleBtn(cp, "completed");
+        styleBtn(st, "stopped");
         this.renderHome();
       }
 
@@ -832,8 +821,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const btn = document.getElementById("btn-3d-toggle");
         if (btn) {
           btn.className = this.is3DView
-            ? "w-9 h-9 rounded-full flex items-center justify-center tv-yellow-bg font-bold transition"
-            : "tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-yellow-400 transition";
+            ? "w-9 h-9 rounded-full flex items-center justify-center tv-yellow-bg font-bold transition shrink-0"
+            : "tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-yellow-400 transition shrink-0";
         }
         this.renderHome();
       }
@@ -871,6 +860,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           isCompleted: total > 0 && leftCount === 0,
           hasStarted: watchedCount > 0,
         };
+      }
+
+      getEffectiveShowStatus(show) {
+        const prog = this.computeShowProgress(show);
+        if (show.userStatus === "stopped") return "stopped";
+        if (show.userStatus === "completed" || prog.isCompleted) return "completed";
+        if (show.userStatus === "in_progress" || prog.hasStarted) return "in_progress";
+        return "interested";
       }
 
       render() {
@@ -918,6 +915,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
       renderShowCard(show) {
         const prog = this.computeShowProgress(show);
+        const effStatus = this.getEffectiveShowStatus(show);
         const poster =
           show.posterUrl ||
           "https://via.placeholder.com/200x300/1c1c22/facc15?text=" + encodeURIComponent(show.title || "Show");
@@ -925,24 +923,65 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           ? prog.nextEp.code.replace(/^S([0-9]+)E([0-9]+)$/, "S$1·E$2")
           : "Caught up";
 
+        let statusBadge = "Interested (Watchlist)";
+        let statusClass = "text-sky-400";
+        if (effStatus === "completed") {
+          statusBadge = "Watched";
+          statusClass = "text-emerald-400";
+        } else if (effStatus === "in_progress") {
+          statusBadge = "In Progress";
+          statusClass = "tv-yellow-text";
+        } else if (effStatus === "stopped") {
+          statusBadge = "Stopped";
+          statusClass = "text-rose-400";
+        }
+
         let statusLineHtml = "";
         let actionBtnHtml = "";
-        if (prog.isCompleted) {
+        if (effStatus === "completed") {
           statusLineHtml =
-            '<div class="text-[11px] font-bold tv-yellow-text">TV Show</div>' +
-            '<div class="text-xs text-zinc-400">Caught up · <span class="font-bold tv-yellow-text">All episodes watched</span></div>';
+            '<div class="text-[11px] font-bold ' +
+            statusClass +
+            '">TV Show · ' +
+            statusBadge +
+            "</div>" +
+            '<div class="text-xs text-zinc-400">Completed · <span class="font-bold tv-yellow-text">All ' +
+            prog.total +
+            " episodes watched</span></div>";
           actionBtnHtml =
             '<button onclick="event.stopPropagation(); app.openItemById(&quot;' +
             escapeHtml(show.id) +
             '&quot;)" class="w-10 h-10 flex items-center justify-center text-emerald-400 font-bold">' +
             CHECK_SVG +
             "</button>";
+        } else if (effStatus === "stopped") {
+          statusLineHtml =
+            '<div class="text-[11px] font-bold ' +
+            statusClass +
+            '">TV Show · ' +
+            statusBadge +
+            "</div>" +
+            '<div class="text-xs text-zinc-400">Stopped watching (' +
+            prog.watchedCount +
+            "/" +
+            prog.total +
+            " watched)</div>";
+          actionBtnHtml =
+            '<button onclick="event.stopPropagation(); app.openItemById(&quot;' +
+            escapeHtml(show.id) +
+            '&quot;)" class="tv-gray-eye-btn">' +
+            EYE_SVG +
+            "</button>";
         } else {
           statusLineHtml =
-            (!prog.hasStarted ? '<div class="text-[11px] font-bold tv-yellow-text">TV Show</div>' : "") +
+            '<div class="text-[11px] font-bold ' +
+            statusClass +
+            '">TV Show · ' +
+            statusBadge +
+            "</div>" +
             '<div class="w-28 h-1.5 bg-zinc-800 rounded-full overflow-hidden my-1">' +
             '<div class="h-full bg-emerald-500 rounded-full" style="width: ' +
-            Math.max(8, prog.pct) +
+            (prog.watchedCount > 0 ? Math.max(8, prog.pct) : 0) +
             '%"></div></div>' +
             '<div class="text-xs text-zinc-400">' +
             prog.leftCount +
@@ -978,15 +1017,17 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           '<span class="px-2 py-0.5 rounded-md bg-zinc-800 text-[11px] font-semibold text-zinc-300">' +
           escapeHtml(show.year || 2024) +
           "</span>" +
-          (show.status === "Ended"
-            ? '<span class="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] font-bold">Ended</span>'
-            : "") +
           "</div>" +
           statusLineHtml +
-          '<div class="flex items-center gap-1 text-xs font-bold text-zinc-200 pt-0.5">' +
+          '<div class="flex items-center gap-2 text-xs font-bold text-zinc-200 pt-0.5">' +
           '<span class="tv-yellow-text">★</span><span>' +
           Number(show.rating || 8.0).toFixed(1) +
           "</span>" +
+          '<span class="px-2 py-0.5 rounded-full bg-zinc-800 text-[10px] font-bold tv-yellow-text">📋 Episodes (' +
+          prog.watchedCount +
+          "/" +
+          prog.total +
+          ")</span>" +
           "</div>" +
           "</div>" +
           actionBtnHtml +
@@ -1032,9 +1073,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           escapeHtml(movie.year || 2024) +
           "</span>" +
           "</div>" +
-          '<div class="text-xs font-bold text-sky-400">Movie · ' +
+          '<div class="text-xs font-bold ' +
+          (movie.watched ? "text-emerald-400" : "tv-yellow-text") +
+          '">Movie · ' +
           (Number(movie.runtimeMins) || 120) +
-          "m</div>" +
+          "m · " +
+          (movie.watched ? "Watched" : "Interested (Watchlist)") +
+          "</div>" +
           '<div class="text-xs text-zinc-400 truncate">' +
           escapeHtml(castLine) +
           "</div>" +
@@ -1042,9 +1087,6 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           '<span class="tv-yellow-text">★</span><span>' +
           Number(movie.rating || 8.0).toFixed(1) +
           "</span>" +
-          (movie.rewatchCount > 0
-            ? '<span class="ml-2 text-[11px] text-amber-300">↻ ' + movie.rewatchCount + "x</span>"
-            : "") +
           "</div>" +
           "</div>" +
           rightBtn +
@@ -1071,10 +1113,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const startedInProgress = [];
           const notStarted = [];
           const completed = [];
+          const stopped = [];
           for (const s of shows) {
-            const prog = this.computeShowProgress(s);
-            if (prog.isCompleted) completed.push(s);
-            else if (prog.hasStarted) startedInProgress.push(s);
+            const eff = this.getEffectiveShowStatus(s);
+            if (eff === "stopped") stopped.push(s);
+            else if (eff === "completed") completed.push(s);
+            else if (eff === "in_progress") startedInProgress.push(s);
             else notStarted.push(s);
           }
 
@@ -1082,6 +1126,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             listEl.innerHTML =
               completed.map((s) => this.renderShowCard(s)).join("") ||
               '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No completed shows yet.</div>';
+          } else if (this.mediaFilter === "interested") {
+            listEl.innerHTML =
+              notStarted.map((s) => this.renderShowCard(s)).join("") ||
+              '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No shows in your Yet to be watched (Interested) list.</div>';
+          } else if (this.mediaFilter === "stopped") {
+            listEl.innerHTML =
+              stopped.map((s) => this.renderShowCard(s)).join("") ||
+              '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No stopped shows.</div>';
           } else if (this.mediaFilter === "all") {
             listEl.innerHTML =
               shows.map((s) => this.renderShowCard(s)).join("") ||
@@ -1092,7 +1144,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               html +=
                 '<div class="flex items-center gap-3 py-2 cursor-pointer" onclick="app.havenStartedCollapsed = !app.havenStartedCollapsed; app.renderHome();">' +
                 '<div class="h-px bg-zinc-800 flex-1"></div>' +
-                '<span class="text-xs font-medium text-zinc-400">Haven&apos;t started yet ' +
+                '<span class="text-xs font-medium text-zinc-400">Yet to be watched (Interested) ' +
                 (this.havenStartedCollapsed ? "∨" : "∧") +
                 "</span>" +
                 '<div class="h-px bg-zinc-800 flex-1"></div>' +
@@ -1112,7 +1164,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const filtered =
             this.mediaFilter === "completed"
               ? movies.filter((m) => m.watched)
-              : this.mediaFilter === "in_progress"
+              : this.mediaFilter === "interested" || this.mediaFilter === "in_progress"
               ? movies.filter((m) => !m.watched)
               : movies;
           listEl.innerHTML =
@@ -1121,34 +1173,23 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           return;
         }
 
-        // Upcoming Segment (Watchlist | Actors)
+        // Upcoming Segment
         this.renderUpcomingList(listEl);
       }
 
       renderUpcomingList(listEl) {
         const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
-        const actors = Array.isArray(this.state.actors) ? this.state.actors : [];
         const upcomingItems = [];
 
         for (const s of shows) {
+          if (s.userStatus === "stopped") continue;
           const prog = this.computeShowProgress(s);
           const ep = prog.nextEp || (s.episodes || [])[(s.episodes || []).length - 1];
           if (!ep) continue;
-          const leadActor = (Array.isArray(s.cast) && s.cast[0]) || "Lead Cast";
-          const matchedActorObj = actors.find((a) =>
-            (s.cast || []).some((c) => String(c).toLowerCase() === String(a.name).toLowerCase())
-          );
-          if (this.upcomingFilter === "actors" && !matchedActorObj && actors.length > 0) {
-            // Still include if user has actors or fallback to lead cast
-          }
           upcomingItems.push({
             show: s,
             ep,
-            actorName: matchedActorObj ? matchedActorObj.name : leadActor,
-            actorImg:
-              matchedActorObj?.imageUrl ||
-              "https://via.placeholder.com/80x80/27272a/facc15?text=" + encodeURIComponent(leadActor.slice(0, 1)),
-            dateBadge: ep.airDate || "Thursday 30th",
+            dateBadge: ep.airDate || "Upcoming",
             bucket: ep.number % 2 === 0 ? "5 days" : "1 week",
           });
         }
@@ -1190,17 +1231,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             escapeHtml(item.dateBadge) +
             "</span>" +
             "</div>" +
-            '<div class="text-xs font-bold tv-yellow-text">TV Show</div>' +
-            '<div class="text-xs font-semibold text-zinc-400">' +
-            escapeHtml(codeFormatted) +
+            '<div class="text-xs font-bold tv-yellow-text">TV Show · ' +
+            escapeHtml(item.show.network || "Streaming") +
             "</div>" +
-            '<div class="inline-flex items-center gap-2 bg-zinc-800/80 rounded-full pr-3 pl-1 py-0.5 mt-1">' +
-            '<img src="' +
-            escapeHtml(item.actorImg) +
-            '" class="w-5 h-5 rounded-full object-cover" />' +
-            '<span class="text-xs font-medium text-zinc-200">' +
-            escapeHtml(item.actorName) +
-            "</span>" +
+            '<div class="text-xs font-semibold text-zinc-300">' +
+            escapeHtml(codeFormatted) +
+            " — " +
+            escapeHtml(item.ep.title || "Next Episode") +
             "</div>" +
             "</div>" +
             "</div>";
@@ -1216,6 +1253,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const set = new Set(show.watchedEpisodes || []);
         set.add(prog.nextEp.code);
         show.watchedEpisodes = Array.from(set).sort();
+        const totalEps = (show.episodes || []).length || 1;
+        show.userStatus = set.size >= totalEps ? "completed" : "in_progress";
         show.lastWatchedAt = new Date().toISOString();
         await this.persistState();
       }
@@ -1228,6 +1267,33 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         await this.persistState();
       }
 
+      async setMovieStatus(movieId, isWatched) {
+        const movie = (this.state.movies || []).find((m) => m.id === movieId);
+        if (!movie) return;
+        movie.watched = Boolean(isWatched);
+        movie.watchedAt = movie.watched ? new Date().toISOString().slice(0, 10) : "";
+        await this.persistState();
+      }
+
+      async setShowStatus(showId, status) {
+        const show = (this.state.shows || []).find((s) => s.id === showId);
+        if (!show) return;
+        const eps = Array.isArray(show.episodes) ? show.episodes : [];
+        if (status === "completed") {
+          show.watchedEpisodes = eps.map((e) => e.code).sort();
+          show.userStatus = "completed";
+        } else if (status === "interested") {
+          show.watchedEpisodes = [];
+          show.userStatus = "interested";
+        } else if (status === "in_progress") {
+          show.userStatus = "in_progress";
+        } else if (status === "stopped") {
+          show.userStatus = "stopped";
+        }
+        show.lastWatchedAt = new Date().toISOString();
+        await this.persistState();
+      }
+
       // =========================================================
       // SEARCH / DISCOVER LOGIC
       // =========================================================
@@ -1236,7 +1302,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const res = await fetch("/api/search?q=" + encodeURIComponent("Game of Thrones"));
           if (res.ok) {
             const data = await res.json();
-            this.searchResults = data.results || [];
+            this.searchResults = (data.results || []).filter((r) => r.mediaType !== "actor");
             this.renderSearch();
           }
         } catch (_) {}
@@ -1251,7 +1317,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             const res = await fetch("/api/search?q=" + encodeURIComponent(q));
             if (res.ok) {
               const data = await res.json();
-              this.searchResults = data.results || [];
+              this.searchResults = (data.results || []).filter((r) => r.mediaType !== "actor");
               this.renderSearch();
             }
           } catch (_) {}
@@ -1284,7 +1350,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const countEl = document.getElementById("search-count-label");
         if (!listEl) return;
 
-        const items = [...(this.searchResults || [])];
+        const items = [...(this.searchResults || [])].filter((r) => r.mediaType !== "actor");
         if (this.searchSort === "newest") {
           items.sort((a, b) => (Number(b.year) || 0) - (Number(a.year) || 0));
         } else if (this.searchSort === "oldest") {
@@ -1297,27 +1363,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
         const existingShowIds = new Set((this.state.shows || []).map((s) => s.id));
         const existingMovieIds = new Set((this.state.movies || []).map((m) => m.id));
-        const existingActorIds = new Set((this.state.actors || []).map((a) => a.id));
 
         listEl.innerHTML =
           items
             .map((item) => {
-              const isInLib =
-                existingShowIds.has(item.id) ||
-                existingMovieIds.has(item.id) ||
-                existingActorIds.has(item.id);
-              const badgeClass =
-                item.mediaType === "movie"
-                  ? "text-sky-400"
-                  : item.mediaType === "actor"
-                  ? "text-emerald-400"
-                  : "tv-yellow-text";
-              const badgeLabel =
-                item.mediaType === "movie"
-                  ? "Movie"
-                  : item.mediaType === "actor"
-                  ? "Actor"
-                  : "TV Show";
+              const isInLib = existingShowIds.has(item.id) || existingMovieIds.has(item.id);
+              const badgeClass = item.mediaType === "movie" ? "text-sky-400" : "tv-yellow-text";
+              const badgeLabel = item.mediaType === "movie" ? "Movie" : "TV Show";
               const subtitle =
                 item.overview || item.director || item.network || "Tap + to add to your TV Time tracker";
               const poster =
@@ -1378,23 +1430,6 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const item = (this.searchResults || []).find((r) => r.id === itemId);
         if (!item) return;
 
-        if (item.mediaType === "actor") {
-          if (!(this.state.actors || []).some((a) => a.id === item.id)) {
-            this.state.actors = [
-              {
-                id: item.id,
-                name: item.title,
-                role: "Acting",
-                imageUrl: item.posterUrl,
-                imdbUrl: item.imdbUrl || "https://www.imdb.com/find/?q=" + encodeURIComponent(item.title),
-              },
-              ...(this.state.actors || []),
-            ];
-            await this.persistState();
-          }
-          return;
-        }
-
         if (item.mediaType === "movie") {
           if (!(this.state.movies || []).some((m) => m.id === item.id)) {
             this.state.movies = [
@@ -1426,9 +1461,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           }
           const newShow = {
             ...(fullShow || item),
-            userStatus: "watching",
+            userStatus: "interested",
             userRating: 0,
-            reaction: "😍",
+            reaction: "",
             isFavorite: false,
             rewatchCount: 0,
             watchedEpisodes: [],
@@ -1517,6 +1552,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           set.add(epCode);
         }
         show.watchedEpisodes = Array.from(set).sort();
+        const totalEps = (show.episodes || []).length || 1;
+        if (set.size >= totalEps) {
+          show.userStatus = "completed";
+        } else if (set.size > 0) {
+          show.userStatus = "in_progress";
+        } else if (show.userStatus !== "stopped") {
+          show.userStatus = "interested";
+        }
         show.lastWatchedAt = new Date().toISOString();
         await this.persistState();
       }
@@ -1526,12 +1569,20 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (!show) return;
         const seasonEps = (show.episodes || []).filter((e) => Number(e.season) === Number(seasonNum));
         const set = new Set(show.watchedEpisodes || []);
-        const allWatched = seasonEps.every((e) => set.has(e.code));
+        const allWatched = seasonEps.length > 0 && seasonEps.every((e) => set.has(e.code));
         for (const e of seasonEps) {
           if (allWatched) set.delete(e.code);
           else set.add(e.code);
         }
         show.watchedEpisodes = Array.from(set).sort();
+        const totalEps = (show.episodes || []).length || 1;
+        if (set.size >= totalEps) {
+          show.userStatus = "completed";
+        } else if (set.size > 0) {
+          show.userStatus = "in_progress";
+        } else if (show.userStatus !== "stopped") {
+          show.userStatus = "interested";
+        }
         show.lastWatchedAt = new Date().toISOString();
         await this.persistState();
       }
@@ -1550,39 +1601,74 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
       }
 
-      async incrementRewatch(id) {
-        const show = (this.state.shows || []).find((s) => s.id === id);
-        if (show) {
-          show.rewatchCount = (Number(show.rewatchCount) || 0) + 1;
-          await this.persistState();
-          return;
-        }
-        const movie = (this.state.movies || []).find((m) => m.id === id);
-        if (movie) {
-          movie.rewatchCount = (Number(movie.rewatchCount) || 0) + 1;
-          await this.persistState();
-        }
-      }
-
-      async setItemReaction(id, emoji) {
-        const show = (this.state.shows || []).find((s) => s.id === id);
-        if (show) {
-          show.reaction = emoji;
-          await this.persistState();
-          return;
-        }
-        const movie = (this.state.movies || []).find((m) => m.id === id);
-        if (movie) {
-          movie.reaction = emoji;
-          await this.persistState();
-        }
-      }
-
       async removeItemFromLibrary(id) {
         this.state.shows = (this.state.shows || []).filter((s) => s.id !== id);
         this.state.movies = (this.state.movies || []).filter((m) => m.id !== id);
         this.closeDetailSheet();
         await this.persistState();
+      }
+
+      renderShowStatusHeaderHtml(show) {
+        const eff = this.getEffectiveShowStatus(show);
+        const statuses = [
+          { key: "interested", label: "🔖 Interested" },
+          { key: "in_progress", label: "▶ In Progress" },
+          { key: "completed", label: "✓ Watched" },
+          { key: "stopped", label: "⏹ Stopped" },
+        ];
+        const btns = statuses
+          .map(
+            (st) =>
+              '<button onclick="app.setShowStatus(&quot;' +
+              escapeHtml(show.id) +
+              '&quot;, &quot;' +
+              st.key +
+              '&quot;)" class="px-2.5 py-2 rounded-full text-[11px] font-bold transition ' +
+              (eff === st.key ? "tv-yellow-bg" : "bg-zinc-800 text-zinc-300 hover:text-white") +
+              '">' +
+              st.label +
+              "</button>"
+          )
+          .join("");
+
+        return (
+          '<div class="tv-card rounded-2xl p-3 space-y-2 mb-3">' +
+          '<div class="flex items-center justify-between">' +
+          '<span class="text-[11px] font-bold uppercase text-zinc-400">Show Status</span>' +
+          '<button onclick="app.removeItemFromLibrary(&quot;' +
+          escapeHtml(show.id) +
+          '&quot;)" class="text-[11px] font-bold text-rose-400 hover:underline">✕ Not Watched (Remove)</button>' +
+          "</div>" +
+          '<div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5">' +
+          btns +
+          "</div>" +
+          "</div>"
+        );
+      }
+
+      renderMovieStatusHeaderHtml(movie) {
+        return (
+          '<div class="tv-card rounded-2xl p-3 space-y-2 mb-3">' +
+          '<div class="flex items-center justify-between">' +
+          '<span class="text-[11px] font-bold uppercase text-zinc-400">Movie Status</span>' +
+          '<button onclick="app.removeItemFromLibrary(&quot;' +
+          escapeHtml(movie.id) +
+          '&quot;)" class="text-[11px] font-bold text-rose-400 hover:underline">✕ Not Watched (Remove)</button>' +
+          "</div>" +
+          '<div class="grid grid-cols-2 gap-2">' +
+          '<button onclick="app.setMovieStatus(&quot;' +
+          escapeHtml(movie.id) +
+          '&quot;, false)" class="py-2.5 rounded-full text-xs font-extrabold transition ' +
+          (!movie.watched ? "tv-yellow-bg" : "bg-zinc-800 text-zinc-300 hover:text-white") +
+          '">🔖 Interested (Watchlist)</button>' +
+          '<button onclick="app.setMovieStatus(&quot;' +
+          escapeHtml(movie.id) +
+          '&quot;, true)" class="py-2.5 rounded-full text-xs font-extrabold transition ' +
+          (movie.watched ? "tv-yellow-bg" : "bg-zinc-800 text-zinc-300 hover:text-white") +
+          '">✓ Watched (Completed)</button>' +
+          "</div>" +
+          "</div>"
+        );
       }
 
       renderDetailSheet() {
@@ -1612,24 +1698,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               : "py-3 text-sm font-bold text-zinc-400 border-b-2 border-transparent transition";
         }
 
-        if (this.detailTab === "info") {
-          const reactions = ["😍", "🔥", "🤯", "😂", "😢", "😴"];
-          const reactHtml = reactions
-            .map(
-              (em) =>
-                '<button onclick="app.setItemReaction(&quot;' +
-                escapeHtml(item.id) +
-                "&quot;, &quot;" +
-                em +
-                '&quot;)" class="w-9 h-9 rounded-full ' +
-                (item.reaction === em ? "tv-yellow-bg" : "bg-zinc-800") +
-                ' text-base flex items-center justify-center">' +
-                em +
-                "</button>"
-            )
-            .join("");
+        const statusHeader =
+          this.detailType === "movie"
+            ? this.renderMovieStatusHeaderHtml(item)
+            : this.renderShowStatusHeaderHtml(item);
 
+        if (this.detailTab === "info") {
           bodyEl.innerHTML =
+            statusHeader +
             '<div class="flex gap-4 items-start">' +
             '<img src="' +
             escapeHtml(item.posterUrl || "") +
@@ -1653,38 +1729,16 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             '">' +
             (item.isFavorite ? "★ Favorited" : "☆ Favorite") +
             "</button>" +
-            '<button onclick="app.incrementRewatch(&quot;' +
-            escapeHtml(item.id) +
-            '&quot;)" class="px-3 py-1.5 rounded-full bg-zinc-800 text-xs font-bold text-zinc-200">↻ Rewatch (' +
-            (Number(item.rewatchCount) || 0) +
-            ")</button>" +
             "</div>" +
             "</div>" +
             "</div>" +
             '<p class="text-xs text-zinc-300 leading-relaxed">' +
             escapeHtml(item.overview || "No synopsis available.") +
-            "</p>" +
-            '<div class="space-y-1.5">' +
-            '<div class="text-[11px] font-bold uppercase text-zinc-400">Your Reaction Badge</div>' +
-            '<div class="flex gap-2">' +
-            reactHtml +
-            "</div></div>" +
-            '<div class="pt-3 border-t border-zinc-800 flex justify-between items-center">' +
-            '<button onclick="app.removeItemFromLibrary(&quot;' +
-            escapeHtml(item.id) +
-            '&quot;)" class="text-xs font-bold text-rose-400 hover:underline">Remove from Watch List</button>' +
-            (this.detailType === "movie"
-              ? '<button onclick="app.toggleMovieWatched(&quot;' +
-                escapeHtml(item.id) +
-                '&quot;)" class="px-4 py-2 rounded-full tv-yellow-bg text-xs font-extrabold">' +
-                (item.watched ? "✓ Watched" : "Mark Watched") +
-                "</button>"
-              : "") +
-            "</div>";
+            "</p>";
           return;
         }
 
-        // Episodes Tab (Matches Screenshot 4: Season Accordions + Episode Thumbnails + Yellow Check / Gray Eye)
+        // Episodes Tab (Season Accordions + Episode Thumbnails + Yellow Check / Gray Eye)
         const episodes = Array.isArray(item.episodes) ? item.episodes : [];
         const watchedSet = new Set(item.watchedEpisodes || []);
         const bySeason = new Map();
@@ -1694,19 +1748,20 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           bySeason.get(sNum).push(ep);
         }
 
-        let html = "";
+        let html = statusHeader;
         for (const [seasonNum, sEps] of bySeason.entries()) {
           const isOpen = this.openSeasons.has(seasonNum);
-          const allSeasonWatched = sEps.length > 0 && sEps.every((e) => watchedSet.has(e.code));
+          const watchedInSeason = sEps.filter((e) => watchedSet.has(e.code)).length;
+          const allSeasonWatched = sEps.length > 0 && watchedInSeason === sEps.length;
           html +=
             '<div class="tv-card rounded-2xl overflow-hidden mb-3">' +
             '<div onclick="app.toggleSeasonAccordion(' +
             seasonNum +
             ')" class="p-3.5 flex items-center justify-between cursor-pointer hover:bg-zinc-800/40">' +
             '<div class="flex items-center gap-3">' +
-            '<button onclick="event.stopPropagation(); app.toggleSeasonWatched(&quot;' +
+            '<button title="Mark entire season watched or unwatched" onclick="event.stopPropagation(); app.toggleSeasonWatched(&quot;' +
             escapeHtml(item.id) +
-            "', " +
+            '&quot;, ' +
             seasonNum +
             ')" class="' +
             (allSeasonWatched ? "tv-check-btn !w-9 !h-9" : "tv-gray-eye-btn !w-9 !h-9") +
@@ -1718,8 +1773,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             "</span>" +
             "</div>" +
             '<span class="text-xs font-semibold text-zinc-400">' +
+            watchedInSeason +
+            "/" +
             sEps.length +
-            " episodes &nbsp;" +
+            " watched &nbsp;" +
             (isOpen ? "∧" : "∨") +
             "</span>" +
             "</div>";
@@ -1735,7 +1792,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               html +=
                 '<div onclick="app.toggleEpisodeCode(&quot;' +
                 escapeHtml(item.id) +
-                "', '" +
+                '&quot;, &quot;' +
                 escapeHtml(ep.code) +
                 '&quot;)" class="py-3 flex items-center gap-3 cursor-pointer">' +
                 '<img src="' +
@@ -1767,13 +1824,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       // =========================================================
-      // PROFILE, STATS, FOLLOWING & TV TIME IMPORT LOGIC
+      // PROFILE, STATS, WATCHLISTS & TV TIME EXPORT/IMPORT LOGIC
       // =========================================================
       renderProfile() {
         const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
         const movies = Array.isArray(this.state.movies) ? this.state.movies : [];
-        const actors = Array.isArray(this.state.actors) ? this.state.actors : [];
-        const users = Array.isArray(this.state.followingUsers) ? this.state.followingUsers : ["partner"];
 
         const cleanUser = String(this.userId || "member");
         const nameEl = document.getElementById("profile-display-name");
@@ -1783,127 +1838,177 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (handleEl) handleEl.textContent = "@" + cleanUser;
         if (initEl) initEl.textContent = cleanUser.slice(0, 2).toUpperCase();
 
-        const folCountEl = document.getElementById("profile-following-count");
-        if (folCountEl) folCountEl.textContent = String(actors.length + users.length);
-
         let epCount = 0;
         let showMins = 0;
         for (const s of shows) {
           const w = (s.watchedEpisodes || []).length;
-          const mult = 1 + (Number(s.rewatchCount) || 0);
-          epCount += w * mult;
-          showMins += w * (Number(s.runtimeMins) || 45) * mult;
+          epCount += w;
+          showMins += w * (Number(s.runtimeMins) || 45);
         }
         let movCount = 0;
         let movMins = 0;
         for (const m of movies) {
           if (m.watched) {
-            const mult = 1 + (Number(m.rewatchCount) || 0);
-            movCount += mult;
-            movMins += (Number(m.runtimeMins) || 120) * mult;
+            movCount += 1;
+            movMins += Number(m.runtimeMins) || 120;
           }
         }
         const totalMins = showMins + movMins;
+        const fmtHours = (mins) => (Math.round((mins / 60) * 10) / 10).toFixed(1) + " hrs";
         const fmtDaysHours = (mins) => {
           const d = Math.floor(mins / 1440);
           const h = Math.floor((mins % 1440) / 60);
           return d + "d " + h + "h";
         };
 
+        const interestedShows = shows.filter((s) => this.getEffectiveShowStatus(s) === "interested");
+        const activeOrCompletedShows = shows.filter((s) => {
+          const st = this.getEffectiveShowStatus(s);
+          return st === "in_progress" || st === "completed";
+        });
+        const interestedMovies = movies.filter((m) => !m.watched);
+        const watchedMovies = movies.filter((m) => m.watched);
+
+        const countsBadgeEl = document.getElementById("stat-counts-badge");
         const totalEl = document.getElementById("stat-total-time");
+        const totalSubEl = document.getElementById("stat-total-sub");
         const sTimeEl = document.getElementById("stat-series-time");
         const sSubEl = document.getElementById("stat-series-sub");
         const mTimeEl = document.getElementById("stat-movies-time");
         const mSubEl = document.getElementById("stat-movies-sub");
 
-        if (totalEl) totalEl.textContent = fmtDaysHours(totalMins);
-        if (sTimeEl) sTimeEl.textContent = fmtDaysHours(showMins);
-        if (sSubEl) sSubEl.textContent = "Series · " + epCount + " eps";
-        if (mTimeEl) mTimeEl.textContent = fmtDaysHours(movMins);
-        if (mSubEl) mSubEl.textContent = "Movies · " + movCount;
-
-        // Carousels
-        const favEl = document.getElementById("carousel-favorites");
-        if (favEl) {
-          const favs = shows.filter((s) => s.isFavorite);
-          const list = favs.length ? favs : shows;
-          favEl.innerHTML = list
-            .map(
-              (s) =>
-                '<div onclick="app.openItemById(&quot;' +
-                escapeHtml(s.id) +
-                '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
-                '<div class="relative">' +
-                '<img src="' +
-                escapeHtml(s.posterUrl || "") +
-                '" class="w-28 h-40 object-cover rounded-2xl bg-zinc-900" />' +
-                "</div>" +
-                '<div class="text-xs font-bold text-white truncate">' +
-                escapeHtml(s.title) +
-                "</div>" +
-                "</div>"
-            )
-            .join("");
+        if (countsBadgeEl) countsBadgeEl.textContent = shows.length + " Series · " + movies.length + " Movies";
+        if (totalEl) totalEl.textContent = fmtHours(totalMins);
+        if (totalSubEl) totalSubEl.textContent = "Total Watch Hours (" + fmtDaysHours(totalMins) + ")";
+        if (sTimeEl) sTimeEl.textContent = fmtHours(showMins);
+        if (sSubEl) {
+          sSubEl.textContent =
+            shows.length +
+            " Series (" +
+            activeOrCompletedShows.length +
+            " active/done · " +
+            interestedShows.length +
+            " watchlist) · " +
+            epCount +
+            " eps";
+        }
+        if (mTimeEl) mTimeEl.textContent = fmtHours(movMins);
+        if (mSubEl) {
+          mSubEl.textContent =
+            movies.length +
+            " Movies (" +
+            watchedMovies.length +
+            " watched · " +
+            interestedMovies.length +
+            " watchlist)";
         }
 
+        const wlSeriesCountEl = document.getElementById("label-series-watchlist-count");
+        const wlMovieCountEl = document.getElementById("label-movie-watchlist-count");
+        const recSeriesCountEl = document.getElementById("label-recent-series-count");
+        const recMoviesCountEl = document.getElementById("label-recent-movies-count");
+        if (wlSeriesCountEl) wlSeriesCountEl.textContent = "Watchlist (" + interestedShows.length + ")";
+        if (wlMovieCountEl) wlMovieCountEl.textContent = "Watchlist (" + interestedMovies.length + ")";
+        if (recSeriesCountEl) recSeriesCountEl.textContent = "Series (" + activeOrCompletedShows.length + ")";
+        if (recMoviesCountEl) recMoviesCountEl.textContent = "Movies (" + watchedMovies.length + ")";
+
+        // 1. Series Watchlist (Interested)
+        const wlSeriesEl = document.getElementById("carousel-series-watchlist");
+        if (wlSeriesEl) {
+          wlSeriesEl.innerHTML =
+            interestedShows
+              .map(
+                (s) =>
+                  '<div onclick="app.openItemById(&quot;' +
+                  escapeHtml(s.id) +
+                  '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
+                  '<img src="' +
+                  escapeHtml(s.posterUrl || "") +
+                  '" class="w-28 h-40 object-cover rounded-2xl bg-zinc-900" />' +
+                  '<div class="text-xs font-bold text-white truncate">' +
+                  escapeHtml(s.title) +
+                  "</div>" +
+                  '<div class="text-[11px] font-bold tv-yellow-text">Interested</div>' +
+                  "</div>"
+              )
+              .join("") || '<p class="text-xs text-zinc-400 py-2">No series in your watchlist yet.</p>';
+        }
+
+        // 2. Movie Watchlist (Interested)
+        const wlMovieEl = document.getElementById("carousel-movie-watchlist");
+        if (wlMovieEl) {
+          wlMovieEl.innerHTML =
+            interestedMovies
+              .map(
+                (m) =>
+                  '<div onclick="app.openItemById(&quot;' +
+                  escapeHtml(m.id) +
+                  '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
+                  '<img src="' +
+                  escapeHtml(m.posterUrl || "") +
+                  '" class="w-28 h-40 object-cover rounded-2xl bg-zinc-900" />' +
+                  '<div class="text-xs font-bold text-white truncate">' +
+                  escapeHtml(m.title) +
+                  "</div>" +
+                  '<div class="text-[11px] font-bold tv-yellow-text">Interested</div>' +
+                  "</div>"
+              )
+              .join("") || '<p class="text-xs text-zinc-400 py-2">No movies in your watchlist yet.</p>';
+        }
+
+        // 3. Watched & In Progress Series
         const recSeriesEl = document.getElementById("carousel-recent-series");
         if (recSeriesEl) {
-          recSeriesEl.innerHTML = shows
-            .map((s) => {
-              const watched = s.watchedEpisodes || [];
-              const lastCode = (watched[watched.length - 1] || "S01E01").replace(/^S([0-9]+)E([0-9]+)$/, "S$1·E$2");
-              return (
-                '<div onclick="app.openItemById(&quot;' +
-                escapeHtml(s.id) +
-                '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
-                '<div class="relative">' +
-                '<img src="' +
-                escapeHtml(s.posterUrl || "") +
-                '" class="w-28 h-40 object-cover rounded-2xl bg-zinc-900" />' +
-                (s.reaction
-                  ? '<span class="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-zinc-900/90 flex items-center justify-center text-xs shadow">' +
-                    escapeHtml(s.reaction) +
-                    "</span>"
-                  : "") +
-                "</div>" +
-                '<div class="text-xs font-bold text-white truncate">' +
-                escapeHtml(s.title) +
-                "</div>" +
-                '<div class="text-xs font-extrabold tv-yellow-text">' +
-                escapeHtml(lastCode) +
-                "</div>" +
-                "</div>"
-              );
-            })
-            .join("");
+          recSeriesEl.innerHTML =
+            activeOrCompletedShows
+              .map((s) => {
+                const prog = this.computeShowProgress(s);
+                const eff = this.getEffectiveShowStatus(s);
+                const badge =
+                  eff === "completed"
+                    ? "Watched (" + prog.watchedCount + "/" + prog.total + ")"
+                    : "In Progress (" + prog.watchedCount + "/" + prog.total + ")";
+                return (
+                  '<div onclick="app.openItemById(&quot;' +
+                  escapeHtml(s.id) +
+                  '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
+                  '<img src="' +
+                  escapeHtml(s.posterUrl || "") +
+                  '" class="w-28 h-40 object-cover rounded-2xl bg-zinc-900" />' +
+                  '<div class="text-xs font-bold text-white truncate">' +
+                  escapeHtml(s.title) +
+                  "</div>" +
+                  '<div class="text-[11px] font-extrabold ' +
+                  (eff === "completed" ? "text-emerald-400" : "tv-yellow-text") +
+                  '">' +
+                  escapeHtml(badge) +
+                  "</div>" +
+                  "</div>"
+                );
+              })
+              .join("") || '<p class="text-xs text-zinc-400 py-2">No watched or in-progress series yet.</p>';
         }
 
+        // 4. Watched Movies
         const recMoviesEl = document.getElementById("carousel-recent-movies");
         if (recMoviesEl) {
-          const watchedMovies = movies.filter((m) => m.watched);
-          const list = watchedMovies.length ? watchedMovies : movies;
-          recMoviesEl.innerHTML = list
-            .map(
-              (m) =>
-                '<div onclick="app.openItemById(&quot;' +
-                escapeHtml(m.id) +
-                '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
-                '<div class="relative">' +
-                '<img src="' +
-                escapeHtml(m.posterUrl || "") +
-                '" class="w-28 h-40 object-cover rounded-2xl bg-zinc-900" />' +
-                (m.reaction
-                  ? '<span class="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-zinc-900/90 flex items-center justify-center text-xs shadow">' +
-                    escapeHtml(m.reaction) +
-                    "</span>"
-                  : "") +
-                "</div>" +
-                '<div class="text-xs font-bold text-white truncate">' +
-                escapeHtml(m.title) +
-                "</div>" +
-                "</div>"
-            )
-            .join("");
+          recMoviesEl.innerHTML =
+            watchedMovies
+              .map(
+                (m) =>
+                  '<div onclick="app.openItemById(&quot;' +
+                  escapeHtml(m.id) +
+                  '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
+                  '<img src="' +
+                  escapeHtml(m.posterUrl || "") +
+                  '" class="w-28 h-40 object-cover rounded-2xl bg-zinc-900" />' +
+                  '<div class="text-xs font-bold text-white truncate">' +
+                  escapeHtml(m.title) +
+                  "</div>" +
+                  '<div class="text-[11px] font-extrabold text-emerald-400">Watched</div>' +
+                  "</div>"
+              )
+              .join("") || '<p class="text-xs text-zinc-400 py-2">No watched movies yet.</p>';
         }
       }
 
@@ -2020,12 +2125,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const q = String.fromCharCode(34);
         const nl = String.fromCharCode(10);
         const esc = (val) => q + String(val == null ? "" : val).split(q).join(q + q) + q;
-        const rows = ["Type,Title,Year,Rating,Status,Progress,RuntimeMinutes,Favorite,Reaction"];
+        const rows = ["Type,Title,Year,Rating,Status,Progress,RuntimeMinutes,Favorite"];
         const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
         for (const s of shows) {
           const eps = Array.isArray(s.episodes) ? s.episodes : [];
-          const watched = eps.filter((e) => e && e.watched).length;
-          const status = eps.length > 0 && watched >= eps.length ? "Completed" : watched > 0 ? "In Progress" : "Watchlist";
+          const watched = (s.watchedEpisodes || []).length;
+          const eff = this.getEffectiveShowStatus(s);
+          const status = eff === "completed" ? "Watched" : eff === "in_progress" ? "In Progress" : eff === "stopped" ? "Stopped" : "Interested";
           rows.push(
             [
               esc("Show"),
@@ -2034,9 +2140,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               esc(s.rating),
               esc(status),
               esc(watched + "/" + eps.length + " eps"),
-              esc(s.runtimeMinutes || 45),
+              esc(s.runtimeMins || 45),
               esc(Boolean(s.isFavorite)),
-              esc(""),
             ].join(",")
           );
         }
@@ -2048,11 +2153,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               esc(m.title),
               esc(m.year),
               esc(m.rating),
-              esc(m.watched ? "Completed" : "Watchlist"),
+              esc(m.watched ? "Watched" : "Interested"),
               esc(m.watched ? "1/1" : "0/1"),
-              esc(m.runtimeMinutes || 120),
+              esc(m.runtimeMins || 120),
               esc(Boolean(m.isFavorite)),
-              esc(m.reaction || ""),
             ].join(",")
           );
         }

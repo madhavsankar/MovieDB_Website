@@ -180,6 +180,15 @@ fun TvShowWatchCard(
     val progress = remember(episodes, watchedSet) {
         TvTimeProgressCalculator.computeShowProgress(episodes, watchedSet)
     }
+    val statusKey = remember(show.userStatus, progress.isCompleted, progress.hasStarted) {
+        val raw = show.userStatus.lowercase()
+        when {
+            raw == "stopped" -> "stopped"
+            raw == "completed" || progress.isCompleted -> "completed"
+            raw == "in_progress" || progress.hasStarted -> "in_progress"
+            else -> "interested"
+        }
+    }
 
     Surface(
         onClick = onCardClick,
@@ -226,83 +235,108 @@ fun TvShowWatchCard(
                     }
                 }
 
-                if (progress.isCompleted) {
-                    Text(
-                        text = "TV Show",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TvTimePalette.Yellow
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                when (statusKey) {
+                    "completed" -> {
                         Text(
-                            text = "Caught up ·",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TvTimePalette.TextSecondary
-                        )
-                        Text(
-                            text = "All watched",
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                            color = TvTimePalette.Yellow
-                        )
-                    }
-                } else {
-                    if (!progress.hasStarted) {
-                        Text(
-                            text = "TV Show",
+                            text = "TV Show · Watched",
                             style = MaterialTheme.typography.labelSmall,
                             color = TvTimePalette.Yellow
                         )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .width(110.dp)
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(50))
-                                .background(Color(0xFF27272F))
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .fillMaxWidth(progress.progressFraction.coerceAtLeast(0.08f))
-                                    .clip(RoundedCornerShape(50))
-                                    .background(TvTimePalette.GreenProgress)
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = "Completed ·",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TvTimePalette.TextSecondary
+                            )
+                            Text(
+                                text = "All ${progress.totalEpisodes} episodes watched",
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                color = TvTimePalette.Yellow
                             )
                         }
                     }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
+                    "stopped" -> {
                         Text(
-                            text = "${progress.leftCount} episode${if (progress.leftCount == 1) "" else "s"} left",
+                            text = "TV Show · Stopped Watching",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TvTimePalette.Error
+                        )
+                        Text(
+                            text = "${progress.watchedCount}/${progress.totalEpisodes} episodes watched",
                             style = MaterialTheme.typography.bodySmall,
                             color = TvTimePalette.TextSecondary
                         )
-                        Text(
-                            text = progress.nextEpisode?.formattedDotCode ?: "S01·E01",
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraBold),
-                            color = TvTimePalette.Yellow
-                        )
+                    }
+                    else -> {
+                        if (statusKey == "interested" && !progress.hasStarted) {
+                            Text(
+                                text = "TV Show · Interested (Watchlist)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TvTimePalette.Yellow
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .width(110.dp)
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(Color(0xFF27272F))
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .fillMaxWidth(progress.progressFraction.coerceAtLeast(0.08f))
+                                        .clip(RoundedCornerShape(50))
+                                        .background(TvTimePalette.GreenProgress)
+                                )
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "${progress.leftCount} ep${if (progress.leftCount == 1) "" else "s"} left",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TvTimePalette.TextSecondary
+                            )
+                            Text(
+                                text = progress.nextEpisode?.formattedDotCode ?: "S01·E01",
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraBold),
+                                color = TvTimePalette.Yellow
+                            )
+                        }
                     }
                 }
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(text = "★", fontSize = 12.sp, color = TvTimePalette.Yellow)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(text = "★", fontSize = 12.sp, color = TvTimePalette.Yellow)
+                        Text(
+                            text = String.format("%.1f", show.rating),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.White
+                        )
+                    }
                     Text(
-                        text = String.format("%.1f", show.rating),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color.White
+                        text = "📋 Episodes (${progress.watchedCount}/${progress.totalEpisodes})",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TvTimePalette.TextSecondary
                     )
                 }
             }
 
-            if (progress.isCompleted) {
+            if (statusKey == "completed") {
                 Icon(
                     imageVector = Icons.Default.Check,
-                    contentDescription = "Caught Up",
+                    contentDescription = "Watched",
                     tint = TvTimePalette.GreenProgress,
                     modifier = Modifier
                         .size(28.dp)
@@ -370,9 +404,9 @@ fun TvMovieWatchCard(
                 }
 
                 Text(
-                    text = "Movie · ${movie.runtimeMins}m",
+                    text = "Movie · ${movie.runtimeMins}m · ${if (movie.watched) "Watched" else "Interested (Watchlist)"}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = TvTimePalette.CyanMovie
+                    color = if (movie.watched) TvTimePalette.Yellow else TvTimePalette.CyanMovie
                 )
 
                 Text(
@@ -456,16 +490,8 @@ fun TvSearchResultCard(
                     }
                 }
 
-                val badgeColor = when (item.mediaType) {
-                    "movie" -> TvTimePalette.CyanMovie
-                    "actor" -> TvTimePalette.GreenProgress
-                    else -> TvTimePalette.Yellow
-                }
-                val badgeLabel = when (item.mediaType) {
-                    "movie" -> "Movie"
-                    "actor" -> "Actor"
-                    else -> "TV Show"
-                }
+                val badgeColor = if (item.mediaType == "movie") TvTimePalette.CyanMovie else TvTimePalette.Yellow
+                val badgeLabel = if (item.mediaType == "movie") "Movie" else "TV Show"
 
                 Text(
                     text = badgeLabel,
