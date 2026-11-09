@@ -310,15 +310,16 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         </div>
         <div class="h-px bg-zinc-800"></div>
         <div class="grid grid-cols-2 gap-4 pt-1">
-          <div>
+          <div class="space-y-0.5">
             <div id="stat-series-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
-            <div class="text-[11px] font-bold tv-yellow-text">Series Watch Hours</div>
-            <div id="stat-series-sub" class="text-xs text-zinc-400 mt-0.5">0 completed series · 0 completed episodes</div>
+            <div class="text-[11px] font-bold tv-yellow-text">Series watch hours</div>
+            <div id="stat-series-count" class="text-xs text-zinc-400">0 series</div>
+            <div id="stat-episodes-count" class="text-xs text-zinc-400">0 episodes</div>
           </div>
-          <div class="text-right">
+          <div class="text-right space-y-0.5">
             <div id="stat-movies-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
-            <div class="text-[11px] font-bold tv-yellow-text">Movie Watch Hours</div>
-            <div id="stat-movies-sub" class="text-xs text-zinc-400 mt-0.5">0 watched movies</div>
+            <div class="text-[11px] font-bold tv-yellow-text">Movie watch hours</div>
+            <div id="stat-movies-sub" class="text-xs text-zinc-400">0 movies</div>
           </div>
         </div>
       </div>
@@ -2322,24 +2323,27 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const totalEl = document.getElementById("stat-total-time");
         const totalSubEl = document.getElementById("stat-total-sub");
         const sTimeEl = document.getElementById("stat-series-time");
-        const sSubEl = document.getElementById("stat-series-sub");
+        const sCountEl = document.getElementById("stat-series-count");
+        const epCountEl = document.getElementById("stat-episodes-count");
         const mTimeEl = document.getElementById("stat-movies-time");
         const mSubEl = document.getElementById("stat-movies-sub");
 
         if (countsBadgeEl) {
           countsBadgeEl.textContent =
-            completedShows.length + " Completed Series · " + watchedMovies.length + " Watched Movies";
+            completedShows.length + " series · " + watchedMovies.length + " movies";
         }
         if (totalEl) totalEl.textContent = fmtHours(totalMins);
-        if (totalSubEl) totalSubEl.textContent = "Total Watch Hours (" + fmtDaysHours(totalMins) + ")";
+        if (totalSubEl) totalSubEl.textContent = "Total watch hours (" + fmtDaysHours(totalMins) + ")";
         if (sTimeEl) sTimeEl.textContent = fmtHours(showMins);
-        if (sSubEl) {
-          sSubEl.textContent =
-            completedShows.length + " completed series · " + epCount + " completed episodes";
+        if (sCountEl) {
+          sCountEl.textContent = completedShows.length + " series";
+        }
+        if (epCountEl) {
+          epCountEl.textContent = epCount + " episodes";
         }
         if (mTimeEl) mTimeEl.textContent = fmtHours(movMins);
         if (mSubEl) {
-          mSubEl.textContent = watchedMovies.length + " watched movies";
+          mSubEl.textContent = watchedMovies.length + " movies";
         }
 
         const recSeriesCountEl = document.getElementById("label-recent-series-count");

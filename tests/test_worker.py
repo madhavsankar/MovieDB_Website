@@ -68,8 +68,8 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertNotIn("Search TV shows, movies, or actors", view_src)
         self.assertIn("Search TV shows or movies...", view_src)
         self.assertNotIn("Your Reaction Badge", view_src)
-        self.assertIn("Series Watch Hours", view_src)
-        self.assertIn("Movie Watch Hours", view_src)
+        self.assertIn("Series watch hours", view_src)
+        self.assertIn("Movie watch hours", view_src)
         self.assertNotIn("carousel-series-watchlist", view_src)
         self.assertNotIn("carousel-movie-watchlist", view_src)
         self.assertIn("carousel-recent-series", view_src)
@@ -85,8 +85,8 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertNotIn("All US", view_src)
         self.assertNotIn("btn-3d-toggle", view_src)
         self.assertNotIn("All Movies", view_src)
-        self.assertIn("completed series", view_src)
-        self.assertIn("completed episodes", view_src)
+        self.assertIn("stat-series-count", view_src)
+        self.assertIn("stat-episodes-count", view_src)
         harness = (
             view_src
             + """

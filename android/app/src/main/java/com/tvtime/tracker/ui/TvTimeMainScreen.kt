@@ -2221,7 +2221,7 @@ private fun ProfileTabScreen(
                             color = TvTimePalette.TextSecondary
                         )
                         Text(
-                            text = "${completedShows.size} Completed Series · ${watchedMovies.size} Watched Movies",
+                            text = "${completedShows.size} series · ${watchedMovies.size} movies",
                             style = MaterialTheme.typography.labelMedium,
                             color = TvTimePalette.Yellow
                         )
@@ -2234,7 +2234,7 @@ private fun ProfileTabScreen(
                             color = TvTimePalette.Yellow
                         )
                         Text(
-                            text = "Total Watch Hours (${stats.formattedTotal})",
+                            text = "Total watch hours (${stats.formattedTotal})",
                             style = MaterialTheme.typography.bodySmall,
                             color = TvTimePalette.TextSecondary
                         )
@@ -2253,35 +2253,38 @@ private fun ProfileTabScreen(
                                 color = Color.White
                             )
                             Text(
-                                text = "Series Watch Hours",
+                                text = "Series watch hours",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = TvTimePalette.Yellow
                             )
                             Text(
-                                text = "${completedShows.size} completed series · ${stats.totalEpisodesWatched} completed episodes",
+                                text = "${completedShows.size} series",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TvTimePalette.TextSecondary
+                            )
+                            Text(
+                                text = "${stats.totalEpisodesWatched} episodes",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TvTimePalette.TextSecondary
                             )
                         }
-                    }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                            horizontalAlignment = Alignment.End
+                        ) {
                             Text(
                                 text = stats.formattedMoviesHours,
                                 style = MaterialTheme.typography.titleLarge,
                                 color = Color.White
                             )
                             Text(
-                                text = "Movie Watch Hours",
+                                text = "Movie watch hours",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = TvTimePalette.Yellow
                             )
                             Text(
-                                text = "${watchedMovies.size} watched movies",
+                                text = "${watchedMovies.size} movies",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TvTimePalette.TextSecondary
                             )
