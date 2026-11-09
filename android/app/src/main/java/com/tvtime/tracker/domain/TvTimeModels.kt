@@ -176,5 +176,26 @@ object TvTimeProgressCalculator {
             hasStarted = watchedCount > 0
         )
     }
+
+    fun deriveEffectiveShowStatus(
+        progress: ShowProgressSummary,
+        rawUserStatus: String
+    ): String {
+        val raw = rawUserStatus.trim().lowercase()
+        return when {
+            progress.isCompleted -> "completed"
+            progress.hasStarted -> if (raw == "stopped") "stopped" else "in_progress"
+            else -> if (raw == "stopped") "stopped" else "interested"
+        }
+    }
+
+    fun deriveEffectiveShowStatus(
+        episodes: List<EpisodeModel>,
+        watchedCodes: Set<String>,
+        rawUserStatus: String
+    ): String {
+        val progress = computeShowProgress(episodes, watchedCodes)
+        return deriveEffectiveShowStatus(progress, rawUserStatus)
+    }
 }
 

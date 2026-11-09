@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -52,22 +53,24 @@ fun ShowDetailBottomSheet(
     var watchedSet by remember(show.id, show.watchedCodesCsv) {
         mutableStateOf(TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv))
     }
-    var userStatus by remember(show.id, show.userStatus) {
-        val raw = show.userStatus.lowercase()
-        val initial = when {
-            raw == "stopped" -> "stopped"
-            raw == "completed" || raw == "watched" -> "completed"
-            raw == "interested" || raw == "watchlist" -> "interested"
-            watchedSet.isNotEmpty() -> "in_progress"
-            else -> "interested"
-        }
-        mutableStateOf(initial)
+    var userStatus by remember(show.id, show.userStatus, show.watchedCodesCsv) {
+        val initEps = TvTimeProgressCalculator.parseEpisodeList(show.episodesJson)
+        val initWatched = TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv)
+        mutableStateOf(TvTimeProgressCalculator.deriveEffectiveShowStatus(initEps, initWatched, show.userStatus))
     }
     var isFavorite by remember(show.id, show.isFavorite) { mutableStateOf(show.isFavorite) }
     var castCsv by remember(show.id, show.castCsv) { mutableStateOf(show.castCsv) }
     var openSeasons by remember(show.id) {
-        val initialSeasons = TvTimeProgressCalculator.parseEpisodeList(show.episodesJson).map { it.season }.toSet()
-        mutableStateOf(if (initialSeasons.isNotEmpty()) initialSeasons else setOf(1, 2))
+        val initEps = TvTimeProgressCalculator.parseEpisodeList(show.episodesJson)
+        val initWatched = TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv)
+        val initProg = TvTimeProgressCalculator.computeShowProgress(initEps, initWatched)
+        val initEff = TvTimeProgressCalculator.deriveEffectiveShowStatus(initProg, show.userStatus)
+        val initialOpen = if (initEff == "in_progress" && initProg.nextEpisode != null) {
+            setOf(initProg.nextEpisode.season)
+        } else {
+            emptySet()
+        }
+        mutableStateOf(initialOpen)
     }
 
     fun deriveStatusFromWatched(
@@ -75,11 +78,7 @@ fun ShowDetailBottomSheet(
         watched: Set<String>,
         current: String
     ): String {
-        return when {
-            eps.isNotEmpty() && watched.size >= eps.size -> "completed"
-            watched.isNotEmpty() -> if (current == "stopped") "stopped" else "in_progress"
-            else -> if (current == "stopped") "stopped" else "interested"
-        }
+        return TvTimeProgressCalculator.deriveEffectiveShowStatus(eps, watched, current)
     }
 
     fun persistUpdatedShow(
@@ -114,21 +113,33 @@ fun ShowDetailBottomSheet(
         )
         if (fetchedEps.isNotEmpty() && fetchedEps.size > episodes.size) {
             episodes = fetchedEps
-            openSeasons = openSeasons + fetchedEps.map { it.season }.toSet()
             val mergedCast = if (fetchedCast.isNotEmpty()) fetchedCast.joinToString(", ") else castCsv
             castCsv = mergedCast
-            val nextWatched = if (userStatus == "completed") {
+            val nextWatched = if (show.userStatus.equals("completed", ignoreCase = true)) {
                 fetchedEps.map { it.code.uppercase() }.toSet()
             } else {
                 watchedSet
             }
+            val nextProg = TvTimeProgressCalculator.computeShowProgress(fetchedEps, nextWatched)
+            val nextEff = TvTimeProgressCalculator.deriveEffectiveShowStatus(nextProg, userStatus)
             watchedSet = nextWatched
+            userStatus = nextEff
+            openSeasons = if (nextEff == "in_progress" && nextProg.nextEpisode != null) {
+                setOf(nextProg.nextEpisode.season)
+            } else {
+                emptySet()
+            }
             persistUpdatedShow(
                 nextEpisodes = fetchedEps,
                 nextWatchedSet = nextWatched,
+                nextStatus = nextEff,
                 nextCastCsv = mergedCast
             )
         }
+    }
+
+    val effectiveStatus = remember(episodes, watchedSet, userStatus) {
+        TvTimeProgressCalculator.deriveEffectiveShowStatus(episodes, watchedSet, userStatus)
     }
 
     ModalBottomSheet(
@@ -142,7 +153,7 @@ fun ShowDetailBottomSheet(
                 .fillMaxWidth()
                 .fillMaxHeight(0.88f)
         ) {
-            // Show Status Selector Bar: Interested | In Progress | Watched | Stopped | Not Watched (Remove)
+            // Show Status Header: Status Indicator + Settable Completed/Stopped + Separate Watchlist Button
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -154,14 +165,32 @@ fun ShowDetailBottomSheet(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = show.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = show.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        val statusBadgeText = when (effectiveStatus) {
+                            "completed" -> "✓ Completed"
+                            "in_progress" -> "▶ In Progress (${watchedSet.size}/${episodes.size} watched)"
+                            "stopped" -> "⏹ Stopped (${watchedSet.size}/${episodes.size} watched)"
+                            else -> "🔖 Watchlist"
+                        }
+                        val statusBadgeColor = when (effectiveStatus) {
+                            "completed" -> Color(0xFF4ADE80)
+                            "in_progress" -> TvTimePalette.Yellow
+                            "stopped" -> TvTimePalette.Error
+                            else -> Color(0xFF38BDF8)
+                        }
+                        Text(
+                            text = statusBadgeText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = statusBadgeColor
+                        )
+                    }
                     TextButton(
                         onClick = {
                             scope.launch {
@@ -176,48 +205,127 @@ fun ShowDetailBottomSheet(
                     }
                 }
 
+                // Settable Watch Statuses: Completed | Stopped (In Progress is automatic when partially watched)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf(
-                        "interested" to "🔖 Interested",
-                        "in_progress" to "▶ In Progress",
-                        "completed" to "✓ Watched",
-                        "stopped" to "⏹ Stopped"
-                    ).forEach { (statusKey, label) ->
-                        val active = userStatus == statusKey
-                        Surface(
-                            onClick = {
-                                userStatus = statusKey
-                                val nextWatched = when (statusKey) {
-                                    "completed" -> episodes.map { it.code.uppercase() }.toSet()
-                                    "interested" -> emptySet()
-                                    else -> watchedSet
-                                }
+                    val isCompleted = effectiveStatus == "completed"
+                    Surface(
+                        onClick = {
+                            if (isCompleted) {
+                                val nextWatched = emptySet<String>()
                                 watchedSet = nextWatched
-                                persistUpdatedShow(
-                                    nextWatchedSet = nextWatched,
-                                    nextStatus = statusKey
-                                )
-                            },
-                            shape = RoundedCornerShape(50),
-                            color = if (active) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Box(
-                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = label,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (active) TvTimePalette.OnYellow else Color.White,
-                                    maxLines = 1
-                                )
+                                userStatus = "interested"
+                                openSeasons = emptySet()
+                                persistUpdatedShow(nextWatchedSet = nextWatched, nextStatus = "interested")
+                            } else {
+                                val nextWatched = episodes.map { it.code.uppercase() }.toSet()
+                                watchedSet = nextWatched
+                                userStatus = "completed"
+                                openSeasons = emptySet()
+                                persistUpdatedShow(nextWatchedSet = nextWatched, nextStatus = "completed")
                             }
+                        },
+                        shape = RoundedCornerShape(50),
+                        color = if (isCompleted) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(vertical = 9.dp, horizontal = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "✓ Completed",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isCompleted) TvTimePalette.OnYellow else Color.White,
+                                maxLines = 1
+                            )
                         }
+                    }
+
+                    val isStopped = effectiveStatus == "stopped"
+                    val canStop = !isCompleted
+                    Surface(
+                        onClick = {
+                            if (!canStop) return@Surface
+                            val nextStat = if (isStopped) {
+                                if (watchedSet.isNotEmpty()) "in_progress" else "interested"
+                            } else {
+                                "stopped"
+                            }
+                            userStatus = nextStat
+                            persistUpdatedShow(nextWatchedSet = watchedSet, nextStatus = nextStat)
+                        },
+                        shape = RoundedCornerShape(50),
+                        color = when {
+                            isStopped -> TvTimePalette.Yellow
+                            canStop -> TvTimePalette.SurfacePill
+                            else -> Color(0xFF1A1A20)
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(vertical = 9.dp, horizontal = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (isStopped) "⏹ Stopped ✓" else "⏹ Stopped",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = when {
+                                    isStopped -> TvTimePalette.OnYellow
+                                    canStop -> Color.White
+                                    else -> TvTimePalette.TextSecondary
+                                },
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+
+                // Separate Watchlist Button (Only allowed when 0 episodes are watched)
+                val canSetWatchlist = watchedSet.isEmpty()
+                val isInWatchlist = effectiveStatus == "interested" && watchedSet.isEmpty()
+                Surface(
+                    onClick = {
+                        if (canSetWatchlist && !isInWatchlist) {
+                            userStatus = "interested"
+                            persistUpdatedShow(nextWatchedSet = emptySet(), nextStatus = "interested")
+                        }
+                    },
+                    shape = RoundedCornerShape(50),
+                    color = when {
+                        isInWatchlist -> TvTimePalette.Yellow
+                        canSetWatchlist -> TvTimePalette.SurfacePill
+                        else -> Color(0xFF1A1A20)
+                    },
+                    border = BorderStroke(
+                        1.dp,
+                        if (isInWatchlist) TvTimePalette.Yellow else Color.White.copy(alpha = 0.08f)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = when {
+                                isInWatchlist -> "🔖 In Watchlist"
+                                canSetWatchlist -> "🔖 Add to Watchlist"
+                                else -> "🔖 Watchlist (Only for unwatched series)"
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = when {
+                                isInWatchlist -> TvTimePalette.OnYellow
+                                canSetWatchlist -> Color.White
+                                else -> TvTimePalette.TextSecondary
+                            },
+                            maxLines = 1
+                        )
                     }
                 }
             }
@@ -316,8 +424,23 @@ fun ShowDetailBottomSheet(
                 val groupedBySeason = remember(episodes) {
                     episodes.groupBy { it.season }.toSortedMap()
                 }
+                val listState = rememberLazyListState()
+
+                LaunchedEffect(show.id, episodes.size) {
+                    if (effectiveStatus == "in_progress") {
+                        val prog = TvTimeProgressCalculator.computeShowProgress(episodes, watchedSet)
+                        val targetSeason = prog.nextEpisode?.season
+                        if (targetSeason != null) {
+                            val idx = groupedBySeason.keys.indexOf(targetSeason)
+                            if (idx >= 0) {
+                                listState.scrollToItem(idx)
+                            }
+                        }
+                    }
+                }
 
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -574,7 +697,7 @@ fun MovieDetailBottomSheet(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "🔖 Interested",
+                            text = "🔖 Watchlist",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (!isWatched) TvTimePalette.OnYellow else Color.White

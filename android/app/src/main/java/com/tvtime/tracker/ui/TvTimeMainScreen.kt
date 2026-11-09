@@ -599,7 +599,7 @@ private fun HomeTabScreen(
                         ) {
                             listOf(
                                 "in_progress" to "In progress",
-                                "interested" to "Interested",
+                                "interested" to "Watchlist",
                                 "completed" to "Completed",
                                 "stopped" to "Stopped"
                             ).forEach { (key, label) ->
@@ -662,7 +662,7 @@ private fun HomeTabScreen(
                         ) {
                             Row(modifier = Modifier.padding(4.dp)) {
                                 listOf(
-                                    "interested" to "Interested (Watchlist)",
+                                    "interested" to "Watchlist",
                                     "completed" to "Watched"
                                 ).forEach { (key, label) ->
                                     val active = mediaFilter == key
@@ -819,12 +819,7 @@ private fun HomeTabScreen(
                 val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
                 val w = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
                 val prog = TvTimeProgressCalculator.computeShowProgress(eps, w)
-                val effectiveStatus = when {
-                    s.userStatus == "stopped" -> "stopped"
-                    s.userStatus == "completed" || prog.isCompleted -> "completed"
-                    s.userStatus == "in_progress" || prog.hasStarted -> "in_progress"
-                    else -> "interested"
-                }
+                val effectiveStatus = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus)
                 s to effectiveStatus
             }
             val startedInProgress = partitioned.filter { it.second == "in_progress" }.map { it.first }
@@ -876,41 +871,6 @@ private fun HomeTabScreen(
                             onCardClick = { onOpenShow(show) },
                             onEyeClick = { onMarkNextEpisode(show) }
                         )
-                    }
-                    if (notStarted.isNotEmpty()) {
-                        item(key = "havent_started_divider") {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onToggleHavenStarted() }
-                                    .padding(vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                HorizontalDivider(
-                                    modifier = Modifier.weight(1f),
-                                    color = TvTimePalette.Border
-                                )
-                                Text(
-                                    text = "Yet to be watched (Interested) ${if (havenStartedCollapsed) "∨" else "∧"}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = TvTimePalette.TextSecondary
-                                )
-                                HorizontalDivider(
-                                    modifier = Modifier.weight(1f),
-                                    color = TvTimePalette.Border
-                                )
-                            }
-                        }
-                        if (!havenStartedCollapsed) {
-                            items(notStarted, key = { "ns_${it.id}" }) { show ->
-                                TvShowWatchCard(
-                                    show = show,
-                                    onCardClick = { onOpenShow(show) },
-                                    onEyeClick = { onMarkNextEpisode(show) }
-                                )
-                            }
-                        }
                     }
                 }
             }
@@ -1192,12 +1152,7 @@ private fun ProfileTabScreen(
             val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
             val w = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
             val prog = TvTimeProgressCalculator.computeShowProgress(eps, w)
-            val effectiveStatus = when {
-                s.userStatus == "stopped" -> "stopped"
-                s.userStatus == "completed" || prog.isCompleted -> "completed"
-                s.userStatus == "in_progress" || prog.hasStarted -> "in_progress"
-                else -> "interested"
-            }
+            val effectiveStatus = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus)
             s to effectiveStatus
         }
     }
@@ -1427,7 +1382,7 @@ private fun ProfileTabScreen(
                         )
                     }
                     Text(
-                        text = "Interested",
+                        text = "Watchlist",
                         style = MaterialTheme.typography.labelMedium,
                         color = TvTimePalette.Yellow
                     )
@@ -1435,7 +1390,7 @@ private fun ProfileTabScreen(
 
                 if (interestedShows.isEmpty()) {
                     Text(
-                        text = "No series in your watchlist yet. Mark a series as Interested to see it here.",
+                        text = "No series in your watchlist yet. Add a series to your Watchlist to see it here.",
                         style = MaterialTheme.typography.bodySmall,
                         color = TvTimePalette.TextSecondary
                     )
@@ -1463,7 +1418,7 @@ private fun ProfileTabScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "Interested",
+                                    text = "Watchlist",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = TvTimePalette.Yellow
                                 )
@@ -1474,7 +1429,7 @@ private fun ProfileTabScreen(
             }
         }
 
-        // 4. Movie Watchlist (Interested / Yet to be watched)
+        // 4. Movie Watchlist
         item(key = "carousel_movie_watchlist") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
@@ -1495,7 +1450,7 @@ private fun ProfileTabScreen(
                         )
                     }
                     Text(
-                        text = "Interested",
+                        text = "Watchlist",
                         style = MaterialTheme.typography.labelMedium,
                         color = TvTimePalette.Yellow
                     )
@@ -1503,7 +1458,7 @@ private fun ProfileTabScreen(
 
                 if (interestedMovies.isEmpty()) {
                     Text(
-                        text = "No movies in your watchlist yet. Mark a movie as Interested to see it here.",
+                        text = "No movies in your watchlist yet. Add a movie to your Watchlist to see it here.",
                         style = MaterialTheme.typography.bodySmall,
                         color = TvTimePalette.TextSecondary
                     )
@@ -1531,7 +1486,7 @@ private fun ProfileTabScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "Interested",
+                                    text = "Watchlist",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = TvTimePalette.Yellow
                                 )

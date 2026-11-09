@@ -181,13 +181,7 @@ fun TvShowWatchCard(
         TvTimeProgressCalculator.computeShowProgress(episodes, watchedSet)
     }
     val statusKey = remember(show.userStatus, progress.isCompleted, progress.hasStarted) {
-        val raw = show.userStatus.lowercase()
-        when {
-            raw == "stopped" -> "stopped"
-            raw == "completed" || progress.isCompleted -> "completed"
-            raw == "in_progress" || progress.hasStarted -> "in_progress"
-            else -> "interested"
-        }
+        TvTimeProgressCalculator.deriveEffectiveShowStatus(progress, show.userStatus)
     }
 
     Surface(
@@ -270,7 +264,7 @@ fun TvShowWatchCard(
                     else -> {
                         if (statusKey == "interested" && !progress.hasStarted) {
                             Text(
-                                text = "TV Show · Interested (Watchlist)",
+                                text = "TV Show · Watchlist",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = TvTimePalette.Yellow
                             )
@@ -393,7 +387,7 @@ fun TvMovieWatchCard(
                 }
 
                 Text(
-                    text = "Movie · ${movie.runtimeMins}m · ${if (movie.watched) "Watched" else "Interested (Watchlist)"}",
+                    text = "Movie · ${movie.runtimeMins}m · ${if (movie.watched) "Watched" else "Watchlist"}",
                     style = MaterialTheme.typography.labelSmall,
                     color = if (movie.watched) TvTimePalette.Yellow else TvTimePalette.CyanMovie
                 )
