@@ -249,83 +249,85 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
     </section>
 
     <!-- ========================================================= -->
-    <!-- FULL PAGE: STATISTICS & RECENTLY WATCHED (📊)             -->
+    <!-- FULL PAGE: STATISTICS (📊)                                -->
     <!-- ========================================================= -->
-    <section id="tab-stats" class="hidden space-y-5">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2.5">
-          <button
-            onclick="app.switchTab('home')"
-            class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
-            title="Back to Home"
-          >
-            ←
-          </button>
-          <div>
-            <h2 class="text-lg font-extrabold text-white">📊 Statistics</h2>
-            <p class="text-xs text-zinc-400">Your watch hours &amp; recently watched history</p>
-          </div>
-        </div>
-        <button onclick="app.loadState(true)" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold text-yellow-400 hover:text-white transition">
-          ↻ Sync
+    <section id="tab-stats" class="hidden space-y-4">
+      <div class="flex items-center gap-2.5">
+        <button
+          onclick="app.switchTab('home')"
+          class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
+          title="Back to Home"
+        >
+          ←
         </button>
-      </div>
-
-      <!-- Top Profile Card -->
-      <div class="tv-card rounded-3xl p-4 flex items-center justify-between gap-3">
-        <div class="flex items-center gap-3.5">
-          <div class="relative">
-            <div
-              id="profile-avatar"
-              onclick="app.switchTab('settings')"
-              class="w-14 h-14 rounded-full bg-gradient-to-tr from-yellow-400 via-amber-500 to-orange-500 p-0.5 cursor-pointer"
-            >
-              <div class="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center text-lg font-extrabold text-yellow-400" id="profile-avatar-initials">
-                TV
-              </div>
-            </div>
-          </div>
-          <div>
-            <div class="flex items-center gap-1.5">
-              <h2 id="profile-display-name" class="text-base font-extrabold text-white">Profile</h2>
-              <button onclick="app.switchTab('settings')" class="text-zinc-400 hover:text-white text-xs">✎</button>
-            </div>
-            <p id="profile-handle" class="text-xs text-zinc-400">@member</p>
-          </div>
-        </div>
-        <button onclick="app.switchTab('import')" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold text-white hover:text-yellow-400 transition border border-zinc-800">
-          ⇅ Import / Export
-        </button>
-      </div>
-
-      <!-- WATCH STATS Card -->
-      <div class="tv-card rounded-3xl p-5 space-y-4">
-        <div class="flex items-center justify-between">
-          <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">WATCH STATS</div>
-          <div id="stat-counts-badge" class="text-xs font-extrabold tv-yellow-text">0 Completed Series · 0 Watched Movies</div>
-        </div>
         <div>
-          <div id="stat-total-time" class="text-4xl font-black tv-yellow-text tracking-tight">0.0 hrs</div>
-          <div id="stat-total-sub" class="text-xs text-zinc-400 mt-0.5">Total Watch Hours (0d 0h)</div>
+          <h2 class="text-lg font-extrabold text-white">📊 Statistics</h2>
+          <p class="text-xs text-zinc-400">Your watch hours, series, episodes &amp; movies</p>
         </div>
-        <div class="h-px bg-zinc-800"></div>
-        <div class="grid grid-cols-2 gap-4 pt-1">
-          <div class="space-y-0.5">
-            <div id="stat-series-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
-            <div class="text-[11px] font-bold tv-yellow-text">Series watch hours</div>
-            <div id="stat-series-count" class="text-xs text-zinc-400">0 series</div>
-            <div id="stat-episodes-count" class="text-xs text-zinc-400">0 episodes</div>
-          </div>
-          <div class="text-right space-y-0.5">
-            <div id="stat-movies-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
-            <div class="text-[11px] font-bold tv-yellow-text">Movie watch hours</div>
-            <div id="stat-movies-sub" class="text-xs text-zinc-400">0 movies</div>
-          </div>
+      </div>
+
+      <!-- Hero Box: Total Watch Hours -->
+      <div class="tv-card rounded-3xl p-6 space-y-2 border border-yellow-400/20">
+        <div class="flex items-center justify-between">
+          <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">TOTAL WATCH TIME</div>
+          <div id="stat-counts-badge" class="text-xs font-extrabold tv-yellow-text">0 series · 0 movies</div>
+        </div>
+        <div id="stat-total-time" class="text-4xl font-black tv-yellow-text tracking-tight">0.0 hrs</div>
+        <div id="stat-total-sub" class="text-xs text-zinc-400">Total watch hours (0d 0h)</div>
+      </div>
+
+      <!-- 2 Good-Looking Breakdown Boxes: Series & Movies -->
+      <div class="grid grid-cols-2 gap-3.5">
+        <div class="tv-card rounded-3xl p-5 space-y-1">
+          <div id="stat-series-time" class="text-2xl font-black text-white">0.0 hrs</div>
+          <div class="text-xs font-extrabold tv-yellow-text">Series watch hours</div>
+          <div id="stat-series-count" class="text-sm font-bold text-zinc-200 pt-1.5">0 series</div>
+          <div id="stat-episodes-count" class="text-xs font-semibold text-zinc-400">0 episodes</div>
+        </div>
+        <div class="tv-card rounded-3xl p-5 space-y-1">
+          <div id="stat-movies-time" class="text-2xl font-black text-white">0.0 hrs</div>
+          <div class="text-xs font-extrabold tv-yellow-text">Movie watch hours</div>
+          <div id="stat-movies-sub" class="text-sm font-bold text-zinc-200 pt-1.5">0 movies</div>
+        </div>
+      </div>
+
+      <!-- 3 Summary Boxes: Series | Episodes | Movies -->
+      <div class="grid grid-cols-3 gap-3">
+        <div class="tv-card rounded-2xl p-4 text-center space-y-1">
+          <div id="stat-box-series" class="text-2xl font-black text-white">0</div>
+          <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Series</div>
+        </div>
+        <div class="tv-card rounded-2xl p-4 text-center space-y-1">
+          <div id="stat-box-episodes" class="text-2xl font-black tv-yellow-text">0</div>
+          <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Episodes</div>
+        </div>
+        <div class="tv-card rounded-2xl p-4 text-center space-y-1">
+          <div id="stat-box-movies" class="text-2xl font-black text-white">0</div>
+          <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Movies</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================================= -->
+    <!-- FULL PAGE: RECENTLY WATCHED (🎬)                          -->
+    <!-- ========================================================= -->
+    <section id="tab-recent" class="hidden space-y-5">
+      <div class="flex items-center gap-2.5">
+        <button
+          onclick="app.switchTab('home')"
+          class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
+          title="Back to Home"
+        >
+          ←
+        </button>
+        <div>
+          <h2 class="text-lg font-extrabold text-white">🎬 Recently Watched</h2>
+          <p class="text-xs text-zinc-400">Your recently watched series &amp; movies</p>
         </div>
       </div>
 
       <!-- Recently watched Series Carousel -->
-      <div class="space-y-2.5">
+      <div class="tv-card rounded-3xl p-5 space-y-3">
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-extrabold text-white">Recently watched <span id="label-recent-series-count" class="font-normal text-zinc-400">Series</span></h3>
           <button onclick="app.switchTab('home'); app.setHomeSegment('shows'); app.setMediaFilter('in_progress');" class="text-xs font-semibold tv-yellow-text">See all</button>
@@ -334,7 +336,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       </div>
 
       <!-- Recently watched Movies Carousel -->
-      <div class="space-y-2.5">
+      <div class="tv-card rounded-3xl p-5 space-y-3">
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-extrabold text-white">Recently watched <span id="label-recent-movies-count" class="font-normal text-zinc-400">Movies</span></h3>
           <button onclick="app.switchTab('home'); app.setHomeSegment('movies'); app.setMediaFilter('completed');" class="text-xs font-semibold tv-yellow-text">See all</button>
@@ -483,25 +485,18 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           <span class="text-lg">🏠</span>
           <span>Home</span>
         </button>
-        <button
-          onclick="app.closeHamburgerMenu(); app.switchTab('search');"
-          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
-        >
-          <span class="text-lg">🔍</span>
-          <span>Search &amp; Discover</span>
-        </button>
-        <button
-          onclick="app.closeHamburgerMenu(); app.switchTab('swipe');"
-          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
-        >
-          <span class="text-lg">✨</span>
-          <span>For You</span>
-        </button>
       </div>
 
       <!-- Section: MY STATISTICS -->
       <div class="px-5 py-4 border-b border-slate-800/80 space-y-1">
         <div class="text-[11px] font-bold uppercase tracking-widest text-slate-400 pb-2">MY STATISTICS</div>
+        <button
+          onclick="app.closeHamburgerMenu(); app.switchTab('recent');"
+          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
+        >
+          <span class="text-lg">🎬</span>
+          <span>Recently Watched</span>
+        </button>
         <button
           onclick="app.closeHamburgerMenu(); app.switchTab('stats');"
           class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
@@ -1002,7 +997,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       switchTab(tab) {
         const resolvedTab = tab === "profile" ? "stats" : tab;
         this.activeTab = resolvedTab;
-        ["home", "search", "swipe", "stats", "import", "settings"].forEach((t) => {
+        ["home", "search", "swipe", "stats", "recent", "import", "settings"].forEach((t) => {
           const sec = document.getElementById("tab-" + t);
           if (sec) sec.classList.toggle("hidden", t !== resolvedTab);
         });
@@ -2345,6 +2340,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (mSubEl) {
           mSubEl.textContent = watchedMovies.length + " movies";
         }
+        const boxSeriesEl = document.getElementById("stat-box-series");
+        const boxEpsEl = document.getElementById("stat-box-episodes");
+        const boxMoviesEl = document.getElementById("stat-box-movies");
+        if (boxSeriesEl) boxSeriesEl.textContent = String(completedShows.length);
+        if (boxEpsEl) boxEpsEl.textContent = String(epCount);
+        if (boxMoviesEl) boxMoviesEl.textContent = String(watchedMovies.length);
 
         const recSeriesCountEl = document.getElementById("label-recent-series-count");
         const recMoviesCountEl = document.getElementById("label-recent-movies-count");

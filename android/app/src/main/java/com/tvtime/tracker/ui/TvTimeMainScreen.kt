@@ -472,25 +472,18 @@ fun TvTimeMainScreen(
                 }
 
                 "stats" -> {
-                    ProfileTabScreen(
-                        currentUserId = currentUserId,
+                    StatisticsFullPageScreen(
+                        shows = shows,
+                        movies = movies
+                    )
+                }
+
+                "recent" -> {
+                    RecentlyWatchedFullPageScreen(
                         shows = shows,
                         movies = movies,
                         onOpenShow = { selectedShowForDetail = it },
-                        onOpenMovie = { selectedMovieForDetail = it },
-                        onOpenImport = { activeBottomTab = "import" },
-                        onOpenAccountSwitch = { showAccountSwitcherDialog = true },
-                        onSyncNow = {
-                            scope.launch {
-                                FirestoreSyncService.pullFromFirestoreIfNeeded(dao, currentUserId)
-                                val ok = FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                Toast.makeText(
-                                    context,
-                                    if (ok) "Synced with Cloud Firestore" else "Saved locally",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
+                        onOpenMovie = { selectedMovieForDetail = it }
                     )
                 }
 
@@ -641,14 +634,6 @@ fun TvTimeMainScreen(
                                 showHamburgerSheet = false
                                 activeBottomTab = "home"
                             }
-                            LeftDrawerItemRow(icon = "🔍", label = "Search & Discover") {
-                                showHamburgerSheet = false
-                                activeBottomTab = "search"
-                            }
-                            LeftDrawerItemRow(icon = "✨", label = "For You") {
-                                showHamburgerSheet = false
-                                activeBottomTab = "swipe"
-                            }
                         }
 
                         HorizontalDivider(color = Color(0xFF1E293B))
@@ -669,6 +654,10 @@ fun TvTimeMainScreen(
                                 color = Color(0xFF94A3B8),
                                 modifier = Modifier.padding(bottom = 4.dp)
                             )
+                            LeftDrawerItemRow(icon = "🎬", label = "Recently Watched") {
+                                showHamburgerSheet = false
+                                activeBottomTab = "recent"
+                            }
                             LeftDrawerItemRow(icon = "📊", label = "Statistics") {
                                 showHamburgerSheet = false
                                 activeBottomTab = "stats"
@@ -2041,15 +2030,9 @@ private fun SwipeRecommendationsTabScreen(
 }
 
 @Composable
-private fun ProfileTabScreen(
-    currentUserId: String,
+private fun StatisticsFullPageScreen(
     shows: List<ShowEntity>,
-    movies: List<MovieEntity>,
-    onOpenShow: (ShowEntity) -> Unit,
-    onOpenMovie: (MovieEntity) -> Unit,
-    onOpenImport: () -> Unit,
-    onOpenAccountSwitch: () -> Unit,
-    onSyncNow: () -> Unit
+    movies: List<MovieEntity>
 ) {
     val stats = remember(shows, movies) {
         var epCount = 0
@@ -2078,20 +2061,237 @@ private fun ProfileTabScreen(
         )
     }
 
-    val partitionedShows = remember(shows) {
-        shows.map { s ->
+    val completedShowsCount = remember(shows) {
+        shows.count { s ->
+            val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
+            val w = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
+            val prog = TvTimeProgressCalculator.computeShowProgress(eps, w)
+            TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus) == "completed"
+        }
+    }
+    val watchedMoviesCount = remember(movies) { movies.count { it.watched } }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item(key = "stats_page_header") {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "📊 Statistics",
+                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                    color = Color.White
+                )
+                Text(
+                    text = "Your total watch time, series, episodes, and movies breakdown.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TvTimePalette.TextSecondary
+                )
+            }
+        }
+
+        // 1. Hero Total Watch Hours Box
+        item(key = "total_watch_time_card") {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = TvTimePalette.SurfaceCard,
+                border = BorderStroke(1.dp, TvTimePalette.Border),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "TOTAL WATCH TIME",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                            color = TvTimePalette.TextSecondary
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = TvTimePalette.Yellow.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, TvTimePalette.Yellow.copy(alpha = 0.35f))
+                        ) {
+                            Text(
+                                text = "$completedShowsCount series · $watchedMoviesCount movies",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                color = TvTimePalette.Yellow,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = stats.formattedTotalHours,
+                        style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Black),
+                        color = TvTimePalette.Yellow
+                    )
+                    Text(
+                        text = "Total watch hours (${stats.formattedTotal})",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TvTimePalette.TextSecondary
+                    )
+                }
+            }
+        }
+
+        // 2. Two-Column Breakdown Boxes: Series & Movies
+        item(key = "breakdown_boxes") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Series Breakdown Box
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = TvTimePalette.SurfaceCard,
+                    border = BorderStroke(1.dp, TvTimePalette.Border),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = stats.formattedSeriesHours,
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Series watch hours",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                            color = TvTimePalette.Yellow
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "$completedShowsCount series",
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = TvTimePalette.TextSecondary
+                        )
+                        Text(
+                            text = "${stats.totalEpisodesWatched} episodes",
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = TvTimePalette.TextSecondary
+                        )
+                    }
+                }
+
+                // Movies Breakdown Box
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = TvTimePalette.SurfaceCard,
+                    border = BorderStroke(1.dp, TvTimePalette.Border),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = stats.formattedMoviesHours,
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Movie watch hours",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                            color = TvTimePalette.Yellow
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "$watchedMoviesCount movies",
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = TvTimePalette.TextSecondary
+                        )
+                    }
+                }
+            }
+        }
+
+        // 3. Three-Column Summary Count Boxes (Series, Episodes, Movies)
+        item(key = "count_boxes") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                StatCountCard(
+                    value = completedShowsCount.toString(),
+                    label = "SERIES",
+                    valueColor = TvTimePalette.Yellow,
+                    modifier = Modifier.weight(1f)
+                )
+                StatCountCard(
+                    value = stats.totalEpisodesWatched.toString(),
+                    label = "EPISODES",
+                    valueColor = Color(0xFF34D399),
+                    modifier = Modifier.weight(1f)
+                )
+                StatCountCard(
+                    value = watchedMoviesCount.toString(),
+                    label = "MOVIES",
+                    valueColor = Color(0xFF38BDF8),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatCountCard(
+    value: String,
+    label: String,
+    valueColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = TvTimePalette.SurfaceCard,
+        border = BorderStroke(1.dp, TvTimePalette.Border),
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 16.dp, horizontal = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
+                color = valueColor
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                color = TvTimePalette.TextSecondary
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecentlyWatchedFullPageScreen(
+    shows: List<ShowEntity>,
+    movies: List<MovieEntity>,
+    onOpenShow: (ShowEntity) -> Unit,
+    onOpenMovie: (MovieEntity) -> Unit
+) {
+    val watchedOrInProgressShows = remember(shows) {
+        shows.filter { s ->
             val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
             val w = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
             val prog = TvTimeProgressCalculator.computeShowProgress(eps, w)
             val effectiveStatus = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus)
-            s to effectiveStatus
+            effectiveStatus == "completed" || effectiveStatus == "in_progress"
         }
-    }
-    val completedShows = remember(partitionedShows) {
-        partitionedShows.filter { it.second == "completed" }.map { it.first }
-    }
-    val watchedOrInProgressShows = remember(partitionedShows) {
-        partitionedShows.filter { it.second == "completed" || it.second == "in_progress" }.map { it.first }
     }
     val watchedMovies = remember(movies) { movies.filter { it.watched } }
 
@@ -2100,207 +2300,32 @@ private fun ProfileTabScreen(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        // 1. Top Profile Header
-        item(key = "profile_header") {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Box(modifier = Modifier.clickable { onOpenAccountSwitch() }) {
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(TvTimePalette.Yellow, Color(0xFFF97316))
-                                    )
-                                )
-                                .padding(2.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF18181D)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = currentUserId.take(2).uppercase(),
-                                style = MaterialTheme.typography.titleLarge,
-                                color = TvTimePalette.Yellow
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(22.dp)
-                                .clip(CircleShape)
-                                .background(TvTimePalette.Yellow)
-                                .align(Alignment.BottomEnd),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("📷", fontSize = 10.sp)
-                        }
-                    }
-
-                    Column {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = currentUserId.replaceFirstChar { it.uppercase() },
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = Color.White
-                            )
-                            Text(
-                                text = "✎",
-                                color = TvTimePalette.TextSecondary,
-                                modifier = Modifier.clickable { onOpenAccountSwitch() }
-                            )
-                        }
-                        Text(
-                            text = "@$currentUserId",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TvTimePalette.TextSecondary
-                        )
-                    }
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Surface(
-                        onClick = onOpenImport,
-                        shape = RoundedCornerShape(50),
-                        color = TvTimePalette.SurfacePill
-                    ) {
-                        Text(
-                            text = "📤 Export",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                        )
-                    }
-
-                    Surface(
-                        onClick = onSyncNow,
-                        shape = RoundedCornerShape(50),
-                        color = TvTimePalette.SurfacePill
-                    ) {
-                        Text(
-                            text = "↻ Sync",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = TvTimePalette.Yellow,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                        )
-                    }
-                }
+        item(key = "recent_header") {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "🎬 Recently Watched",
+                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                    color = Color.White
+                )
+                Text(
+                    text = "Series and movies you have watched or are currently watching.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TvTimePalette.TextSecondary
+                )
             }
         }
 
-        // 2. WATCH STATS Card (Simplified: Completed Series & Completed Episodes, Watched Movies)
-        item(key = "total_watch_time_card") {
+        // 1. Recently watched Series Carousel
+        item(key = "carousel_recent_series") {
             Surface(
-                shape = RoundedCornerShape(26.dp),
+                shape = RoundedCornerShape(24.dp),
                 color = TvTimePalette.SurfaceCard,
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)),
+                border = BorderStroke(1.dp, TvTimePalette.Border),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "WATCH STATS",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = TvTimePalette.TextSecondary
-                        )
-                        Text(
-                            text = "${completedShows.size} series · ${watchedMovies.size} movies",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = TvTimePalette.Yellow
-                        )
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            text = stats.formattedTotalHours,
-                            style = MaterialTheme.typography.headlineLarge,
-                            color = TvTimePalette.Yellow
-                        )
-                        Text(
-                            text = "Total watch hours (${stats.formattedTotal})",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TvTimePalette.TextSecondary
-                        )
-                    }
-
-                    HorizontalDivider(color = TvTimePalette.Border)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = stats.formattedSeriesHours,
-                                style = MaterialTheme.typography.titleLarge,
-                                color = Color.White
-                            )
-                            Text(
-                                text = "Series watch hours",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TvTimePalette.Yellow
-                            )
-                            Text(
-                                text = "${completedShows.size} series",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TvTimePalette.TextSecondary
-                            )
-                            Text(
-                                text = "${stats.totalEpisodesWatched} episodes",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TvTimePalette.TextSecondary
-                            )
-                        }
-
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                            horizontalAlignment = Alignment.End
-                        ) {
-                            Text(
-                                text = stats.formattedMoviesHours,
-                                style = MaterialTheme.typography.titleLarge,
-                                color = Color.White
-                            )
-                            Text(
-                                text = "Movie watch hours",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TvTimePalette.Yellow
-                            )
-                            Text(
-                                text = "${watchedMovies.size} movies",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TvTimePalette.TextSecondary
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Recently watched Series Carousel
-        item(key = "carousel_recent_series") {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text(
@@ -2314,57 +2339,61 @@ private fun ProfileTabScreen(
                             color = TvTimePalette.TextSecondary
                         )
                     }
-                }
 
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(watchedOrInProgressShows, key = { "rec_s_${it.id}" }) { show ->
-                        val watched = TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv)
-                        val eps = TvTimeProgressCalculator.parseEpisodeList(show.episodesJson)
-                        val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
-                        val badgeLabel = if (show.userStatus == "completed" || prog.isCompleted) {
-                            "Watched (${watched.size}/${eps.size})"
-                        } else {
-                            "In Progress (${watched.size}/${eps.size})"
-                        }
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(watchedOrInProgressShows, key = { "rec_s_${it.id}" }) { show ->
+                            val watched = TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv)
+                            val eps = TvTimeProgressCalculator.parseEpisodeList(show.episodesJson)
+                            val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
+                            val badgeLabel = if (show.userStatus == "completed" || prog.isCompleted) {
+                                "Watched (${watched.size}/${eps.size})"
+                            } else {
+                                "In Progress (${watched.size}/${eps.size})"
+                            }
 
-                        Column(
-                            modifier = Modifier
-                                .width(108.dp)
-                                .clickable { onOpenShow(show) },
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            NetworkPosterImage(
-                                url = show.posterUrl,
-                                title = show.title,
-                                width = 108.dp,
-                                height = 156.dp,
-                                cornerRadius = 16.dp
-                            )
-                            Text(
-                                text = show.title,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = badgeLabel,
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
-                                color = if (show.userStatus == "completed" || prog.isCompleted) Color(0xFF4ADE80) else TvTimePalette.Yellow
-                            )
+                            Column(
+                                modifier = Modifier
+                                    .width(108.dp)
+                                    .clickable { onOpenShow(show) },
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                NetworkPosterImage(
+                                    url = show.posterUrl,
+                                    title = show.title,
+                                    width = 108.dp,
+                                    height = 156.dp,
+                                    cornerRadius = 16.dp
+                                )
+                                Text(
+                                    text = show.title,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = badgeLabel,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                    color = if (show.userStatus == "completed" || prog.isCompleted) Color(0xFF4ADE80) else TvTimePalette.Yellow
+                                )
+                            }
                         }
                     }
                 }
             }
         }
 
-        // 4. Recently watched Movies Carousel
+        // 2. Recently watched Movies Carousel
         item(key = "carousel_recent_movies") {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = TvTimePalette.SurfaceCard,
+                border = BorderStroke(1.dp, TvTimePalette.Border),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text(
@@ -2378,35 +2407,35 @@ private fun ProfileTabScreen(
                             color = TvTimePalette.TextSecondary
                         )
                     }
-                }
 
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(watchedMovies, key = { "rec_m_${it.id}" }) { movie ->
-                        Column(
-                            modifier = Modifier
-                                .width(108.dp)
-                                .clickable { onOpenMovie(movie) },
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            NetworkPosterImage(
-                                url = movie.posterUrl,
-                                title = movie.title,
-                                width = 108.dp,
-                                height = 156.dp,
-                                cornerRadius = 16.dp
-                            )
-                            Text(
-                                text = movie.title,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = "Watched",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF4ADE80)
-                            )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(watchedMovies, key = { "rec_m_${it.id}" }) { movie ->
+                            Column(
+                                modifier = Modifier
+                                    .width(108.dp)
+                                    .clickable { onOpenMovie(movie) },
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                NetworkPosterImage(
+                                    url = movie.posterUrl,
+                                    title = movie.title,
+                                    width = 108.dp,
+                                    height = 156.dp,
+                                    cornerRadius = 16.dp
+                                )
+                                Text(
+                                    text = movie.title,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "Watched",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF4ADE80)
+                                )
+                            }
                         }
                     }
                 }
