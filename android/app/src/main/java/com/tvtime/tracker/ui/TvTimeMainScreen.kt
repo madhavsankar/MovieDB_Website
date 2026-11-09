@@ -319,17 +319,81 @@ fun TvTimeMainScreen(
         )
     }
 
-    // TV Time History Import Dialog (Screenshot 5)
+    val exportJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val jsonText = FirestoreSyncService.exportUserStateToJson(dao, currentUserId)
+                runCatching {
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(jsonText.toByteArray(Charsets.UTF_8))
+                    }
+                    Toast.makeText(context, "Exported TV Time library backup (.json)!", Toast.LENGTH_SHORT).show()
+                }.onFailure {
+                    Toast.makeText(context, "Export failed: ${it.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    val exportCsvLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val csvText = FirestoreSyncService.exportUserStateToCsv(dao, currentUserId)
+                runCatching {
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(csvText.toByteArray(Charsets.UTF_8))
+                    }
+                    Toast.makeText(context, "Exported TV Time spreadsheet (.csv)!", Toast.LENGTH_SHORT).show()
+                }.onFailure {
+                    Toast.makeText(context, "CSV export failed: ${it.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    val importJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                runCatching {
+                    val rawText = context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use {
+                        it.readText()
+                    } ?: ""
+                    val count = FirestoreSyncService.importUserStateFromJson(dao, currentUserId, rawText)
+                    if (count > 0) {
+                        Toast.makeText(context, "Imported $count items & synced to cloud!", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "No valid TV Time items found in file.", Toast.LENGTH_SHORT).show()
+                    }
+                }.onFailure {
+                    Toast.makeText(context, "Import failed: ${it.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    // TV Time History Export & Import Dialog
     if (showImportDialog) {
         TvTimeImportHistoryDialog(
             onDismiss = { showImportDialog = false },
-            onConfirmSampleImport = {
+            onExportJson = {
                 showImportDialog = false
-                scope.launch {
-                    FirestoreSyncService.pullFromFirestoreIfNeeded(dao, currentUserId)
-                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                    Toast.makeText(context, "TV Time history synced!", Toast.LENGTH_SHORT).show()
-                }
+                val cleanUser = FirestoreSyncService.sanitizeUserId(currentUserId).substringBefore("@")
+                exportJsonLauncher.launch("tvtime-backup-$cleanUser.json")
+            },
+            onExportCsv = {
+                showImportDialog = false
+                val cleanUser = FirestoreSyncService.sanitizeUserId(currentUserId).substringBefore("@")
+                exportCsvLauncher.launch("tvtime-library-$cleanUser.csv")
+            },
+            onChooseImportFile = {
+                showImportDialog = false
+                importJsonLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
             }
         )
     }
@@ -1221,17 +1285,32 @@ private fun ProfileTabScreen(
 
                 Spacer(modifier = Modifier.weight(1f))
 
-                Surface(
-                    onClick = onSyncNow,
-                    shape = RoundedCornerShape(50),
-                    color = TvTimePalette.SurfacePill
-                ) {
-                    Text(
-                        text = "↻ Sync Cloud",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = TvTimePalette.Yellow,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        onClick = onOpenImport,
+                        shape = RoundedCornerShape(50),
+                        color = TvTimePalette.SurfacePill
+                    ) {
+                        Text(
+                            text = "📤 Export",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
+
+                    Surface(
+                        onClick = onSyncNow,
+                        shape = RoundedCornerShape(50),
+                        color = TvTimePalette.SurfacePill
+                    ) {
+                        Text(
+                            text = "↻ Sync",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = TvTimePalette.Yellow,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
                 }
             }
         }

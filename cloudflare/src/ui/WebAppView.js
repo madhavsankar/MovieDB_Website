@@ -256,7 +256,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       </div>
 
       <!-- Followers / Following Row -->
-      <div class="flex items-center gap-8 px-1">
+      <div class="flex items-center gap-6 px-1">
         <button onclick="app.openFollowingSheet('users')" class="text-left group">
           <div id="profile-followers-count" class="text-base font-extrabold text-white group-hover:text-yellow-400">2</div>
           <div class="text-xs text-zinc-400">Followers</div>
@@ -265,9 +265,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           <div id="profile-following-count" class="text-base font-extrabold text-white group-hover:text-yellow-400">5</div>
           <div class="text-xs text-zinc-400">Following</div>
         </button>
-        <button onclick="app.loadState(true)" class="ml-auto tv-pill-bar px-3.5 py-1.5 rounded-full text-xs font-semibold text-zinc-300 hover:text-yellow-400 transition">
-          ↻ Sync Cloud
-        </button>
+        <div class="ml-auto flex items-center gap-2">
+          <button onclick="app.openImportModal()" class="tv-pill-bar px-3.5 py-1.5 rounded-full text-xs font-semibold text-white hover:text-yellow-400 transition">
+            📤 Export
+          </button>
+          <button onclick="app.loadState(true)" class="tv-pill-bar px-3.5 py-1.5 rounded-full text-xs font-semibold text-yellow-400 hover:text-white transition">
+            ↻ Sync
+          </button>
+        </div>
       </div>
 
       <!-- TOTAL WATCH TIME Card -->
@@ -393,38 +398,41 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
   </div>
 
   <!-- ========================================================= -->
-  <!-- MODAL 3: BRING YOUR ORIGINAL TV TIME HISTORY OVER         -->
+  <!-- MODAL 3: EXPORT & IMPORT TV TIME LIBRARY                  -->
   <!-- ========================================================= -->
   <div id="import-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
     <div class="bg-[#18181d] rounded-3xl p-6 w-full max-w-sm border border-zinc-800 space-y-4 text-center">
       <div class="w-12 h-12 rounded-full bg-zinc-800/90 mx-auto flex items-center justify-center tv-yellow-text text-xl font-bold">
-        ↓
+        ⇅
       </div>
-      <h3 class="text-lg font-extrabold text-white leading-snug">Bring your original TV Time history over</h3>
+      <h3 class="text-lg font-extrabold text-white leading-snug">Export &amp; Import TV Time Library</h3>
       <p class="text-xs text-zinc-400 leading-relaxed">
-        The original TV Time app shut down. If you asked them for a copy of your data before it went, you can load it here and pick up where you left off — your shows and movies, which episodes you'd seen, and the watch time that goes with them.
+        Export a complete backup of your shows, movies, episode progress, and followed actors as JSON or CSV — or restore a previous TV Time backup file.
       </p>
       <div class="text-left space-y-2.5 text-xs text-zinc-300">
         <div class="flex items-start gap-2.5">
           <span class="w-5 h-5 rounded-full bg-zinc-800 tv-yellow-text font-bold flex items-center justify-center shrink-0">1</span>
-          <span>Upload your TV Time export (<code>.json</code> or <code>.csv</code>) or backup file.</span>
+          <span>Export JSON (<code>.json</code>) for full lossless backup and cross-device restore.</span>
         </div>
         <div class="flex items-start gap-2.5">
           <span class="w-5 h-5 rounded-full bg-zinc-800 tv-yellow-text font-bold flex items-center justify-center shrink-0">2</span>
-          <span>Choose that file below — it is parsed directly on your device.</span>
+          <span>Export CSV (<code>.csv</code>) to open your watch history in Excel or Google Sheets.</span>
         </div>
         <div class="flex items-start gap-2.5">
           <span class="w-5 h-5 rounded-full bg-zinc-800 tv-yellow-text font-bold flex items-center justify-center shrink-0">3</span>
-          <span>Check what was found, then confirm the import.</span>
+          <span>Import a JSON backup file to restore or merge your shows and movies.</span>
         </div>
       </div>
       <input id="tvtime-import-file" type="file" accept=".json,.csv,.txt" class="hidden" onchange="app.handleImportFile(event)" />
       <div class="space-y-2 pt-2">
-        <button onclick="document.getElementById('tvtime-import-file').click()" class="w-full py-3 rounded-full tv-yellow-bg text-sm font-extrabold">
-          Choose file
+        <button onclick="app.exportBackupJson()" class="w-full py-3 rounded-full tv-yellow-bg text-sm font-extrabold">
+          📤 Export Library Backup (.json)
         </button>
-        <button onclick="app.exportBackupJson()" class="w-full py-2.5 rounded-full tv-pill-bar text-xs font-semibold text-zinc-300 hover:text-white">
-          Export Current Library Backup (.json)
+        <button onclick="app.exportBackupCsv()" class="w-full py-2.5 rounded-full tv-pill-bar text-xs font-semibold text-white hover:text-yellow-400">
+          📊 Export Spreadsheet (.csv)
+        </button>
+        <button onclick="document.getElementById('tvtime-import-file').click()" class="w-full py-2.5 rounded-full tv-pill-bar text-xs font-semibold tv-yellow-text hover:text-white">
+          📥 Import Backup File (.json)
         </button>
         <button onclick="app.closeImportModal()" class="w-full py-2 text-xs font-bold text-white">
           Cancel
@@ -2004,6 +2012,55 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const a = document.createElement("a");
         a.href = url;
         a.download = "tvtime-backup-" + this.userId + ".json";
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      exportBackupCsv() {
+        const q = String.fromCharCode(34);
+        const nl = String.fromCharCode(10);
+        const esc = (val) => q + String(val == null ? "" : val).split(q).join(q + q) + q;
+        const rows = ["Type,Title,Year,Rating,Status,Progress,RuntimeMinutes,Favorite,Reaction"];
+        const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
+        for (const s of shows) {
+          const eps = Array.isArray(s.episodes) ? s.episodes : [];
+          const watched = eps.filter((e) => e && e.watched).length;
+          const status = eps.length > 0 && watched >= eps.length ? "Completed" : watched > 0 ? "In Progress" : "Watchlist";
+          rows.push(
+            [
+              esc("Show"),
+              esc(s.title),
+              esc(s.year),
+              esc(s.rating),
+              esc(status),
+              esc(watched + "/" + eps.length + " eps"),
+              esc(s.runtimeMinutes || 45),
+              esc(Boolean(s.isFavorite)),
+              esc(""),
+            ].join(",")
+          );
+        }
+        const movies = Array.isArray(this.state.movies) ? this.state.movies : [];
+        for (const m of movies) {
+          rows.push(
+            [
+              esc("Movie"),
+              esc(m.title),
+              esc(m.year),
+              esc(m.rating),
+              esc(m.watched ? "Completed" : "Watchlist"),
+              esc(m.watched ? "1/1" : "0/1"),
+              esc(m.runtimeMinutes || 120),
+              esc(Boolean(m.isFavorite)),
+              esc(m.reaction || ""),
+            ].join(",")
+          );
+        }
+        const blob = new Blob([rows.join(nl)], { type: "text/csv" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "tvtime-library-" + this.userId + ".csv";
         a.click();
         URL.revokeObjectURL(url);
       }

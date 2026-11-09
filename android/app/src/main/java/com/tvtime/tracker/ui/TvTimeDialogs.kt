@@ -579,9 +579,11 @@ fun FollowingBottomSheet(
 @Composable
 fun TvTimeImportHistoryDialog(
     onDismiss: () -> Unit,
-    onConfirmSampleImport: () -> Unit
+    onExportJson: () -> Unit,
+    onExportCsv: () -> Unit,
+    onChooseImportFile: () -> Unit
 ) {
-    // Matches Screenshot 5: "Bring your original TV Time history over"
+    // Export & Import TV Time History Dialog
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF18181D),
@@ -598,11 +600,11 @@ fun TvTimeImportHistoryDialog(
                         .background(Color(0xFF27272F)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("↓", color = TvTimePalette.Yellow, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text("⇅", color = TvTimePalette.Yellow, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "Bring your original TV Time history over",
+                    text = "Export & Import TV Time Library",
                     style = MaterialTheme.typography.titleLarge,
                     color = Color.White,
                     textAlign = TextAlign.Center
@@ -612,15 +614,15 @@ fun TvTimeImportHistoryDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "The original TV Time app shut down. If you asked them for a copy of your data before it went, you can load it here and pick up where you left off — your shows and movies, which episodes you'd seen, and the watch time that goes with them.",
+                    text = "Export a complete backup of your shows, movies, episode progress, and followed actors as JSON or CSV — or restore a previous TV Time backup file.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TvTimePalette.TextSecondary,
                     textAlign = TextAlign.Center
                 )
                 listOf(
-                    "1" to "Request your data from the original TV Time or select your backup file.",
-                    "2" to "Choose that file below — it never leaves your device unread.",
-                    "3" to "Check what was found, then confirm the import."
+                    "1" to "Export JSON (.json) for full lossless backup and cross-device restore.",
+                    "2" to "Export CSV (.csv) to open your watch history in Excel or Google Sheets.",
+                    "3" to "Import a JSON backup file to merge shows, movies, and watched episodes."
                 ).forEach { (num, stepText) ->
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -648,10 +650,10 @@ fun TvTimeImportHistoryDialog(
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Button(
-                    onClick = onConfirmSampleImport,
+                    onClick = onExportJson,
                     shape = RoundedCornerShape(50),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = TvTimePalette.Yellow,
@@ -660,8 +662,38 @@ fun TvTimeImportHistoryDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        "Choose file & Sync Cloud",
+                        "📤 Export Library Backup (.json)",
                         fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+                Button(
+                    onClick = onExportCsv,
+                    shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = TvTimePalette.SurfacePill,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "📊 Export Spreadsheet (.csv)",
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+                Button(
+                    onClick = onChooseImportFile,
+                    shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = TvTimePalette.SurfacePill,
+                        contentColor = TvTimePalette.Yellow
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "📥 Import Backup File (.json)",
+                        fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(vertical = 4.dp)
                     )
                 }
