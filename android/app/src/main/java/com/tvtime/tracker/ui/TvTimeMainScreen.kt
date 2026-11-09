@@ -1361,143 +1361,7 @@ private fun ProfileTabScreen(
             }
         }
 
-        // 3. Series Watchlist (Interested / Yet to be watched)
-        item(key = "carousel_series_watchlist") {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text(
-                            text = "Series",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = Color.White
-                        )
-                        Text(
-                            text = "Watchlist (${interestedShows.size})",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Normal),
-                            color = TvTimePalette.TextSecondary
-                        )
-                    }
-                    Text(
-                        text = "Watchlist",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = TvTimePalette.Yellow
-                    )
-                }
-
-                if (interestedShows.isEmpty()) {
-                    Text(
-                        text = "No series in your watchlist yet. Add a series to your Watchlist to see it here.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TvTimePalette.TextSecondary
-                    )
-                } else {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(interestedShows, key = { "wl_s_${it.id}" }) { show ->
-                            Column(
-                                modifier = Modifier
-                                    .width(108.dp)
-                                    .clickable { onOpenShow(show) },
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                NetworkPosterImage(
-                                    url = show.posterUrl,
-                                    title = show.title,
-                                    width = 108.dp,
-                                    height = 156.dp,
-                                    cornerRadius = 16.dp
-                                )
-                                Text(
-                                    text = show.title,
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "Watchlist",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = TvTimePalette.Yellow
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 4. Movie Watchlist
-        item(key = "carousel_movie_watchlist") {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text(
-                            text = "Movie",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = Color.White
-                        )
-                        Text(
-                            text = "Watchlist (${interestedMovies.size})",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Normal),
-                            color = TvTimePalette.TextSecondary
-                        )
-                    }
-                    Text(
-                        text = "Watchlist",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = TvTimePalette.Yellow
-                    )
-                }
-
-                if (interestedMovies.isEmpty()) {
-                    Text(
-                        text = "No movies in your watchlist yet. Add a movie to your Watchlist to see it here.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TvTimePalette.TextSecondary
-                    )
-                } else {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(interestedMovies, key = { "wl_m_${it.id}" }) { movie ->
-                            Column(
-                                modifier = Modifier
-                                    .width(108.dp)
-                                    .clickable { onOpenMovie(movie) },
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                NetworkPosterImage(
-                                    url = movie.posterUrl,
-                                    title = movie.title,
-                                    width = 108.dp,
-                                    height = 156.dp,
-                                    cornerRadius = 16.dp
-                                )
-                                Text(
-                                    text = movie.title,
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "Watchlist",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = TvTimePalette.Yellow
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 5. Watched & In Progress Series Carousel
+        // 3. Recently watched Series Carousel
         item(key = "carousel_recent_series") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
@@ -1507,7 +1371,7 @@ private fun ProfileTabScreen(
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text(
-                            text = "Watched & In Progress",
+                            text = "Recently watched",
                             style = MaterialTheme.typography.titleLarge,
                             color = Color.White
                         )
@@ -1561,7 +1425,7 @@ private fun ProfileTabScreen(
             }
         }
 
-        // 6. Watched Movies Carousel
+        // 4. Recently watched Movies Carousel
         item(key = "carousel_recent_movies") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
@@ -1571,7 +1435,7 @@ private fun ProfileTabScreen(
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text(
-                            text = "Watched",
+                            text = "Recently watched",
                             style = MaterialTheme.typography.titleLarge,
                             color = Color.White
                         )

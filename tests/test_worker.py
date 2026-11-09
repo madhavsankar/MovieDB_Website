@@ -67,8 +67,10 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertNotIn("Your Reaction Badge", view_src)
         self.assertIn("Series Watch Hours", view_src)
         self.assertIn("Movie Watch Hours", view_src)
-        self.assertIn("carousel-series-watchlist", view_src)
-        self.assertIn("carousel-movie-watchlist", view_src)
+        self.assertNotIn("carousel-series-watchlist", view_src)
+        self.assertNotIn("carousel-movie-watchlist", view_src)
+        self.assertIn("carousel-recent-series", view_src)
+        self.assertIn("carousel-recent-movies", view_src)
         harness = (
             view_src
             + """

@@ -268,37 +268,19 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- Series Watchlist Carousel -->
+      <!-- Recently watched Series Carousel -->
       <div class="space-y-2.5">
         <div class="flex items-center justify-between">
-          <h3 class="text-base font-extrabold text-white">Series <span id="label-series-watchlist-count" class="font-normal text-zinc-400">Watchlist</span></h3>
-          <button onclick="app.switchTab('home'); app.setHomeSegment('shows'); app.setMediaFilter('interested');" class="text-xs font-semibold tv-yellow-text">See all</button>
-        </div>
-        <div id="carousel-series-watchlist" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
-      </div>
-
-      <!-- Movie Watchlist Carousel -->
-      <div class="space-y-2.5">
-        <div class="flex items-center justify-between">
-          <h3 class="text-base font-extrabold text-white">Movie <span id="label-movie-watchlist-count" class="font-normal text-zinc-400">Watchlist</span></h3>
-          <button onclick="app.switchTab('home'); app.setHomeSegment('movies'); app.setMediaFilter('interested');" class="text-xs font-semibold tv-yellow-text">See all</button>
-        </div>
-        <div id="carousel-movie-watchlist" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
-      </div>
-
-      <!-- Watched & In Progress Series Carousel -->
-      <div class="space-y-2.5">
-        <div class="flex items-center justify-between">
-          <h3 class="text-base font-extrabold text-white">Watched &amp; In Progress <span id="label-recent-series-count" class="font-normal text-zinc-400">Series</span></h3>
+          <h3 class="text-base font-extrabold text-white">Recently watched <span id="label-recent-series-count" class="font-normal text-zinc-400">Series</span></h3>
           <button onclick="app.switchTab('home'); app.setHomeSegment('shows'); app.setMediaFilter('in_progress');" class="text-xs font-semibold tv-yellow-text">See all</button>
         </div>
         <div id="carousel-recent-series" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
       </div>
 
-      <!-- Watched Movies Carousel -->
+      <!-- Recently watched Movies Carousel -->
       <div class="space-y-2.5">
         <div class="flex items-center justify-between">
-          <h3 class="text-base font-extrabold text-white">Watched <span id="label-recent-movies-count" class="font-normal text-zinc-400">Movies</span></h3>
+          <h3 class="text-base font-extrabold text-white">Recently watched <span id="label-recent-movies-count" class="font-normal text-zinc-400">Movies</span></h3>
           <button onclick="app.switchTab('home'); app.setHomeSegment('movies'); app.setMediaFilter('completed');" class="text-xs font-semibold tv-yellow-text">See all</button>
         </div>
         <div id="carousel-recent-movies" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
@@ -1997,60 +1979,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             " watchlist)";
         }
 
-        const wlSeriesCountEl = document.getElementById("label-series-watchlist-count");
-        const wlMovieCountEl = document.getElementById("label-movie-watchlist-count");
         const recSeriesCountEl = document.getElementById("label-recent-series-count");
         const recMoviesCountEl = document.getElementById("label-recent-movies-count");
-        if (wlSeriesCountEl) wlSeriesCountEl.textContent = "Watchlist (" + interestedShows.length + ")";
-        if (wlMovieCountEl) wlMovieCountEl.textContent = "Watchlist (" + interestedMovies.length + ")";
         if (recSeriesCountEl) recSeriesCountEl.textContent = "Series (" + activeOrCompletedShows.length + ")";
         if (recMoviesCountEl) recMoviesCountEl.textContent = "Movies (" + watchedMovies.length + ")";
 
-        // 1. Series Watchlist
-        const wlSeriesEl = document.getElementById("carousel-series-watchlist");
-        if (wlSeriesEl) {
-          wlSeriesEl.innerHTML =
-            interestedShows
-              .map(
-                (s) =>
-                  '<div onclick="app.openItemById(&quot;' +
-                  escapeHtml(s.id) +
-                  '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
-                  '<img src="' +
-                  escapeHtml(s.posterUrl || "") +
-                  '" class="w-28 h-40 object-cover rounded-2xl bg-zinc-900" />' +
-                  '<div class="text-xs font-bold text-white truncate">' +
-                  escapeHtml(s.title) +
-                  "</div>" +
-                  '<div class="text-[11px] font-bold tv-yellow-text">Watchlist</div>' +
-                  "</div>"
-              )
-              .join("") || '<p class="text-xs text-zinc-400 py-2">No series in your watchlist yet.</p>';
-        }
-
-        // 2. Movie Watchlist
-        const wlMovieEl = document.getElementById("carousel-movie-watchlist");
-        if (wlMovieEl) {
-          wlMovieEl.innerHTML =
-            interestedMovies
-              .map(
-                (m) =>
-                  '<div onclick="app.openItemById(&quot;' +
-                  escapeHtml(m.id) +
-                  '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
-                  '<img src="' +
-                  escapeHtml(m.posterUrl || "") +
-                  '" class="w-28 h-40 object-cover rounded-2xl bg-zinc-900" />' +
-                  '<div class="text-xs font-bold text-white truncate">' +
-                  escapeHtml(m.title) +
-                  "</div>" +
-                  '<div class="text-[11px] font-bold tv-yellow-text">Watchlist</div>' +
-                  "</div>"
-              )
-              .join("") || '<p class="text-xs text-zinc-400 py-2">No movies in your watchlist yet.</p>';
-        }
-
-        // 3. Watched & In Progress Series
+        // 1. Recently watched Series
         const recSeriesEl = document.getElementById("carousel-recent-series");
         if (recSeriesEl) {
           recSeriesEl.innerHTML =
