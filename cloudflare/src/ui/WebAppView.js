@@ -3,7 +3,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>TV Time: Show & Movie Tracker</title>
   <link rel="manifest" href="/manifest.json" />
   <script src="https://cdn.tailwindcss.com"></script>
@@ -103,7 +103,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
   </style>
 </head>
 <body class="min-h-screen pb-28 select-none">
-  <main class="max-w-xl mx-auto px-4 pt-3 space-y-4">
+  <main class="max-w-xl mx-auto px-4 pt-4 space-y-4" style="padding-top: max(1rem, calc(env(safe-area-inset-top) + 0.5rem));">
 
     <!-- ========================================================= -->
     <!-- TOP BAR WITH HAMBURGER MENU (Stats, Export, Sync, Account)-->
@@ -455,6 +455,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
   <aside
     id="hamburger-drawer"
     class="hidden fixed inset-y-0 left-0 w-72 bg-[#09090b] border-r border-zinc-800/80 z-50 flex flex-col justify-between overflow-y-auto shadow-2xl"
+    style="padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);"
   >
     <div>
       <!-- Top Brand & Account Header -->

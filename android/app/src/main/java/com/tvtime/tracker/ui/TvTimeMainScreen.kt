@@ -146,6 +146,7 @@ fun TvTimeMainScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .statusBarsPadding()
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -575,7 +576,10 @@ fun TvTimeMainScreen(
                     .align(Alignment.CenterStart)
             ) {
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .navigationBarsPadding(),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column {
