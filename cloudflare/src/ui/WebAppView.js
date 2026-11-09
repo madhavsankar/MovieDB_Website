@@ -1281,8 +1281,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const selectedArr = Array.from(this.selectedUsPlatforms);
         const hasFilter = selectedArr.length > 0;
         const summaryLabel = hasFilter
-          ? "Streaming: " + selectedArr.join(", ")
-          : "Streaming: Filter";
+          ? selectedArr.join(", ")
+          : "Streaming";
         const clearBtn = hasFilter
           ? '<button onclick="app.toggleUsPlatform(&quot;clear&quot;)" title="Remove streaming filter" class="px-2.5 py-1.5 rounded-full text-xs font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 transition">✕ Clear</button>'
           : "";

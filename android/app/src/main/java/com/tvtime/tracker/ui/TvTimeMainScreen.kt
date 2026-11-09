@@ -1164,11 +1164,11 @@ private fun UsStreamingPlatformFilterBar(
     var expanded by remember { mutableStateOf(false) }
     val hasSelection = selectedPlatforms.isNotEmpty()
     val summaryText = if (!hasSelection) {
-        "🇺🇸 Streaming: Filter ▾"
+        "Streaming ▾"
     } else if (selectedPlatforms.size <= 2) {
-        "🇺🇸 Streaming: ${selectedPlatforms.joinToString(", ")} ▾"
+        "${selectedPlatforms.joinToString(", ")} ▾"
     } else {
-        "🇺🇸 Streaming: ${selectedPlatforms.size} selected ▾"
+        "Streaming (${selectedPlatforms.size}) ▾"
     }
 
     Row(
