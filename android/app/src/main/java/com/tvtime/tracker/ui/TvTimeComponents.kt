@@ -236,18 +236,26 @@ fun TvShowWatchCard(
                         Text(
                             text = "TV Show · Watched",
                             style = MaterialTheme.typography.labelSmall,
-                            color = TvTimePalette.Yellow
+                            color = TvTimePalette.Yellow,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
                                 text = "Completed ·",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = TvTimePalette.TextSecondary
+                                color = TvTimePalette.TextSecondary,
+                                maxLines = 1
                             )
                             Text(
                                 text = "All ${progress.totalEpisodes} episodes watched",
                                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                                color = TvTimePalette.Yellow
+                                color = TvTimePalette.Yellow,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -255,12 +263,16 @@ fun TvShowWatchCard(
                         Text(
                             text = "TV Show · Stopped Watching",
                             style = MaterialTheme.typography.labelSmall,
-                            color = TvTimePalette.Error
+                            color = TvTimePalette.Error,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = "${progress.watchedCount}/${progress.totalEpisodes} episodes watched",
                             style = MaterialTheme.typography.bodySmall,
-                            color = TvTimePalette.TextSecondary
+                            color = TvTimePalette.TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     else -> {
@@ -268,7 +280,9 @@ fun TvShowWatchCard(
                             Text(
                                 text = "TV Show · Watchlist",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = TvTimePalette.Yellow
+                                color = TvTimePalette.Yellow,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         } else {
                             Box(
@@ -295,12 +309,15 @@ fun TvShowWatchCard(
                             Text(
                                 text = "${progress.leftCount} ep${if (progress.leftCount == 1) "" else "s"} left",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = TvTimePalette.TextSecondary
+                                color = TvTimePalette.TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = progress.nextEpisode?.formattedDotCode ?: "S01·E01",
                                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraBold),
-                                color = TvTimePalette.Yellow
+                                color = TvTimePalette.Yellow,
+                                maxLines = 1
                             )
                         }
                     }
@@ -318,13 +335,16 @@ fun TvShowWatchCard(
                         Text(
                             text = String.format("%.1f", show.rating),
                             style = MaterialTheme.typography.labelMedium,
-                            color = Color.White
+                            color = Color.White,
+                            maxLines = 1
                         )
                     }
                     Text(
                         text = "📋 Episodes (${progress.watchedCount}/${progress.totalEpisodes})",
                         style = MaterialTheme.typography.labelSmall,
-                        color = TvTimePalette.TextSecondary
+                        color = TvTimePalette.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -391,7 +411,9 @@ fun TvMovieWatchCard(
                 Text(
                     text = "Movie · ${movie.runtimeMins}m · ${if (movie.watched) "Watched" else "Watchlist"}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (movie.watched) TvTimePalette.Yellow else TvTimePalette.CyanMovie
+                    color = if (movie.watched) TvTimePalette.Yellow else TvTimePalette.CyanMovie,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
 
                 Text(

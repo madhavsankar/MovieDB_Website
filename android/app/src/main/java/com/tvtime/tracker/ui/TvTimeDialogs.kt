@@ -354,7 +354,9 @@ fun ShowDetailBottomSheet(
                             text = if (key == "episodes") "Episodes (${watchedSet.size}/${episodes.size})" else label,
                             style = MaterialTheme.typography.titleMedium,
                             color = if (selected) Color.White else TvTimePalette.TextSecondary,
-                            modifier = Modifier.padding(vertical = 10.dp)
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp)
                         )
                         Box(
                             modifier = Modifier
@@ -473,6 +475,7 @@ fun ShowDetailBottomSheet(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Row(
+                                        modifier = Modifier.weight(1f),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
@@ -509,14 +512,17 @@ fun ShowDetailBottomSheet(
                                         Text(
                                             text = "Season $seasonNum",
                                             style = MaterialTheme.typography.titleMedium,
-                                            color = Color.White
+                                            color = Color.White,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
 
                                     Text(
                                         text = "$watchedInSeason/${seasonEps.size} watched  ${if (isSeasonOpen) "∧" else "∨"}",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = if (allSeasonWatched) TvTimePalette.GreenProgress else TvTimePalette.TextSecondary
+                                        color = if (allSeasonWatched) TvTimePalette.GreenProgress else TvTimePalette.TextSecondary,
+                                        maxLines = 1
                                     )
                                 }
                             }
@@ -676,85 +682,108 @@ fun MovieDetailBottomSheet(
                 }
             }
 
-            // Movie Status Bar: Interested (Watchlist) | Watched | Not Watched (Remove)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            // Movie Status Card: Header + 2-Column Watchlist / Watched Buttons
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = TvTimePalette.SurfaceCard,
+                border = BorderStroke(1.dp, TvTimePalette.Border),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Surface(
-                    onClick = {
-                        if (!isWatched) {
-                            scope.launch {
-                                dao.deleteMovie(movie.id)
-                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                onDismiss()
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isWatched) "✓ Watched" else "🔖 Watchlist",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                            color = if (isWatched) Color(0xFF4ADE80) else Color(0xFF38BDF8)
+                        )
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    dao.deleteMovie(movie.id)
+                                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                    onDismiss()
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "✕ Not Watched (Remove)",
+                                color = TvTimePalette.Error,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            onClick = {
+                                if (!isWatched) {
+                                    scope.launch {
+                                        dao.deleteMovie(movie.id)
+                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                        onDismiss()
+                                    }
+                                } else {
+                                    isWatched = false
+                                    persistMovie(nextWatched = false)
+                                }
+                            },
+                            shape = RoundedCornerShape(50),
+                            color = if (!isWatched) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "🔖 Watchlist",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (!isWatched) TvTimePalette.OnYellow else Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
-                        } else {
-                            isWatched = false
-                            persistMovie(nextWatched = false)
                         }
-                    },
-                    shape = RoundedCornerShape(50),
-                    color = if (!isWatched) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier.padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "🔖 Watchlist",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (!isWatched) TvTimePalette.OnYellow else Color.White
-                        )
-                    }
-                }
 
-                Surface(
-                    onClick = {
-                        isWatched = true
-                        persistMovie(nextWatched = true)
-                    },
-                    shape = RoundedCornerShape(50),
-                    color = if (isWatched) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier.padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "✓ Watched",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isWatched) TvTimePalette.OnYellow else Color.White
-                        )
-                    }
-                }
-
-                Surface(
-                    onClick = {
-                        scope.launch {
-                            dao.deleteMovie(movie.id)
-                            FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                            onDismiss()
+                        Surface(
+                            onClick = {
+                                isWatched = true
+                                persistMovie(nextWatched = true)
+                            },
+                            shape = RoundedCornerShape(50),
+                            color = if (isWatched) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "✓ Watched",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isWatched) TvTimePalette.OnYellow else Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
-                    },
-                    shape = RoundedCornerShape(50),
-                    color = TvTimePalette.SurfacePill,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier.padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "✕ Not Watched",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = TvTimePalette.Error
-                        )
                     }
                 }
             }

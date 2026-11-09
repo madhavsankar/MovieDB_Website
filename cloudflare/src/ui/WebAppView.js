@@ -193,16 +193,15 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         <button id="search-clear-btn" onclick="app.clearSearch()" class="text-yellow-400 font-bold text-sm px-1">✕</button>
       </div>
 
-      <!-- Results Count + Dropdown Filters (Streaming Platform Dropdown + Sort Dropdown) -->
-      <div class="flex items-center justify-between gap-2 flex-wrap">
-        <span id="search-count-label" class="text-xs font-medium text-zinc-400">Popular &amp; Trending</span>
-        <div class="flex items-center gap-2">
-          <div id="search-us-platform-bar" class="relative flex items-center gap-1.5"></div>
-          <div class="relative flex items-center">
+      <!-- Dropdown Filters (Streaming Platform Dropdown + Sort Dropdown) + Results Count -->
+      <div class="space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <div id="search-us-platform-bar" class="relative flex items-center gap-1.5 min-w-0"></div>
+          <div class="relative flex items-center shrink-0">
             <select
               id="search-sort-select"
               onchange="app.setSearchSort(this.value)"
-              class="tv-pill-bar pl-3 pr-7 py-1.5 rounded-full text-xs font-bold text-zinc-200 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
+              class="tv-pill-bar pl-3 pr-7 py-2 rounded-full text-xs font-bold text-yellow-400 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
             >
               <option value="top">Top</option>
               <option value="newest">Newest</option>
@@ -211,6 +210,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
           </div>
         </div>
+        <div id="search-count-label" class="text-xs font-medium text-zinc-400 px-1">Popular &amp; Trending</div>
       </div>
 
       <!-- Search Results Cards -->
@@ -430,7 +430,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       </div>
 
       <!-- Top Profile Card (Avatar, Name, Email & Import/Export) -->
-      <div class="tv-card rounded-3xl p-4 flex items-center justify-between gap-3">
+      <div class="tv-card rounded-3xl p-4 space-y-3.5">
         <div class="flex items-center gap-3.5 min-w-0">
           <div class="relative cursor-pointer shrink-0" onclick="app.openAccountModal()">
             <div class="w-14 h-14 rounded-full p-0.5 bg-gradient-to-tr from-yellow-400 to-orange-500">
@@ -439,17 +439,19 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               </div>
             </div>
           </div>
-          <div class="min-w-0">
+          <div class="min-w-0 flex-1">
             <div class="flex items-center gap-1.5">
               <h2 id="profile-display-name" class="text-base font-extrabold text-white truncate">Madhavsankar</h2>
-              <button onclick="app.openAccountModal()" class="text-zinc-400 hover:text-white text-xs">✎</button>
+              <button onclick="app.openAccountModal()" class="text-zinc-400 hover:text-white text-xs shrink-0">✎</button>
             </div>
             <p id="profile-handle" class="text-xs text-zinc-400 truncate">@madhavsankar</p>
           </div>
         </div>
 
-        <button onclick="app.switchTab('import')" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold text-zinc-200 hover:text-white flex items-center gap-1.5 border border-zinc-800 shrink-0">
-          ⇅ Import / Export
+        <div class="h-px bg-zinc-800/80"></div>
+
+        <button onclick="app.switchTab('import')" class="w-full tv-pill-bar px-4 py-2.5 rounded-full text-xs font-bold text-zinc-200 hover:text-white flex items-center justify-center gap-1.5 border border-zinc-800">
+          ⇅ Import / Export CSV &amp; JSON
         </button>
       </div>
     </section>
@@ -1280,11 +1282,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       renderPlatformBars() {
         const selectedArr = Array.from(this.selectedUsPlatforms);
         const hasFilter = selectedArr.length > 0;
-        const summaryLabel = hasFilter
-          ? selectedArr.join(", ")
-          : "Streaming";
+        const summaryLabel = !hasFilter
+          ? "Streaming"
+          : selectedArr.length === 1
+          ? selectedArr[0]
+          : "Streaming (" + selectedArr.length + ")";
         const clearBtn = hasFilter
-          ? '<button onclick="app.toggleUsPlatform(&quot;clear&quot;)" title="Remove streaming filter" class="px-2.5 py-1.5 rounded-full text-xs font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 transition">✕ Clear</button>'
+          ? '<button onclick="app.toggleUsPlatform(&quot;clear&quot;)" title="Remove streaming filter" class="w-7 h-7 rounded-full text-xs font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 flex items-center justify-center shrink-0 transition">✕</button>'
           : "";
         const itemsHtml = this.usPlatforms
           .map((p) => {
@@ -1308,17 +1312,19 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           })
           .join("");
 
-        const buildDropdown = () =>
+        const buildDropdown = (alignRight) =>
           '<details class="relative group">' +
-          '<summary class="list-none tv-pill-bar px-3.5 py-1.5 rounded-full text-xs font-bold cursor-pointer flex items-center gap-1.5 border ' +
+          '<summary class="list-none tv-pill-bar px-3.5 py-2 rounded-full text-xs font-bold cursor-pointer flex items-center gap-1.5 border ' +
           (hasFilter ? "border-yellow-400 tv-yellow-text" : "border-zinc-800 text-zinc-200") +
           '">' +
-          '<span class="max-w-[165px] truncate">' +
+          '<span class="max-w-[140px] truncate">' +
           escapeHtml(summaryLabel) +
           "</span>" +
           '<span class="text-[10px] text-zinc-400">▾</span>' +
           "</summary>" +
-          '<div class="absolute right-0 mt-1.5 w-48 bg-[#18181d] border border-zinc-700 rounded-2xl p-2 shadow-2xl z-30 space-y-1">' +
+          '<div class="absolute ' +
+          (alignRight ? "right-0" : "left-0") +
+          ' mt-1.5 w-48 bg-[#18181d] border border-zinc-700 rounded-2xl p-2 shadow-2xl z-30 space-y-1">' +
           (hasFilter
             ? '<button type="button" onclick="app.toggleUsPlatform(&quot;clear&quot;)" class="w-full px-3 py-1.5 rounded-xl text-left text-xs font-extrabold text-rose-400 hover:bg-zinc-800">✕ Remove filter</button><div class="h-px bg-zinc-800 my-1"></div>'
             : "") +
@@ -1329,8 +1335,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
         const homeBar = document.getElementById("home-us-platform-bar");
         const searchBar = document.getElementById("search-us-platform-bar");
-        if (homeBar) homeBar.innerHTML = buildDropdown();
-        if (searchBar) searchBar.innerHTML = buildDropdown();
+        if (homeBar) homeBar.innerHTML = buildDropdown(true);
+        if (searchBar) searchBar.innerHTML = buildDropdown(false);
       }
 
       render() {
@@ -1480,20 +1486,20 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           escapeHtml(show.title) +
           '" class="w-16 h-24 object-cover rounded-xl shrink-0 bg-zinc-900" />' +
           '<div class="flex-1 min-w-0 space-y-0.5">' +
-          '<div class="flex items-center gap-2 flex-wrap">' +
-          '<h3 class="text-base font-extrabold text-white truncate">' +
+          '<div class="flex items-center gap-2 min-w-0">' +
+          '<h3 class="text-base font-extrabold text-white truncate min-w-0 flex-1">' +
           escapeHtml(show.title) +
           "</h3>" +
-          '<span class="px-2 py-0.5 rounded-md bg-zinc-800 text-[11px] font-semibold text-zinc-300">' +
+          '<span class="px-2 py-0.5 rounded-md bg-zinc-800 text-[11px] font-semibold text-zinc-300 shrink-0">' +
           escapeHtml(show.year || 2024) +
           "</span>" +
           "</div>" +
           statusLineHtml +
-          '<div class="flex items-center gap-2 text-xs font-bold text-zinc-200 pt-0.5">' +
+          '<div class="flex items-center gap-2 text-xs font-bold text-zinc-200 pt-0.5 flex-wrap">' +
           '<span class="tv-yellow-text">★</span><span>' +
           Number(show.rating || 8.0).toFixed(1) +
           "</span>" +
-          '<span class="px-2 py-0.5 rounded-full bg-zinc-800 text-[10px] font-bold tv-yellow-text">📋 Episodes (' +
+          '<span class="px-2 py-0.5 rounded-full bg-zinc-800 text-[10px] font-bold tv-yellow-text truncate">📋 Episodes (' +
           prog.watchedCount +
           "/" +
           prog.total +
@@ -1535,15 +1541,15 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           escapeHtml(movie.title) +
           '" class="w-16 h-24 object-cover rounded-xl shrink-0 bg-zinc-900" />' +
           '<div class="flex-1 min-w-0 space-y-0.5">' +
-          '<div class="flex items-center gap-2 flex-wrap">' +
-          '<h3 class="text-base font-extrabold text-white truncate">' +
+          '<div class="flex items-center gap-2 min-w-0">' +
+          '<h3 class="text-base font-extrabold text-white truncate min-w-0 flex-1">' +
           escapeHtml(movie.title) +
           "</h3>" +
-          '<span class="px-2 py-0.5 rounded-md bg-zinc-800 text-[11px] font-semibold text-zinc-300">' +
+          '<span class="px-2 py-0.5 rounded-md bg-zinc-800 text-[11px] font-semibold text-zinc-300 shrink-0">' +
           escapeHtml(movie.year || 2024) +
           "</span>" +
           "</div>" +
-          '<div class="text-xs font-bold ' +
+          '<div class="text-xs font-bold truncate ' +
           (movie.watched ? "text-emerald-400" : "tv-yellow-text") +
           '">Movie' +
           (movie.streamingService ? " · " + escapeHtml(movie.streamingService) : "") +
@@ -1905,15 +1911,15 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 escapeHtml(poster) +
                 '" class="w-16 h-24 object-cover rounded-xl shrink-0 bg-zinc-900" />' +
                 '<div class="flex-1 min-w-0 space-y-0.5">' +
-                '<div class="flex items-center gap-2 flex-wrap">' +
-                '<h3 class="text-base font-extrabold text-white truncate">' +
+                '<div class="flex items-center gap-2 min-w-0">' +
+                '<h3 class="text-base font-extrabold text-white truncate min-w-0 flex-1">' +
                 escapeHtml(item.title) +
                 "</h3>" +
-                '<span class="px-2 py-0.5 rounded-md bg-zinc-800 text-[11px] font-semibold text-zinc-300">' +
+                '<span class="px-2 py-0.5 rounded-md bg-zinc-800 text-[11px] font-semibold text-zinc-300 shrink-0">' +
                 escapeHtml(item.year || 2024) +
                 "</span>" +
                 "</div>" +
-                '<div class="text-xs font-bold ' +
+                '<div class="text-xs font-bold truncate ' +
                 badgeClass +
                 '">' +
                 badgeLabel +
@@ -2845,8 +2851,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           '<p class="text-xs text-zinc-300 line-clamp-4 leading-relaxed">' +
           escapeHtml(topItem.overview || "Swipe right to mark completed, swipe up to add to your watchlist, or swipe left to ignore.") +
           "</p>" +
-          '<div class="flex items-center justify-between text-[11px] text-zinc-500 pt-2 border-t border-zinc-800/80">' +
-          '<span>👈 Drag Left: Ignore</span>' +
+          '<div class="flex items-center justify-between gap-1 text-[11px] text-zinc-500 pt-2 border-t border-zinc-800/80 flex-wrap">' +
+          '<span>👈 Left: Ignore</span>' +
           '<span>👆 Up: Watchlist</span>' +
           '<span>👉 Right: Completed</span>' +
           "</div>" +

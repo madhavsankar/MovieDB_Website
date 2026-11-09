@@ -1084,13 +1084,14 @@ private fun TvFilterDropdown(
     prefixLabel: String,
     selectedKey: String,
     options: List<Pair<String, String>>,
-    onSelect: (String) -> Unit
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
     val activeLabel = options.firstOrNull { it.first == selectedKey }?.second
         ?: options.firstOrNull()?.second.orEmpty()
 
-    Box {
+    Box(modifier = modifier) {
         Surface(
             onClick = { expanded = true },
             shape = RoundedCornerShape(50),
@@ -1098,21 +1099,24 @@ private fun TvFilterDropdown(
             border = BorderStroke(1.dp, TvTimePalette.Border)
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 if (prefixLabel.isNotBlank()) {
                     Text(
                         text = "$prefixLabel:",
                         style = MaterialTheme.typography.labelSmall,
-                        color = TvTimePalette.TextSecondary
+                        color = TvTimePalette.TextSecondary,
+                        maxLines = 1
                     )
                 }
                 Text(
                     text = "$activeLabel ▾",
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    color = TvTimePalette.Yellow
+                    color = TvTimePalette.Yellow,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -1159,23 +1163,23 @@ private fun TvFilterDropdown(
 @Composable
 private fun UsStreamingPlatformFilterBar(
     selectedPlatforms: Set<String>,
-    onTogglePlatform: (String) -> Unit
+    onTogglePlatform: (String) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
     val hasSelection = selectedPlatforms.isNotEmpty()
-    val summaryText = if (!hasSelection) {
-        "Streaming ▾"
-    } else if (selectedPlatforms.size <= 2) {
-        "${selectedPlatforms.joinToString(", ")} ▾"
-    } else {
-        "Streaming (${selectedPlatforms.size}) ▾"
+    val summaryText = when {
+        !hasSelection -> "Streaming ▾"
+        selectedPlatforms.size == 1 -> "${selectedPlatforms.first()} ▾"
+        else -> "Streaming (${selectedPlatforms.size}) ▾"
     }
 
     Row(
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Box {
+        Box(modifier = Modifier.weight(1f, fill = false)) {
             Surface(
                 onClick = { expanded = true },
                 shape = RoundedCornerShape(50),
@@ -1191,7 +1195,7 @@ private fun UsStreamingPlatformFilterBar(
                     color = if (hasSelection) TvTimePalette.Yellow else Color.White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp)
                 )
             }
 
@@ -1250,16 +1254,18 @@ private fun UsStreamingPlatformFilterBar(
         if (hasSelection) {
             Surface(
                 onClick = { onTogglePlatform("clear") },
-                shape = RoundedCornerShape(50),
+                shape = CircleShape,
                 color = Color(0x26EF4444),
-                border = BorderStroke(1.dp, Color(0x66EF4444))
+                border = BorderStroke(1.dp, Color(0x66EF4444)),
+                modifier = Modifier.size(30.dp)
             ) {
-                Text(
-                    text = "✕ Clear",
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                    color = Color(0xFFF87171),
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
-                )
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "✕",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = Color(0xFFF87171)
+                    )
+                }
             }
         }
     }
@@ -1348,7 +1354,7 @@ private fun HomeTabScreen(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     TvFilterDropdown(
                         prefixLabel = "",
@@ -1370,7 +1376,7 @@ private fun HomeTabScreen(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     TvFilterDropdown(
                         prefixLabel = "",
@@ -1912,18 +1918,20 @@ private fun SwipeRecommendationsTabScreen(
                     Box(modifier = Modifier.fillMaxSize()) {
                         Column(modifier = Modifier.fillMaxSize()) {
                             // Poster Banner Area
-                            Box(
+                            BoxWithConstraints(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .weight(0.58f)
                                     .background(Color(0xFF101014)),
                                 contentAlignment = Alignment.Center
                             ) {
+                                val posterHeight = (maxHeight * 0.84f).coerceIn(130.dp, 290.dp)
+                                val posterWidth = posterHeight * 0.68f
                                 NetworkPosterImage(
                                     url = topItem.posterUrl,
                                     title = topItem.title,
-                                    width = 210.dp,
-                                    height = 300.dp,
+                                    width = posterWidth,
+                                    height = posterHeight,
                                     cornerRadius = 18.dp
                                 )
 
@@ -2258,18 +2266,22 @@ private fun StatisticsFullPageScreen(
                     modifier = Modifier.weight(1f)
                 ) {
                     Column(
-                        modifier = Modifier.padding(18.dp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
                             text = stats.formattedSeriesHours,
                             style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
-                            color = Color.White
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = "Series watch hours",
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
-                            color = TvTimePalette.Yellow
+                            color = TvTimePalette.Yellow,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -2282,18 +2294,22 @@ private fun StatisticsFullPageScreen(
                     modifier = Modifier.weight(1f)
                 ) {
                     Column(
-                        modifier = Modifier.padding(18.dp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
                             text = stats.formattedMoviesHours,
                             style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
-                            color = Color.White
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = "Movie watch hours",
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
-                            color = TvTimePalette.Yellow
+                            color = TvTimePalette.Yellow,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -2347,16 +2363,25 @@ private fun SettingsFullPageScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
                     Text(
                         text = "⚙️ Settings",
                         style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-                        color = Color.White
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = "Profile, cloud sync & library backup",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TvTimePalette.TextSecondary
+                        color = TvTimePalette.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 Surface(
@@ -2383,17 +2408,16 @@ private fun SettingsFullPageScreen(
                 border = BorderStroke(1.dp, TvTimePalette.Border),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Box(
                             modifier = Modifier
@@ -2417,7 +2441,7 @@ private fun SettingsFullPageScreen(
                             )
                         }
 
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -2427,7 +2451,8 @@ private fun SettingsFullPageScreen(
                                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
                                     color = Color.White,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
                                 )
                                 Text(
                                     text = "✎",
@@ -2445,18 +2470,27 @@ private fun SettingsFullPageScreen(
                         }
                     }
 
+                    HorizontalDivider(color = TvTimePalette.Border)
+
                     Surface(
                         onClick = onOpenImport,
                         shape = RoundedCornerShape(50),
                         color = TvTimePalette.SurfacePill,
-                        border = BorderStroke(1.dp, TvTimePalette.Border)
+                        border = BorderStroke(1.dp, TvTimePalette.Border),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = "⇅ Import / Export",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                        )
+                        Box(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "⇅ Import / Export CSV & JSON",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
@@ -2480,19 +2514,23 @@ private fun StatCountCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 16.dp, horizontal = 10.dp),
+                .padding(vertical = 16.dp, horizontal = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(
                 text = value,
                 style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
-                color = valueColor
+                color = valueColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
-                color = TvTimePalette.TextSecondary
+                color = TvTimePalette.TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
