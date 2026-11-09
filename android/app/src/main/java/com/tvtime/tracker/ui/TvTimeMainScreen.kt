@@ -193,12 +193,20 @@ fun TvTimeMainScreen(
                         selected = selected,
                         onClick = { activeBottomTab = key },
                         icon = {
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = key,
-                                tint = if (selected) TvTimePalette.Yellow else TvTimePalette.TextSecondary,
-                                modifier = Modifier.size(26.dp)
-                            )
+                            if (key == "swipe") {
+                                Text(
+                                    text = "✨",
+                                    fontSize = 20.sp,
+                                    color = if (selected) TvTimePalette.Yellow else TvTimePalette.TextSecondary
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = key,
+                                    tint = if (selected) TvTimePalette.Yellow else TvTimePalette.TextSecondary,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
                         },
                         colors = NavigationBarItemDefaults.colors(
                             indicatorColor = Color.Transparent
@@ -637,7 +645,7 @@ fun TvTimeMainScreen(
                                 showHamburgerSheet = false
                                 activeBottomTab = "search"
                             }
-                            LeftDrawerItemRow(icon = "🔥", label = "For You") {
+                            LeftDrawerItemRow(icon = "✨", label = "For You") {
                                 showHamburgerSheet = false
                                 activeBottomTab = "swipe"
                             }
@@ -1632,7 +1640,7 @@ private fun SwipeRecommendationsTabScreen(
         ) {
             Column {
                 Text(
-                    text = "🔥 For You",
+                    text = "✨ For You",
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold),
                     color = Color.White
                 )

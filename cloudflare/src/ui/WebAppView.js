@@ -210,13 +210,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
     </section>
 
     <!-- ========================================================= -->
-    <!-- TAB 3: TINDER-STYLE SWIPE RECOMMENDATIONS (🔥)            -->
+    <!-- TAB 3: TINDER-STYLE SWIPE RECOMMENDATIONS (✨)            -->
     <!-- ========================================================= -->
     <section id="tab-swipe" class="hidden space-y-4">
       <div class="flex items-center justify-between gap-2">
         <div>
           <h2 class="text-base font-extrabold text-white flex items-center gap-1.5">
-            <span>🔥 For You</span>
+            <span>✨ For You</span>
             <span id="swipe-remaining-badge" class="px-2 py-0.5 rounded-full bg-zinc-800 text-[11px] font-bold tv-yellow-text">Recommendations</span>
           </h2>
           <p class="text-[11px] text-zinc-400">Swipe Left = Ignore · Up = Watchlist · Right = Completed</p>
@@ -493,7 +493,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           onclick="app.closeHamburgerMenu(); app.switchTab('swipe');"
           class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
         >
-          <span class="text-lg">🔥</span>
+          <span class="text-lg">✨</span>
           <span>For You</span>
         </button>
       </div>
@@ -562,9 +562,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         <span class="text-[10px] font-bold">Search</span>
       </button>
       <button onclick="app.switchTab('swipe')" id="nav-btn-swipe" class="flex flex-col items-center justify-center gap-0.5 text-zinc-400 hover:text-white">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 2c1.5 3.5 4 5.5 4 9a4 4 0 11-8 0c0-2 1-3.5 2-5-0.5 2 1 3 2 3s1-2 0-7z" />
-          <path stroke-linecap="round" stroke-linejoin="round" d="M8.5 14.5A6.5 6.5 0 0018.5 13c0-3.5-2.5-6.5-6.5-11-4 4.5-6.5 7.5-6.5 11a6.5 6.5 0 003 5.5" />
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
         </svg>
         <span class="text-[10px] font-bold">For You</span>
       </button>
