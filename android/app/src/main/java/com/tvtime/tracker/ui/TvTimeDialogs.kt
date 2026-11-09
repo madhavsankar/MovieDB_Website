@@ -470,13 +470,13 @@ fun ShowDetailBottomSheet(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
-                                        // Season-wide eye / check button: marks all episodes in this season watched or not watched
+                                        // Season-wide check button: turns green when all episodes in this season are watched
                                         Box(
                                             modifier = Modifier
                                                 .size(36.dp)
                                                 .clip(CircleShape)
                                                 .background(
-                                                    if (allSeasonWatched) TvTimePalette.Yellow else Color(0xFF232329)
+                                                    if (allSeasonWatched) TvTimePalette.GreenProgress else Color(0xFF232329)
                                                 )
                                                 .clickable {
                                                     val nextSet = watchedSet.toMutableSet()
@@ -492,16 +492,12 @@ fun ShowDetailBottomSheet(
                                                 },
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            if (allSeasonWatched) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Check,
-                                                    contentDescription = "Season Watched",
-                                                    tint = TvTimePalette.OnYellow,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                            } else {
-                                                Text("👁", fontSize = 14.sp, color = TvTimePalette.TextSecondary)
-                                            }
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = if (allSeasonWatched) "Season Watched" else "Mark Season Watched",
+                                                tint = if (allSeasonWatched) Color.White else TvTimePalette.TextSecondary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
                                         }
 
                                         Text(
@@ -514,7 +510,7 @@ fun ShowDetailBottomSheet(
                                     Text(
                                         text = "$watchedInSeason/${seasonEps.size} watched  ${if (isSeasonOpen) "∧" else "∨"}",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = if (allSeasonWatched) TvTimePalette.Yellow else TvTimePalette.TextSecondary
+                                        color = if (allSeasonWatched) TvTimePalette.GreenProgress else TvTimePalette.TextSecondary
                                     )
                                 }
                             }
@@ -571,21 +567,17 @@ fun ShowDetailBottomSheet(
                                             .size(40.dp)
                                             .clip(CircleShape)
                                             .background(
-                                                if (isWatched) TvTimePalette.Yellow else Color(0xFF232329)
+                                                if (isWatched) TvTimePalette.GreenProgress else Color(0xFF232329)
                                             )
                                             .clickable { toggleSingleEpisode() },
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        if (isWatched) {
-                                            Icon(
-                                                imageVector = Icons.Default.Check,
-                                                contentDescription = "Watched",
-                                                tint = TvTimePalette.OnYellow,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        } else {
-                                            Text("👁", fontSize = 15.sp, color = TvTimePalette.TextSecondary)
-                                        }
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = if (isWatched) "Watched" else "Mark Watched",
+                                            tint = if (isWatched) Color.White else TvTimePalette.TextSecondary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
                                     }
                                 }
                             }

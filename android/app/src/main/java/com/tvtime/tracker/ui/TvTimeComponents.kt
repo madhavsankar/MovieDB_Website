@@ -127,14 +127,14 @@ fun TvYellowEyeButton(
             modifier = Modifier
                 .size(size)
                 .clip(CircleShape)
-                .background(TvTimePalette.Yellow)
+                .background(TvTimePalette.GreenProgress)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.Default.Check,
                 contentDescription = "Watched",
-                tint = TvTimePalette.OnYellow,
+                tint = Color.White,
                 modifier = Modifier.size(22.dp)
             )
         }
@@ -143,7 +143,8 @@ fun TvYellowEyeButton(
             modifier = Modifier
                 .size(size)
                 .clip(CircleShape)
-                .border(2.dp, TvTimePalette.Yellow, CircleShape)
+                .background(Color(0xFF232329))
+                .border(1.5.dp, Color(0xFF3F3F46), CircleShape)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
@@ -155,10 +156,11 @@ fun TvYellowEyeButton(
                     modifier = Modifier.size(22.dp)
                 )
             } else {
-                Text(
-                    text = "👁",
-                    fontSize = 16.sp,
-                    color = TvTimePalette.Yellow
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = "Mark watched",
+                    tint = TvTimePalette.TextSecondary,
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }

@@ -43,13 +43,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       width: 44px;
       height: 44px;
       border-radius: 9999px;
-      border: 2px solid var(--tv-yellow);
+      background: #232329;
+      border: 1.5px solid #3f3f46;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: var(--tv-yellow);
+      color: #9ca3af;
       flex-shrink: 0;
-      transition: transform 0.12s ease, background 0.15s ease;
+      transition: transform 0.12s ease, background 0.15s ease, color 0.15s ease;
     }
     .tv-eye-btn:active {
       transform: scale(0.92);
@@ -58,20 +59,22 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       width: 44px;
       height: 44px;
       border-radius: 9999px;
-      background: var(--tv-yellow);
-      color: #09090b;
+      background: var(--tv-green);
+      border: 1.5px solid var(--tv-green);
+      color: #ffffff;
       display: flex;
       align-items: center;
       justify-content: center;
       font-weight: 800;
       flex-shrink: 0;
-      transition: transform 0.12s ease;
+      transition: transform 0.12s ease, background 0.15s ease;
     }
     .tv-gray-eye-btn {
       width: 40px;
       height: 40px;
       border-radius: 9999px;
       background: #232329;
+      border: 1.5px solid #3f3f46;
       color: #9ca3af;
       display: flex;
       align-items: center;
@@ -435,8 +438,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
   </div>
 
   <script>
-    const EYE_SVG = '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/><circle cx="12" cy="12" r="3"/></svg>';
     const CHECK_SVG = '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.6" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
+    const EYE_SVG = CHECK_SVG;
     const PLUS_SVG = '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14m-7-7h14"/></svg>';
 
     function escapeHtml(s) {
