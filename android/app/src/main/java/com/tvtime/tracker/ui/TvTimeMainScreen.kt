@@ -1233,7 +1233,7 @@ private fun HomeTabScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     TvFilterDropdown(
-                        prefixLabel = "Status",
+                        prefixLabel = "",
                         selectedKey = mediaFilter,
                         options = showStatusOptions,
                         onSelect = onSelectMediaFilter
@@ -1255,7 +1255,7 @@ private fun HomeTabScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     TvFilterDropdown(
-                        prefixLabel = "Movies",
+                        prefixLabel = "",
                         selectedKey = effectiveMovieFilter,
                         options = movieStatusOptions,
                         onSelect = onSelectMediaFilter
@@ -1533,7 +1533,7 @@ private fun SearchTabScreen(
                         onTogglePlatform = onToggleUsPlatform
                     )
                     TvFilterDropdown(
-                        prefixLabel = "Sort",
+                        prefixLabel = "",
                         selectedKey = sortKey,
                         options = sortOptions,
                         onSelect = onSortChange
@@ -1652,12 +1652,12 @@ private fun SwipeRecommendationsTabScreen(
             }
 
             TvFilterDropdown(
-                prefixLabel = "Filter",
+                prefixLabel = "",
                 selectedKey = swipeFilter,
                 options = listOf(
-                    "all" to "All (Series & Movies)",
-                    "tv" to "Series Only",
-                    "movie" to "Movies Only"
+                    "all" to "All",
+                    "tv" to "Series",
+                    "movie" to "Movies"
                 ),
                 onSelect = onSelectSwipeFilter
             )

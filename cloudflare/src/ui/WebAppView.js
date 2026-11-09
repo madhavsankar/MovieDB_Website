@@ -147,10 +147,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             onchange="app.setMediaFilter(this.value)"
             class="tv-pill-bar pl-3.5 pr-8 py-2 rounded-full text-xs font-extrabold text-yellow-400 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
           >
-            <option value="in_progress">Status: In progress</option>
-            <option value="interested">Status: Watchlist</option>
-            <option value="completed">Status: Completed</option>
-            <option value="stopped">Status: Stopped</option>
+            <option value="in_progress">In progress</option>
+            <option value="interested">Watchlist</option>
+            <option value="completed">Completed</option>
+            <option value="stopped">Stopped</option>
           </select>
           <span class="pointer-events-none absolute right-3 text-[10px] text-zinc-400">▾</span>
         </div>
@@ -196,9 +196,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               onchange="app.setSearchSort(this.value)"
               class="tv-pill-bar pl-3 pr-7 py-1.5 rounded-full text-xs font-bold text-zinc-200 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
             >
-              <option value="top">Sort: Top</option>
-              <option value="newest">Sort: Newest</option>
-              <option value="oldest">Sort: Oldest</option>
+              <option value="top">Top</option>
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
             </select>
             <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
           </div>
@@ -228,9 +228,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               onchange="app.setSwipeMediaFilter(this.value)"
               class="tv-pill-bar pl-3 pr-7 py-1.5 rounded-full text-xs font-bold text-yellow-400 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
             >
-              <option value="all">Filter: All</option>
-              <option value="show">Filter: Series</option>
-              <option value="movie">Filter: Movies</option>
+              <option value="all">All</option>
+              <option value="show">Series</option>
+              <option value="movie">Movies</option>
             </select>
             <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
           </div>
@@ -1045,8 +1045,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           }
           if (statusSelect) {
             statusSelect.innerHTML =
-              '<option value="interested">Status: Watchlist</option>' +
-              '<option value="completed">Status: Watched</option>';
+              '<option value="interested">Watchlist</option>' +
+              '<option value="completed">Watched</option>';
             statusSelect.value = this.mediaFilter;
           }
         } else if (seg === "shows") {
@@ -1055,10 +1055,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           }
           if (statusSelect) {
             statusSelect.innerHTML =
-              '<option value="in_progress">Status: In progress</option>' +
-              '<option value="interested">Status: Watchlist</option>' +
-              '<option value="completed">Status: Completed</option>' +
-              '<option value="stopped">Status: Stopped</option>';
+              '<option value="in_progress">In progress</option>' +
+              '<option value="interested">Watchlist</option>' +
+              '<option value="completed">Completed</option>' +
+              '<option value="stopped">Stopped</option>';
             statusSelect.value = this.mediaFilter;
           }
         }
