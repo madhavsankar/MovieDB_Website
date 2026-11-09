@@ -8,6 +8,13 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class TestCloudflareWorkerEngine(unittest.TestCase):
+    def _run_js(self, harness: str) -> dict:
+        node_bin = shutil.which("node")
+        jsc_bin = "/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc"
+        cmd = [node_bin, "-e", harness] if node_bin else [jsc_bin, "-e", harness]
+        proc = subprocess.run(cmd, cwd=ROOT_DIR, capture_output=True, text=True, check=True)
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+
     def test_worker_js_catalog_and_stats_engine(self):
         repo_path = os.path.join(ROOT_DIR, "cloudflare", "src", "repositories", "FirestoreRepository.js")
         svc_path = os.path.join(ROOT_DIR, "cloudflare", "src", "services", "LiveCatalogService.js")
@@ -44,12 +51,7 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
             """
         )
 
-        node_bin = shutil.which("node")
-        jsc_bin = "/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc"
-        cmd = [node_bin, "-e", harness] if node_bin else [jsc_bin, "-e", harness]
-        proc = subprocess.run(cmd, cwd=ROOT_DIR, capture_output=True, text=True, check=True)
-        out = json.loads(proc.stdout.strip().splitlines()[-1])
-
+        out = self._run_js(harness)
         self.assertEqual(out["code"], "S02E04")
         self.assertIn("tvtime_state/user_state_madhavsankar", out["docUrl"])
         self.assertEqual(out["showsCount"], 3)
@@ -64,7 +66,12 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
     def test_web_app_view_client_js_syntax(self):
         view_path = os.path.join(ROOT_DIR, "cloudflare", "src", "ui", "WebAppView.js")
         with open(view_path, "r", encoding="utf-8") as f:
-            view_src = f.read().replace("export const WEB_APP_HTML", "const WEB_APP_HTML")
+            raw_file = f.read()
+
+        # Invariant 1: Zero backslashes in WebAppView.js (uses String.raw template literal)
+        self.assertNotIn("\\", raw_file, "WebAppView.js uses String.raw and must not contain backslashes")
+
+        view_src = raw_file.replace("export const WEB_APP_HTML", "const WEB_APP_HTML")
         self.assertNotIn("Search TV shows, movies, or actors", view_src)
         self.assertIn("Search TV shows or movies...", view_src)
         self.assertNotIn("Your Reaction Badge", view_src)
@@ -87,6 +94,9 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertNotIn("All Movies", view_src)
         self.assertIn("stat-series-count", view_src)
         self.assertIn("stat-episodes-count", view_src)
+        self.assertIn("initBackNavigation", view_src)
+        self.assertIn("initPullToRefresh", view_src)
+
         harness = (
             view_src
             + """
@@ -99,13 +109,224 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
             else if (typeof print !== 'undefined') print(out);
             """
         )
-        node_bin = shutil.which("node")
-        jsc_bin = "/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc"
-        cmd = [node_bin, "-e", harness] if node_bin else [jsc_bin, "-e", harness]
-        proc = subprocess.run(cmd, cwd=ROOT_DIR, capture_output=True, text=True, check=True)
-        out = json.loads(proc.stdout.strip().splitlines()[-1])
+        out = self._run_js(harness)
         self.assertTrue(out["ok"])
         self.assertGreater(out["len"], 50000)
+
+    def test_web_app_behavioral_evals(self):
+        """Executes TvTimeClient behavioral evals: status transitions, watchlist toggle-removal, back button history, and streaming filter labels."""
+        view_path = os.path.join(ROOT_DIR, "cloudflare", "src", "ui", "WebAppView.js")
+        with open(view_path, "r", encoding="utf-8") as f:
+            view_src = f.read().replace("export const WEB_APP_HTML", "const WEB_APP_HTML")
+
+        harness = (
+            view_src
+            + """
+            const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+            const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+            const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+
+            const elements = {};
+            const getEl = (id) => {
+              if (!elements[id]) {
+                const classes = new Set(["hidden"]);
+                elements[id] = {
+                  id,
+                  innerHTML: "",
+                  textContent: "",
+                  value: "",
+                  className: "",
+                  style: {},
+                  classList: {
+                    add: (...c) => c.forEach((x) => classes.add(x)),
+                    remove: (...c) => c.forEach((x) => classes.delete(x)),
+                    contains: (x) => classes.has(x),
+                    toggle: (x, force) => {
+                      if (force === undefined) {
+                        if (classes.has(x)) classes.delete(x);
+                        else classes.add(x);
+                      } else if (force) classes.add(x);
+                      else classes.delete(x);
+                    }
+                  },
+                  addEventListener: () => {}
+                };
+              }
+              return elements[id];
+            };
+
+            let popStateHandler = null;
+            globalThis.window = {
+              location: { search: "" },
+              history: {
+                replaceState: () => {},
+                pushState: () => {}
+              },
+              addEventListener: (evt, fn) => {
+                if (evt === "popstate") popStateHandler = fn;
+              }
+            };
+            globalThis.document = {
+              getElementById: getEl,
+              addEventListener: () => {},
+              scrollingElement: { scrollTop: 0 },
+              documentElement: { scrollTop: 0 }
+            };
+            globalThis.localStorage = {
+              getItem: () => null,
+              setItem: () => {},
+              removeItem: () => {}
+            };
+            globalThis.fetch = async () => ({ ok: true, json: async () => ({ results: [] }) });
+
+            (new Function(clientJs))();
+            const proto = globalThis.TvTimeClientClass.prototype;
+
+            const dummy = Object.create(proto);
+            dummy.userId = "testuser";
+            dummy.userEmail = "testuser@gmail.com";
+            dummy.activeTab = "home";
+            dummy.tabHistory = [];
+            dummy.homeSegment = "shows";
+            dummy.mediaFilter = "in_progress";
+            dummy.selectedUsPlatforms = new Set();
+            dummy.usPlatforms = ["Netflix", "Prime Video", "Hulu", "Max", "Disney+", "Apple TV+", "Paramount+", "Peacock"];
+            dummy.searchQuery = "";
+            dummy.searchResults = [];
+            dummy.recPool = [];
+            dummy.swipeMediaFilter = "all";
+            dummy.openSeasons = new Set();
+            dummy.state = {
+              shows: [
+                {
+                  id: "s1",
+                  title: "Severance",
+                  userStatus: "interested",
+                  watchedEpisodes: [],
+                  episodes: [
+                    { code: "S01E01", season: 1, number: 1, title: "Ep 1" },
+                    { code: "S01E02", season: 1, number: 2, title: "Ep 2" }
+                  ]
+                }
+              ],
+              movies: [
+                { id: "m1", title: "Dune", watched: false }
+              ],
+              actors: [],
+              decidedIds: []
+            };
+
+            // 1. Effective status transitions
+            const statusInitial = dummy.getEffectiveShowStatus(dummy.state.shows[0]);
+            const headerWatchlistHtml = dummy.renderShowStatusHeaderHtml(dummy.state.shows[0]);
+            const watchlistCallsRemove = headerWatchlistHtml.includes("removeItemFromLibrary");
+
+            dummy.state.shows[0].watchedEpisodes = ["S01E01"];
+            const statusInProgress = dummy.getEffectiveShowStatus(dummy.state.shows[0]);
+
+            dummy.state.shows[0].watchedEpisodes = ["S01E01", "S01E02"];
+            const statusCompleted = dummy.getEffectiveShowStatus(dummy.state.shows[0]);
+
+            // 2. Back navigation & popstate unwinding
+            dummy.initBackNavigation();
+            dummy.switchTab("stats");
+            dummy.switchTab("settings");
+            const tabBeforeBack = dummy.activeTab;
+            dummy.goBack();
+            const tabAfterFirstBack = dummy.activeTab;
+            dummy.goBack();
+            const tabAfterSecondBack = dummy.activeTab;
+
+            // Open drawer and trigger popstate -> closes drawer without changing tab
+            dummy.openHamburgerMenu();
+            const drawerOpenBeforePop = !getEl("hamburger-drawer").classList.contains("hidden");
+            if (popStateHandler) popStateHandler();
+            const drawerOpenAfterPop = !getEl("hamburger-drawer").classList.contains("hidden");
+
+            // 3. Streaming platform label formatting
+            dummy.renderPlatformBars();
+            const labelEmpty = getEl("home-us-platform-bar").innerHTML.includes(">Streaming<");
+            dummy.selectedUsPlatforms.add("Netflix");
+            dummy.renderPlatformBars();
+            const labelSingle = getEl("home-us-platform-bar").innerHTML.includes(">Netflix<");
+            dummy.selectedUsPlatforms.add("Max");
+            dummy.renderPlatformBars();
+            const labelMulti = getEl("home-us-platform-bar").innerHTML.includes(">Streaming (2)<");
+
+            // 4. Watchlist movie removal when already in Watchlist
+            dummy.setMovieStatus("m1", false);
+            const moviesRemainingAfterWatchlistToggle = dummy.state.movies.length;
+
+            const out = JSON.stringify({
+              statusInitial,
+              watchlistCallsRemove,
+              statusInProgress,
+              statusCompleted,
+              tabBeforeBack,
+              tabAfterFirstBack,
+              tabAfterSecondBack,
+              drawerOpenBeforePop,
+              drawerOpenAfterPop,
+              labelEmpty,
+              labelSingle,
+              labelMulti,
+              moviesRemainingAfterWatchlistToggle
+            });
+            if (typeof console !== 'undefined' && console.log) console.log(out);
+            else if (typeof print !== 'undefined') print(out);
+            """
+        )
+        out = self._run_js(harness)
+        self.assertEqual(out["statusInitial"], "interested")
+        self.assertTrue(out["watchlistCallsRemove"])
+        self.assertEqual(out["statusInProgress"], "in_progress")
+        self.assertEqual(out["statusCompleted"], "completed")
+        self.assertEqual(out["tabBeforeBack"], "settings")
+        self.assertEqual(out["tabAfterFirstBack"], "stats")
+        self.assertEqual(out["tabAfterSecondBack"], "home")
+        self.assertTrue(out["drawerOpenBeforePop"])
+        self.assertFalse(out["drawerOpenAfterPop"])
+        self.assertTrue(out["labelEmpty"])
+        self.assertTrue(out["labelSingle"])
+        self.assertTrue(out["labelMulti"])
+        self.assertEqual(out["moviesRemainingAfterWatchlistToggle"], 0)
+
+    def test_android_architecture_and_best_practices_evals(self):
+        """Verifies Android best practices across MainActivity.kt, TvTimeMainScreen.kt, and TvTimeDialogs.kt."""
+        main_act_path = os.path.join(
+            ROOT_DIR, "android", "app", "src", "main", "java", "com", "tvtime", "tracker", "MainActivity.kt"
+        )
+        main_screen_path = os.path.join(
+            ROOT_DIR, "android", "app", "src", "main", "java", "com", "tvtime", "tracker", "ui", "TvTimeMainScreen.kt"
+        )
+        dialogs_path = os.path.join(
+            ROOT_DIR, "android", "app", "src", "main", "java", "com", "tvtime", "tracker", "ui", "TvTimeDialogs.kt"
+        )
+
+        with open(main_act_path, "r", encoding="utf-8") as f:
+            main_act = f.read()
+        with open(main_screen_path, "r", encoding="utf-8") as f:
+            main_screen = f.read()
+        with open(dialogs_path, "r", encoding="utf-8") as f:
+            dialogs = f.read()
+
+        # 1. Explicit Dark SystemBarStyle in enableEdgeToEdge & Share Target intent support
+        self.assertIn("SystemBarStyle.dark", main_act)
+        self.assertIn("Intent.ACTION_SEND", main_act)
+        self.assertIn("onNewIntent", main_act)
+
+        # 2. BackHandler, tabBackStack, rememberSaveable, statusBarsPadding, pullToRefresh, ImeAction.Search
+        self.assertIn("BackHandler(enabled = canInterceptBack)", main_screen)
+        self.assertIn("rememberSaveable", main_screen)
+        self.assertIn(".statusBarsPadding()", main_screen)
+        self.assertIn("pullToRefreshNestedScroll", main_screen)
+        self.assertIn("ImeAction.Search", main_screen)
+        self.assertIn("Streaming ▾", main_screen)
+
+        # 3. Scrollable detail sheets & Watchlist toggle-removal in TvTimeDialogs.kt
+        self.assertIn("verticalScroll(rememberScrollState())", dialogs)
+        self.assertIn("dao.deleteShow(show.id)", dialogs)
+        self.assertIn("dao.deleteMovie(movie.id)", dialogs)
 
     def test_local_python_server_helpers(self):
         import server

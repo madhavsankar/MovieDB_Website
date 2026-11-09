@@ -34,6 +34,9 @@ jobs:
             echo "/opt/gradle-8.7/bin" >> $GITHUB_PATH
           fi
 
+      - name: Run Web, Worker & Android Regression Evals
+        run: python3 -m unittest discover -s tests -p "test_*.py" -v
+
       - name: Build Signed Release or Debug APK
         working-directory: android
         env:
@@ -58,16 +61,16 @@ jobs:
             export KEYSTORE_FILE="release-keystore.jks"
             export KEY_ALIAS="${KEY_ALIAS:-upload}"
             export KEY_PASSWORD="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
-            GRADLE_TASK="assembleRelease"
+            GRADLE_TASK="testDebugUnitTest assembleRelease"
           elif [ -n "$ANDROID_DEBUG_KEYSTORE_BASE64" ]; then
             echo "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > app/release-keystore.jks
             export KEYSTORE_FILE="release-keystore.jks"
             export KEYSTORE_PASSWORD="android"
             export KEY_ALIAS="androiddebugkey"
             export KEY_PASSWORD="android"
-            GRADLE_TASK="assembleRelease"
+            GRADLE_TASK="testDebugUnitTest assembleRelease"
           else
-            GRADLE_TASK="assembleDebug"
+            GRADLE_TASK="testDebugUnitTest assembleDebug"
           fi
           for attempt in 1 2 3; do
             gradle $GRADLE_TASK --no-daemon && break
