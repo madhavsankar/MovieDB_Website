@@ -333,21 +333,10 @@ fun TvShowWatchCard(
                 }
             }
 
-            if (statusKey == "completed") {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = "Watched",
-                    tint = TvTimePalette.GreenProgress,
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clickable(onClick = onCardClick)
-                )
-            } else {
-                TvYellowEyeButton(
-                    onClick = onEyeClick,
-                    isChecked = false
-                )
-            }
+            TvYellowEyeButton(
+                onClick = onEyeClick,
+                isChecked = statusKey == "completed"
+            )
         }
     }
 }

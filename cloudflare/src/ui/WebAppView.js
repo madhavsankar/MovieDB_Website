@@ -949,9 +949,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             prog.total +
             " episodes watched</span></div>";
           actionBtnHtml =
-            '<button onclick="event.stopPropagation(); app.openItemById(&quot;' +
+            '<button title="Toggle full series watched / unwatched" onclick="event.stopPropagation(); app.toggleShowWatched(&quot;' +
             escapeHtml(show.id) +
-            '&quot;)" class="w-10 h-10 flex items-center justify-center text-emerald-400 font-bold">' +
+            '&quot;)" class="tv-check-btn">' +
             CHECK_SVG +
             "</button>";
         } else if (effStatus === "stopped") {
@@ -967,9 +967,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             prog.total +
             " watched)</div>";
           actionBtnHtml =
-            '<button onclick="event.stopPropagation(); app.openItemById(&quot;' +
+            '<button title="Mark full series watched" onclick="event.stopPropagation(); app.toggleShowWatched(&quot;' +
             escapeHtml(show.id) +
-            '&quot;)" class="tv-gray-eye-btn">' +
+            '&quot;)" class="tv-eye-btn">' +
             EYE_SVG +
             "</button>";
         } else {
@@ -991,9 +991,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             escapeHtml(nextCodeFormatted) +
             "</span></div>";
           actionBtnHtml =
-            '<button title="Mark ' +
-            escapeHtml(nextCodeFormatted) +
-            ' watched" onclick="event.stopPropagation(); app.markNextEpisodeWatched(&quot;' +
+            '<button title="Mark full series watched" onclick="event.stopPropagation(); app.toggleShowWatched(&quot;' +
             escapeHtml(show.id) +
             '&quot;)" class="tv-eye-btn">' +
             EYE_SVG +
@@ -1243,6 +1241,30 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             "</div>";
         }
         listEl.innerHTML = html;
+      }
+
+      async toggleShowWatched(showId) {
+        const show = (this.state.shows || []).find((s) => s.id === showId);
+        if (!show) return;
+        const eff = this.getEffectiveShowStatus(show);
+        if (eff === "completed") {
+          await this.setShowStatus(showId, "interested");
+        } else {
+          const lookupKey = show.tvmazeId || show.id;
+          if (lookupKey && (!show.episodes || show.episodes.length <= 1)) {
+            try {
+              const res = await fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey));
+              if (res.ok) {
+                const full = await res.json();
+                if (full && Array.isArray(full.episodes) && full.episodes.length > 0) {
+                  show.episodes = full.episodes;
+                  if (full.cast?.length) show.cast = full.cast;
+                }
+              }
+            } catch (_) {}
+          }
+          await this.setShowStatus(showId, "completed");
+        }
       }
 
       async markNextEpisodeWatched(showId) {

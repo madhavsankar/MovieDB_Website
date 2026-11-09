@@ -161,17 +161,44 @@ fun TvTimeMainScreen(
                         onOpenShow = { selectedShowForDetail = it },
                         onOpenMovie = { selectedMovieForDetail = it },
                         onMarkNextEpisode = { show ->
-                            val eps = TvTimeProgressCalculator.parseEpisodeList(show.episodesJson)
-                            val watched = TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv).toMutableSet()
-                            val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
-                            prog.nextEpisode?.let { nextEp ->
-                                watched.add(nextEp.code.uppercase())
-                                val updatedCsv = TvTimeProgressCalculator.serializeWatchedSet(watched)
-                                val nextStat = if (eps.isNotEmpty() && watched.size >= eps.size) "completed" else "in_progress"
-                                scope.launch {
-                                    dao.updateShow(show.copy(watchedCodesCsv = updatedCsv, userStatus = nextStat))
-                                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                            scope.launch {
+                                var eps = TvTimeProgressCalculator.parseEpisodeList(show.episodesJson)
+                                var castCsv = show.castCsv
+                                if (eps.size <= 1) {
+                                    val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+                                        tvmazeId = show.tvmazeId,
+                                        tmdbId = show.tmdbId,
+                                        title = show.title,
+                                        externalId = show.externalId
+                                    )
+                                    if (fetchedEps.isNotEmpty()) {
+                                        eps = fetchedEps
+                                    }
+                                    if (fetchedCast.isNotEmpty() && castCsv.isBlank()) {
+                                        castCsv = fetchedCast.joinToString(", ")
+                                    }
                                 }
+                                val watched = TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv)
+                                val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
+                                val isAlreadyCompleted = show.userStatus == "completed" || prog.isCompleted
+                                val updatedShow = if (isAlreadyCompleted) {
+                                    show.copy(
+                                        watchedCodesCsv = "",
+                                        userStatus = "interested",
+                                        episodesJson = TvTimeProgressCalculator.serializeEpisodeList(eps),
+                                        castCsv = castCsv
+                                    )
+                                } else {
+                                    val allCodes = eps.map { it.code.uppercase() }.toSet()
+                                    show.copy(
+                                        watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(allCodes),
+                                        userStatus = "completed",
+                                        episodesJson = TvTimeProgressCalculator.serializeEpisodeList(eps),
+                                        castCsv = castCsv
+                                    )
+                                }
+                                dao.updateShow(updatedShow)
+                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
                             }
                         },
                         onToggleMovieWatched = { movie ->
