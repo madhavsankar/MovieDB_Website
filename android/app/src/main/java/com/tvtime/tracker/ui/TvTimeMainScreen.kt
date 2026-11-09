@@ -2380,42 +2380,6 @@ private fun SettingsFullPageScreen(
                 }
             }
         }
-
-        // Google Account & Switch Card
-        item(key = "settings_google_card") {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = TvTimePalette.SurfaceCard,
-                border = BorderStroke(1.dp, TvTimePalette.Border),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = "SIGNED-IN GOOGLE ACCOUNT",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
-                        color = TvTimePalette.TextSecondary
-                    )
-                    Text(
-                        text = "Synced automatically with Firebase Cloud Firestore (tvtime_state/user_state_$currentUserId).",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TvTimePalette.TextSecondary
-                    )
-                    Button(
-                        onClick = onOpenAccountSwitch,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = TvTimePalette.Yellow,
-                            contentColor = TvTimePalette.OnYellow
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("🔐 Switch / Sign Out Google Account", fontWeight = FontWeight.ExtraBold)
-                    }
-                }
-            }
-        }
     }
 }
 

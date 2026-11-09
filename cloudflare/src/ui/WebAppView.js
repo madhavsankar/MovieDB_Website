@@ -445,27 +445,6 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           ⇅ Import / Export
         </button>
       </div>
-
-      <div class="tv-card rounded-3xl p-6 space-y-5">
-        <div class="space-y-1.5">
-          <div class="text-xs font-bold uppercase tracking-wider text-zinc-400">Signed-In Google Account</div>
-          <div id="settings-email-display" class="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3 text-sm font-bold text-white">
-            Not signed in
-          </div>
-          <p class="text-xs text-zinc-400 pt-1">
-            Synced automatically with Firebase Cloud Firestore (<code>tvtime_state/user_state_{userId}</code>). Only allowlisted household Google accounts are permitted.
-          </p>
-        </div>
-
-        <div class="grid grid-cols-1 gap-3 pt-2 border-t border-zinc-800">
-          <button onclick="app.loadState(true)" class="w-full py-3 rounded-2xl tv-yellow-bg text-sm font-extrabold">
-            ☁️ Backup &amp; Sync Now
-          </button>
-          <button onclick="app.signOutGoogle()" class="w-full py-3 rounded-2xl bg-rose-500/20 text-rose-300 border border-rose-500/40 text-sm font-extrabold hover:bg-rose-500/30 transition">
-            🔐 Sign Out / Switch Google Account
-          </button>
-        </div>
-      </div>
     </section>
 
   </main>
