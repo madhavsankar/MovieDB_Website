@@ -268,41 +268,35 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
       <!-- Hero Box: Total Watch Hours -->
       <div class="tv-card rounded-3xl p-6 space-y-2 border border-yellow-400/20">
-        <div class="flex items-center justify-between">
-          <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">TOTAL WATCH TIME</div>
-          <div id="stat-counts-badge" class="text-xs font-extrabold tv-yellow-text">0 series · 0 movies</div>
-        </div>
+        <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">TOTAL WATCH TIME</div>
         <div id="stat-total-time" class="text-4xl font-black tv-yellow-text tracking-tight">0.0 hrs</div>
         <div id="stat-total-sub" class="text-xs text-zinc-400">Total watch hours (0d 0h)</div>
       </div>
 
-      <!-- 2 Good-Looking Breakdown Boxes: Series & Movies -->
+      <!-- 2 Watch Hours Boxes: Series & Movies -->
       <div class="grid grid-cols-2 gap-3.5">
         <div class="tv-card rounded-3xl p-5 space-y-1">
           <div id="stat-series-time" class="text-2xl font-black text-white">0.0 hrs</div>
           <div class="text-xs font-extrabold tv-yellow-text">Series watch hours</div>
-          <div id="stat-series-count" class="text-sm font-bold text-zinc-200 pt-1.5">0 series</div>
-          <div id="stat-episodes-count" class="text-xs font-semibold text-zinc-400">0 episodes</div>
         </div>
         <div class="tv-card rounded-3xl p-5 space-y-1">
           <div id="stat-movies-time" class="text-2xl font-black text-white">0.0 hrs</div>
           <div class="text-xs font-extrabold tv-yellow-text">Movie watch hours</div>
-          <div id="stat-movies-sub" class="text-sm font-bold text-zinc-200 pt-1.5">0 movies</div>
         </div>
       </div>
 
-      <!-- 3 Summary Boxes: Series | Episodes | Movies -->
+      <!-- 3 Separate Count Boxes: Series | Episodes | Movies -->
       <div class="grid grid-cols-3 gap-3">
         <div class="tv-card rounded-2xl p-4 text-center space-y-1">
-          <div id="stat-box-series" class="text-2xl font-black text-white">0</div>
+          <div id="stat-series-count" class="text-2xl font-black text-white">0</div>
           <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Series</div>
         </div>
         <div class="tv-card rounded-2xl p-4 text-center space-y-1">
-          <div id="stat-box-episodes" class="text-2xl font-black tv-yellow-text">0</div>
+          <div id="stat-episodes-count" class="text-2xl font-black tv-yellow-text">0</div>
           <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Episodes</div>
         </div>
         <div class="tv-card rounded-2xl p-4 text-center space-y-1">
-          <div id="stat-box-movies" class="text-2xl font-black text-white">0</div>
+          <div id="stat-movies-count" class="text-2xl font-black text-white">0</div>
           <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Movies</div>
         </div>
       </div>
@@ -409,18 +403,47 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
     <!-- FULL PAGE: SETTINGS & GOOGLE ACCOUNT (⚙️)                 -->
     <!-- ========================================================= -->
     <section id="tab-settings" class="hidden space-y-5">
-      <div class="flex items-center gap-2.5">
-        <button
-          onclick="app.switchTab('home')"
-          class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
-          title="Back to Home"
-        >
-          ←
-        </button>
-        <div>
-          <h2 class="text-lg font-extrabold text-white">⚙️ Settings</h2>
-          <p class="text-xs text-zinc-400">Google Account &amp; Cloud Firestore Sync</p>
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2.5">
+          <button
+            onclick="app.switchTab('home')"
+            class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
+            title="Back to Home"
+          >
+            ←
+          </button>
+          <div>
+            <h2 class="text-lg font-extrabold text-white">⚙️ Settings</h2>
+            <p class="text-xs text-zinc-400">Profile, cloud sync &amp; library backup</p>
+          </div>
         </div>
+        <button onclick="app.loadState(true)" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold tv-yellow-text flex items-center gap-1 border border-zinc-800">
+          ↻ Sync
+        </button>
+      </div>
+
+      <!-- Top Profile Card (Avatar, Name, Email & Import/Export) -->
+      <div class="tv-card rounded-3xl p-4 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3.5 min-w-0">
+          <div class="relative cursor-pointer shrink-0" onclick="app.openAccountModal()">
+            <div class="w-14 h-14 rounded-full p-0.5 bg-gradient-to-tr from-yellow-400 to-orange-500">
+              <div id="profile-avatar-initials" class="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center text-base font-extrabold tv-yellow-text">
+                MA
+              </div>
+            </div>
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <h2 id="profile-display-name" class="text-base font-extrabold text-white truncate">Madhavsankar</h2>
+              <button onclick="app.openAccountModal()" class="text-zinc-400 hover:text-white text-xs">✎</button>
+            </div>
+            <p id="profile-handle" class="text-xs text-zinc-400 truncate">@madhavsankar</p>
+          </div>
+        </div>
+
+        <button onclick="app.switchTab('import')" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold text-zinc-200 hover:text-white flex items-center gap-1.5 border border-zinc-800 shrink-0">
+          ⇅ Import / Export
+        </button>
       </div>
 
       <div class="tv-card rounded-3xl p-6 space-y-5">
@@ -448,94 +471,111 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
   </main>
 
   <!-- ========================================================= -->
-  <!-- PLACESTRACKER-STYLE LEFT NAVIGATION DRAWER (☰)            -->
+  <!-- TV TIME LEFT NAVIGATION DRAWER (☰)                        -->
   <!-- ========================================================= -->
   <div id="hamburger-backdrop" onclick="app.closeHamburgerMenu()" class="hidden fixed inset-0 bg-black/75 backdrop-blur-sm z-40"></div>
   <aside
     id="hamburger-drawer"
-    class="hidden fixed inset-y-0 left-0 w-72 bg-[#0b101b] border-r border-slate-800/80 z-50 flex flex-col justify-between overflow-y-auto shadow-2xl"
+    class="hidden fixed inset-y-0 left-0 w-72 bg-[#09090b] border-r border-zinc-800/80 z-50 flex flex-col justify-between overflow-y-auto shadow-2xl"
   >
     <div>
       <!-- Top Brand & Account Header -->
-      <div class="px-5 py-4 bg-[#101c24] border-b border-slate-800/80 flex items-center justify-between gap-3">
+      <div class="px-5 py-4 bg-[#16161a] border-b border-zinc-800/80 flex items-center justify-between gap-3">
         <div class="flex items-center gap-3 min-w-0">
-          <div class="w-11 h-11 rounded-full bg-emerald-950/80 border border-emerald-500/40 flex items-center justify-center text-lg shrink-0">
-            📺
+          <div class="w-11 h-11 rounded-2xl tv-yellow-bg flex items-center justify-center shadow-md shrink-0">
+            <svg class="w-6 h-6 text-[#09090b]" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M4 6a2 2 0 012-2h12a2 2 0 012 2v9a2 2 0 01-2 2h-5v2h2a1 1 0 110 2H9a1 1 0 110-2h2v-2H6a2 2 0 01-2-2V6zm6.5 2.25v4.5l4-2.25-4-2.25z" />
+            </svg>
           </div>
           <div class="min-w-0">
-            <div class="text-sm font-black tracking-widest uppercase text-emerald-400">TV TIME</div>
-            <div id="drawer-user-email" class="text-xs text-slate-300 truncate">member</div>
+            <div class="text-sm font-black tracking-widest uppercase tv-yellow-text">TV TIME</div>
+            <div id="drawer-user-email" class="text-xs text-zinc-400 truncate">member</div>
           </div>
         </div>
         <button
           onclick="app.closeHamburgerMenu()"
-          class="w-9 h-9 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center text-sm font-bold shrink-0"
+          class="w-9 h-9 rounded-full tv-pill-bar border border-zinc-800 hover:border-yellow-400/50 text-zinc-400 hover:text-yellow-400 flex items-center justify-center text-sm font-bold shrink-0 transition"
         >
           ✕
         </button>
       </div>
 
       <!-- Section: HOME -->
-      <div class="px-5 py-4 border-b border-slate-800/80 space-y-1">
-        <div class="text-[11px] font-bold uppercase tracking-widest text-slate-400 pb-2">HOME</div>
+      <div class="px-5 py-4 border-b border-zinc-800/80 space-y-1">
+        <div class="text-[11px] font-bold uppercase tracking-widest text-zinc-500 pb-2">HOME</div>
         <button
           onclick="app.closeHamburgerMenu(); app.switchTab('home');"
-          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
+          class="w-full py-2.5 px-2.5 rounded-2xl flex items-center gap-3.5 text-left text-sm font-semibold text-zinc-200 hover:bg-[#1c1c21] hover:text-yellow-400 transition group"
         >
-          <span class="text-lg">🏠</span>
+          <span class="w-8 h-8 rounded-xl tv-pill-bar border border-zinc-800/80 flex items-center justify-center tv-yellow-text shrink-0">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 10.5L12 3l9 7.5V20a1 1 0 01-1 1h-5.5v-5.5h-5V21H4a1 1 0 01-1-1v-9.5z" />
+            </svg>
+          </span>
           <span>Home</span>
         </button>
       </div>
 
       <!-- Section: MY STATISTICS -->
-      <div class="px-5 py-4 border-b border-slate-800/80 space-y-1">
-        <div class="text-[11px] font-bold uppercase tracking-widest text-slate-400 pb-2">MY STATISTICS</div>
+      <div class="px-5 py-4 border-b border-zinc-800/80 space-y-1">
+        <div class="text-[11px] font-bold uppercase tracking-widest text-zinc-500 pb-2">MY STATISTICS</div>
         <button
           onclick="app.closeHamburgerMenu(); app.switchTab('recent');"
-          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
+          class="w-full py-2.5 px-2.5 rounded-2xl flex items-center gap-3.5 text-left text-sm font-semibold text-zinc-200 hover:bg-[#1c1c21] hover:text-yellow-400 transition group"
         >
-          <span class="text-lg">🎬</span>
+          <span class="w-8 h-8 rounded-xl tv-pill-bar border border-zinc-800/80 flex items-center justify-center tv-yellow-text shrink-0">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </span>
           <span>Recently Watched</span>
         </button>
         <button
           onclick="app.closeHamburgerMenu(); app.switchTab('stats');"
-          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
+          class="w-full py-2.5 px-2.5 rounded-2xl flex items-center gap-3.5 text-left text-sm font-semibold text-zinc-200 hover:bg-[#1c1c21] hover:text-yellow-400 transition group"
         >
-          <span class="text-lg">📊</span>
+          <span class="w-8 h-8 rounded-xl tv-pill-bar border border-zinc-800/80 flex items-center justify-center tv-yellow-text shrink-0">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 19h16M7 15v-4m5 4V7m5 8v-6" />
+            </svg>
+          </span>
           <span>Statistics</span>
         </button>
       </div>
 
       <!-- Section: TOOLS & SETTINGS -->
       <div class="px-5 py-4 space-y-1">
-        <div class="text-[11px] font-bold uppercase tracking-widest text-slate-400 pb-2">TOOLS &amp; SETTINGS</div>
+        <div class="text-[11px] font-bold uppercase tracking-widest text-zinc-500 pb-2">TOOLS &amp; SETTINGS</div>
         <button
           onclick="app.closeHamburgerMenu(); app.switchTab('import');"
-          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
+          class="w-full py-2.5 px-2.5 rounded-2xl flex items-center gap-3.5 text-left text-sm font-semibold text-zinc-200 hover:bg-[#1c1c21] hover:text-yellow-400 transition group"
         >
-          <span class="text-lg">⇅</span>
+          <span class="w-8 h-8 rounded-xl tv-pill-bar border border-zinc-800/80 flex items-center justify-center tv-yellow-text shrink-0">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+            </svg>
+          </span>
           <span>Import / Export CSV</span>
         </button>
         <button
-          onclick="app.closeHamburgerMenu(); app.loadState(true);"
-          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
-        >
-          <span class="text-lg">☁️</span>
-          <span>Backup &amp; Sync Now</span>
-        </button>
-        <button
           onclick="app.closeHamburgerMenu(); app.switchTab('settings');"
-          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
+          class="w-full py-2.5 px-2.5 rounded-2xl flex items-center gap-3.5 text-left text-sm font-semibold text-zinc-200 hover:bg-[#1c1c21] hover:text-yellow-400 transition group"
         >
-          <span class="text-lg">⚙️</span>
+          <span class="w-8 h-8 rounded-xl tv-pill-bar border border-zinc-800/80 flex items-center justify-center tv-yellow-text shrink-0">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </span>
           <span>Settings</span>
         </button>
       </div>
     </div>
 
     <!-- Drawer Footer -->
-    <div class="px-5 py-3.5 border-t border-slate-800/80 text-xs font-medium text-slate-500">
-      TV Time
+    <div class="px-5 py-3.5 border-t border-zinc-800/80 text-xs font-semibold text-zinc-500 flex items-center justify-between">
+      <span>TV Time</span>
+      <span class="text-[10px] tv-yellow-text font-bold">Tracker</span>
     </div>
   </aside>
 
@@ -2314,38 +2354,21 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         });
         const watchedMovies = movies.filter((m) => m.watched);
 
-        const countsBadgeEl = document.getElementById("stat-counts-badge");
         const totalEl = document.getElementById("stat-total-time");
         const totalSubEl = document.getElementById("stat-total-sub");
         const sTimeEl = document.getElementById("stat-series-time");
         const sCountEl = document.getElementById("stat-series-count");
         const epCountEl = document.getElementById("stat-episodes-count");
         const mTimeEl = document.getElementById("stat-movies-time");
-        const mSubEl = document.getElementById("stat-movies-sub");
+        const mCountEl = document.getElementById("stat-movies-count");
 
-        if (countsBadgeEl) {
-          countsBadgeEl.textContent =
-            completedShows.length + " series · " + watchedMovies.length + " movies";
-        }
         if (totalEl) totalEl.textContent = fmtHours(totalMins);
         if (totalSubEl) totalSubEl.textContent = "Total watch hours (" + fmtDaysHours(totalMins) + ")";
         if (sTimeEl) sTimeEl.textContent = fmtHours(showMins);
-        if (sCountEl) {
-          sCountEl.textContent = completedShows.length + " series";
-        }
-        if (epCountEl) {
-          epCountEl.textContent = epCount + " episodes";
-        }
         if (mTimeEl) mTimeEl.textContent = fmtHours(movMins);
-        if (mSubEl) {
-          mSubEl.textContent = watchedMovies.length + " movies";
-        }
-        const boxSeriesEl = document.getElementById("stat-box-series");
-        const boxEpsEl = document.getElementById("stat-box-episodes");
-        const boxMoviesEl = document.getElementById("stat-box-movies");
-        if (boxSeriesEl) boxSeriesEl.textContent = String(completedShows.length);
-        if (boxEpsEl) boxEpsEl.textContent = String(epCount);
-        if (boxMoviesEl) boxMoviesEl.textContent = String(watchedMovies.length);
+        if (sCountEl) sCountEl.textContent = String(completedShows.length);
+        if (epCountEl) epCountEl.textContent = String(epCount);
+        if (mCountEl) mCountEl.textContent = String(watchedMovies.length);
 
         const recSeriesCountEl = document.getElementById("label-recent-series-count");
         const recMoviesCountEl = document.getElementById("label-recent-movies-count");

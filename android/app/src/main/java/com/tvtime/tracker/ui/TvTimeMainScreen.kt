@@ -528,25 +528,47 @@ fun TvTimeMainScreen(
                         }
                     }
                 }
+
+                "settings" -> {
+                    SettingsFullPageScreen(
+                        currentUserId = currentUserId,
+                        onOpenImport = {
+                            activeBottomTab = "import"
+                            showImportDialog = true
+                        },
+                        onOpenAccountSwitch = { showAccountSwitcherDialog = true },
+                        onSyncNow = {
+                            scope.launch {
+                                FirestoreSyncService.pullFromFirestoreIfNeeded(dao, currentUserId)
+                                val ok = FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                Toast.makeText(
+                                    context,
+                                    if (ok) "Synced with Cloud Firestore" else "Saved locally",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    )
+                }
             }
         }
     }
 
-    // PlacesTracker-Style Left Navigation Drawer Overlay
+    // TV Time Left Navigation Drawer Overlay
     if (showHamburgerSheet) {
         Box(modifier = Modifier.fillMaxSize()) {
             // Backdrop Scrim
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.72f))
+                    .background(Color.Black.copy(alpha = 0.75f))
                     .clickable { showHamburgerSheet = false }
             )
 
-            // Left Navigation Drawer Panel
+            // Left Navigation Drawer Panel (TV Time Theme)
             Surface(
-                color = Color(0xFF0B101B),
-                border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                color = TvTimePalette.Background,
+                border = BorderStroke(1.dp, TvTimePalette.Border),
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(290.dp)
@@ -561,7 +583,7 @@ fun TvTimeMainScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(Color(0xFF101C24))
+                                .background(TvTimePalette.SurfaceCard)
                                 .padding(horizontal = 18.dp, vertical = 16.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
@@ -572,13 +594,17 @@ fun TvTimeMainScreen(
                                 modifier = Modifier.weight(1f)
                             ) {
                                 Surface(
-                                    shape = CircleShape,
-                                    color = Color(0xFF064E3B),
-                                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.4f)),
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = TvTimePalette.Yellow,
                                     modifier = Modifier.size(44.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
-                                        Text("📺", fontSize = 18.sp)
+                                        Text(
+                                            text = "▶",
+                                            fontSize = 18.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = TvTimePalette.OnYellow
+                                        )
                                     }
                                 }
                                 Column {
@@ -588,12 +614,12 @@ fun TvTimeMainScreen(
                                             fontWeight = FontWeight.Black,
                                             letterSpacing = 1.5.sp
                                         ),
-                                        color = Color(0xFF34D399)
+                                        color = TvTimePalette.Yellow
                                     )
                                     Text(
                                         text = currentUserId,
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFFCBD5E1),
+                                        color = TvTimePalette.TextSecondary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -602,17 +628,18 @@ fun TvTimeMainScreen(
 
                             Surface(
                                 onClick = { showHamburgerSheet = false },
-                                shape = RoundedCornerShape(12.dp),
-                                color = Color(0xFF1E293B),
+                                shape = CircleShape,
+                                color = TvTimePalette.SurfacePill,
+                                border = BorderStroke(1.dp, TvTimePalette.Border),
                                 modifier = Modifier.size(36.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
-                                    Text("✕", color = Color.White, fontWeight = FontWeight.Bold)
+                                    Text("✕", color = TvTimePalette.TextSecondary, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
 
-                        HorizontalDivider(color = Color(0xFF1E293B))
+                        HorizontalDivider(color = TvTimePalette.Border)
 
                         // HOME Section
                         Column(
@@ -627,16 +654,16 @@ fun TvTimeMainScreen(
                                     fontWeight = FontWeight.Bold,
                                     letterSpacing = 1.2.sp
                                 ),
-                                color = Color(0xFF94A3B8),
+                                color = TvTimePalette.TextSecondary,
                                 modifier = Modifier.padding(bottom = 4.dp)
                             )
-                            LeftDrawerItemRow(icon = "🏠", label = "Home") {
+                            LeftDrawerItemRow(icon = "⌂", label = "Home") {
                                 showHamburgerSheet = false
                                 activeBottomTab = "home"
                             }
                         }
 
-                        HorizontalDivider(color = Color(0xFF1E293B))
+                        HorizontalDivider(color = TvTimePalette.Border)
 
                         // MY STATISTICS Section
                         Column(
@@ -651,20 +678,20 @@ fun TvTimeMainScreen(
                                     fontWeight = FontWeight.Bold,
                                     letterSpacing = 1.2.sp
                                 ),
-                                color = Color(0xFF94A3B8),
+                                color = TvTimePalette.TextSecondary,
                                 modifier = Modifier.padding(bottom = 4.dp)
                             )
-                            LeftDrawerItemRow(icon = "🎬", label = "Recently Watched") {
+                            LeftDrawerItemRow(icon = "◷", label = "Recently Watched") {
                                 showHamburgerSheet = false
                                 activeBottomTab = "recent"
                             }
-                            LeftDrawerItemRow(icon = "📊", label = "Statistics") {
+                            LeftDrawerItemRow(icon = "▤", label = "Statistics") {
                                 showHamburgerSheet = false
                                 activeBottomTab = "stats"
                             }
                         }
 
-                        HorizontalDivider(color = Color(0xFF1E293B))
+                        HorizontalDivider(color = TvTimePalette.Border)
 
                         // TOOLS & SETTINGS Section
                         Column(
@@ -679,7 +706,7 @@ fun TvTimeMainScreen(
                                     fontWeight = FontWeight.Bold,
                                     letterSpacing = 1.2.sp
                                 ),
-                                color = Color(0xFF94A3B8),
+                                color = TvTimePalette.TextSecondary,
                                 modifier = Modifier.padding(bottom = 4.dp)
                             )
                             LeftDrawerItemRow(icon = "⇅", label = "Import / Export CSV") {
@@ -687,34 +714,34 @@ fun TvTimeMainScreen(
                                 activeBottomTab = "import"
                                 showImportDialog = true
                             }
-                            LeftDrawerItemRow(icon = "☁️", label = "Backup & Sync Now") {
+                            LeftDrawerItemRow(icon = "⚙", label = "Settings") {
                                 showHamburgerSheet = false
-                                scope.launch {
-                                    FirestoreSyncService.pullFromFirestoreIfNeeded(dao, currentUserId)
-                                    val ok = FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                    Toast.makeText(
-                                        context,
-                                        if (ok) "Synced with Cloud Firestore" else "Saved locally",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            }
-                            LeftDrawerItemRow(icon = "⚙️", label = "Settings") {
-                                showHamburgerSheet = false
-                                showAccountSwitcherDialog = true
+                                activeBottomTab = "settings"
                             }
                         }
                     }
 
                     // Footer
                     Column {
-                        HorizontalDivider(color = Color(0xFF1E293B))
-                        Text(
-                            text = "TV Time",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF64748B),
-                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)
-                        )
+                        HorizontalDivider(color = TvTimePalette.Border)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp, vertical = 14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "TV Time",
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = TvTimePalette.TextSecondary
+                            )
+                            Text(
+                                text = "Tracker",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = TvTimePalette.Yellow
+                            )
+                        }
                     }
                 }
             }
@@ -929,22 +956,36 @@ private fun LeftDrawerItemRow(
 ) {
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         color = Color.Transparent,
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 10.dp),
+                .padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text(text = icon, fontSize = 18.sp)
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = TvTimePalette.SurfacePill,
+                border = BorderStroke(1.dp, TvTimePalette.Border),
+                modifier = Modifier.size(32.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = icon,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = TvTimePalette.Yellow
+                    )
+                }
+            }
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = Color(0xFFF1F5F9)
+                color = Color.White
             )
         }
     }
@@ -2101,32 +2142,13 @@ private fun StatisticsFullPageScreen(
             ) {
                 Column(
                     modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "TOTAL WATCH TIME",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
-                            color = TvTimePalette.TextSecondary
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = TvTimePalette.Yellow.copy(alpha = 0.14f),
-                            border = BorderStroke(1.dp, TvTimePalette.Yellow.copy(alpha = 0.35f))
-                        ) {
-                            Text(
-                                text = "$completedShowsCount series · $watchedMoviesCount movies",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
-                                color = TvTimePalette.Yellow,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-
+                    Text(
+                        text = "TOTAL WATCH TIME",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                        color = TvTimePalette.TextSecondary
+                    )
                     Text(
                         text = stats.formattedTotalHours,
                         style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Black),
@@ -2141,13 +2163,13 @@ private fun StatisticsFullPageScreen(
             }
         }
 
-        // 2. Two-Column Breakdown Boxes: Series & Movies
+        // 2. Two-Column Watch Hours Boxes: Series & Movies
         item(key = "breakdown_boxes") {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Series Breakdown Box
+                // Series Watch Hours Box
                 Surface(
                     shape = RoundedCornerShape(22.dp),
                     color = TvTimePalette.SurfaceCard,
@@ -2168,21 +2190,10 @@ private fun StatisticsFullPageScreen(
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
                             color = TvTimePalette.Yellow
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "$completedShowsCount series",
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                            color = TvTimePalette.TextSecondary
-                        )
-                        Text(
-                            text = "${stats.totalEpisodesWatched} episodes",
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                            color = TvTimePalette.TextSecondary
-                        )
                     }
                 }
 
-                // Movies Breakdown Box
+                // Movies Watch Hours Box
                 Surface(
                     shape = RoundedCornerShape(22.dp),
                     color = TvTimePalette.SurfaceCard,
@@ -2203,18 +2214,12 @@ private fun StatisticsFullPageScreen(
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
                             color = TvTimePalette.Yellow
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "$watchedMoviesCount movies",
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                            color = TvTimePalette.TextSecondary
-                        )
                     }
                 }
             }
         }
 
-        // 3. Three-Column Summary Count Boxes (Series, Episodes, Movies)
+        // 3. Three-Column Separate Count Boxes (Series, Episodes, Movies)
         item(key = "count_boxes") {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2223,21 +2228,192 @@ private fun StatisticsFullPageScreen(
                 StatCountCard(
                     value = completedShowsCount.toString(),
                     label = "SERIES",
-                    valueColor = TvTimePalette.Yellow,
+                    valueColor = Color.White,
                     modifier = Modifier.weight(1f)
                 )
                 StatCountCard(
                     value = stats.totalEpisodesWatched.toString(),
                     label = "EPISODES",
-                    valueColor = Color(0xFF34D399),
+                    valueColor = TvTimePalette.Yellow,
                     modifier = Modifier.weight(1f)
                 )
                 StatCountCard(
                     value = watchedMoviesCount.toString(),
                     label = "MOVIES",
-                    valueColor = Color(0xFF38BDF8),
+                    valueColor = Color.White,
                     modifier = Modifier.weight(1f)
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsFullPageScreen(
+    currentUserId: String,
+    onOpenImport: () -> Unit,
+    onOpenAccountSwitch: () -> Unit,
+    onSyncNow: () -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item(key = "settings_header") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "⚙️ Settings",
+                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Profile, cloud sync & library backup",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TvTimePalette.TextSecondary
+                    )
+                }
+                Surface(
+                    onClick = onSyncNow,
+                    shape = RoundedCornerShape(50),
+                    color = TvTimePalette.SurfacePill,
+                    border = BorderStroke(1.dp, TvTimePalette.Border)
+                ) {
+                    Text(
+                        text = "↻ Sync",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = TvTimePalette.Yellow,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                    )
+                }
+            }
+        }
+
+        // Top Profile Card (Avatar, Name, Email & Import/Export)
+        item(key = "settings_profile_card") {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = TvTimePalette.SurfaceCard,
+                border = BorderStroke(1.dp, TvTimePalette.Border),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(TvTimePalette.Yellow, Color(0xFFF97316))
+                                    )
+                                )
+                                .padding(2.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF18181D))
+                                .clickable { onOpenAccountSwitch() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = currentUserId.take(2).uppercase(),
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                color = TvTimePalette.Yellow
+                            )
+                        }
+
+                        Column {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = currentUserId.replaceFirstChar { it.uppercase() },
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "✎",
+                                    color = TvTimePalette.TextSecondary,
+                                    modifier = Modifier.clickable { onOpenAccountSwitch() }
+                                )
+                            }
+                            Text(
+                                text = "@$currentUserId",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TvTimePalette.TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = onOpenImport,
+                        shape = RoundedCornerShape(50),
+                        color = TvTimePalette.SurfacePill,
+                        border = BorderStroke(1.dp, TvTimePalette.Border)
+                    ) {
+                        Text(
+                            text = "⇅ Import / Export",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Google Account & Switch Card
+        item(key = "settings_google_card") {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = TvTimePalette.SurfaceCard,
+                border = BorderStroke(1.dp, TvTimePalette.Border),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "SIGNED-IN GOOGLE ACCOUNT",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                        color = TvTimePalette.TextSecondary
+                    )
+                    Text(
+                        text = "Synced automatically with Firebase Cloud Firestore (tvtime_state/user_state_$currentUserId).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TvTimePalette.TextSecondary
+                    )
+                    Button(
+                        onClick = onOpenAccountSwitch,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = TvTimePalette.Yellow,
+                            contentColor = TvTimePalette.OnYellow
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("🔐 Switch / Sign Out Google Account", fontWeight = FontWeight.ExtraBold)
+                    }
+                }
             }
         }
     }
