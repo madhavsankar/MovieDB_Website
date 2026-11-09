@@ -151,12 +151,21 @@ object FirestoreSyncService {
                 )
             }
 
+            val decidedIdsArr = JSONArray()
+            for (a in actors) {
+                if (a.role == "decided_rec") {
+                    decidedIdsArr.put(a.externalId)
+                    if (a.name.isNotBlank()) decidedIdsArr.put("title_${a.name.lowercase()}")
+                }
+            }
+
             val payloadObj = JSONObject().apply {
                 put("userId", cleanUser)
                 put("email", displayUserLabel(cleanUser))
                 put("shows", showsArr)
                 put("movies", moviesArr)
                 put("actors", actorsArr)
+                put("decidedIds", decidedIdsArr)
                 put("followingUsers", JSONArray(listOf("partner")))
                 put("updatedAt", Instant.now().toString())
             }
@@ -303,19 +312,40 @@ object FirestoreSyncService {
 
             if (actorsArr != null) {
                 dao.deleteAllActorsForUser(cleanUser)
+                val insertedDecided = mutableSetOf<String>()
                 for (i in 0 until actorsArr.length()) {
                     val a = actorsArr.optJSONObject(i) ?: continue
+                    val extId = a.optString("id", "actor_$i")
+                    val role = a.optString("role", "Acting")
+                    if (role == "decided_rec") insertedDecided.add(extId)
                     dao.insertActor(
                         ActorEntity(
                             userId = cleanUser,
-                            externalId = a.optString("id", "actor_$i"),
+                            externalId = extId,
                             name = a.optString("name", "Actor"),
-                            role = a.optString("role", "Acting"),
+                            role = role,
                             imageUrl = a.optString("imageUrl", ""),
                             imdbUrl = a.optString("imdbUrl", ""),
                             knownFor = a.optString("knownFor", "")
                         )
                     )
+                }
+                val decidedArr = payload.optJSONArray("decidedIds")
+                if (decidedArr != null) {
+                    for (j in 0 until decidedArr.length()) {
+                        val did = decidedArr.optString(j, "").trim()
+                        if (did.isNotEmpty() && !insertedDecided.contains(did)) {
+                            insertedDecided.add(did)
+                            dao.insertActor(
+                                ActorEntity(
+                                    userId = cleanUser,
+                                    externalId = did,
+                                    name = did.removePrefix("title_"),
+                                    role = "decided_rec"
+                                )
+                            )
+                        }
+                    }
                 }
             }
 

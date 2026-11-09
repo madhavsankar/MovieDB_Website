@@ -531,6 +531,181 @@ export class LiveCatalogService {
   }
 
   /**
+   * Fetches personalized TV Show & Movie recommendations for the Tinder-style Swipe deck
+   * using TMDB `/3/tv/{id}/recommendations`, `/3/movie/{id}/recommendations`, and trending fallbacks.
+   */
+  static async fetchRecommendations({ tvSeeds = [], movieSeeds = [], page = 1, fetchImpl = fetch, env = null } = {}) {
+    const safePage = Math.max(1, Math.min(10, Number(page) || 1));
+    const results = [];
+    const seenKeys = new Set();
+
+    const pushUnique = (item) => {
+      if (!item || !item.title || !item.posterUrl) return;
+      const normKey = `${item.mediaType}_${String(item.title).trim().toLowerCase()}`;
+      if (seenKeys.has(item.id) || seenKeys.has(normKey)) return;
+      seenKeys.add(item.id);
+      seenKeys.add(normKey);
+      results.push(item);
+    };
+
+    try {
+      // Resolve missing tmdbId for seeds that only have a title
+      const resolvedTvSeeds = [];
+      for (const s of tvSeeds.slice(0, 5)) {
+        let tmdbId = Number(s?.tmdbId) || 0;
+        const title = String(s?.title || "").trim();
+        if (!tmdbId && title) {
+          const searchReq = LiveCatalogService._buildTmdbRequest(
+            `/search/tv?query=${encodeURIComponent(title)}&language=en-US&page=1`,
+            env
+          );
+          if (searchReq) {
+            try {
+              const r = await fetchImpl(searchReq.url, { headers: searchReq.headers });
+              if (r.ok) {
+                const d = await r.json();
+                tmdbId = Number(d?.results?.[0]?.id) || 0;
+              }
+            } catch (_) {}
+          }
+        }
+        if (tmdbId > 0) {
+          resolvedTvSeeds.push({ tmdbId, title: title || "your watched shows" });
+        }
+      }
+
+      const resolvedMovieSeeds = [];
+      for (const m of movieSeeds.slice(0, 5)) {
+        let tmdbId = Number(m?.tmdbId) || 0;
+        const title = String(m?.title || "").trim();
+        if (!tmdbId && title) {
+          const searchReq = LiveCatalogService._buildTmdbRequest(
+            `/search/movie?query=${encodeURIComponent(title)}&language=en-US&page=1`,
+            env
+          );
+          if (searchReq) {
+            try {
+              const r = await fetchImpl(searchReq.url, { headers: searchReq.headers });
+              if (r.ok) {
+                const d = await r.json();
+                tmdbId = Number(d?.results?.[0]?.id) || 0;
+              }
+            } catch (_) {}
+          }
+        }
+        if (tmdbId > 0) {
+          resolvedMovieSeeds.push({ tmdbId, title: title || "your watched movies" });
+        }
+      }
+
+      const fetchJobs = [];
+      for (const seed of resolvedTvSeeds) {
+        const req = LiveCatalogService._buildTmdbRequest(
+          `/tv/${seed.tmdbId}/recommendations?language=en-US&page=${safePage}`,
+          env
+        );
+        if (req) {
+          fetchJobs.push(
+            fetchImpl(req.url, { headers: req.headers })
+              .then((r) => (r.ok ? r.json() : null))
+              .then((data) => ({ type: "tv", seedTitle: seed.title, items: data?.results || [] }))
+              .catch(() => null)
+          );
+        }
+      }
+
+      for (const seed of resolvedMovieSeeds) {
+        const req = LiveCatalogService._buildTmdbRequest(
+          `/movie/${seed.tmdbId}/recommendations?language=en-US&page=${safePage}`,
+          env
+        );
+        if (req) {
+          fetchJobs.push(
+            fetchImpl(req.url, { headers: req.headers })
+              .then((r) => (r.ok ? r.json() : null))
+              .then((data) => ({ type: "movie", seedTitle: seed.title, items: data?.results || [] }))
+              .catch(() => null)
+          );
+        }
+      }
+
+      // Also include trending TV & Movies as discovery supplement
+      const trendTvReq = LiveCatalogService._buildTmdbRequest(`/trending/tv/week?language=en-US&page=${safePage}`, env);
+      const trendMovReq = LiveCatalogService._buildTmdbRequest(`/trending/movie/week?language=en-US&page=${safePage}`, env);
+      if (trendTvReq) {
+        fetchJobs.push(
+          fetchImpl(trendTvReq.url, { headers: trendTvReq.headers })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => ({ type: "tv", seedTitle: "", items: data?.results || [] }))
+            .catch(() => null)
+        );
+      }
+      if (trendMovReq) {
+        fetchJobs.push(
+          fetchImpl(trendMovReq.url, { headers: trendMovReq.headers })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => ({ type: "movie", seedTitle: "", items: data?.results || [] }))
+            .catch(() => null)
+        );
+      }
+
+      const batches = (await Promise.all(fetchJobs)).filter(Boolean);
+      const maxLen = batches.reduce((acc, b) => Math.max(acc, (b.items || []).length), 0);
+
+      for (let i = 0; i < maxLen; i++) {
+        for (const batch of batches) {
+          const item = batch.items[i];
+          if (!item || !item.id || !item.poster_path) continue;
+          if (batch.type === "tv") {
+            const title = item.name || item.original_name || "";
+            if (!title) continue;
+            const firstAir = String(item.first_air_date || "");
+            const year = firstAir ? parseInt(firstAir.slice(0, 4), 10) || 2024 : 2024;
+            pushUnique({
+              id: `tmdb_tv_${item.id}`,
+              tvmazeId: 0,
+              tmdbId: item.id,
+              mediaType: "show",
+              title,
+              year,
+              network: "Streaming",
+              status: "Running",
+              runtimeMins: 45,
+              genres: ["TV Series"],
+              rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 8.0,
+              posterUrl: `https://image.tmdb.org/t/p/w500${item.poster_path}`,
+              overview: stripHtml(item.overview || ""),
+              becauseOf: batch.seedTitle ? `Because you watched ${batch.seedTitle}` : "Popular & Acclaimed Series",
+            });
+          } else {
+            const title = item.title || item.original_title || "";
+            if (!title) continue;
+            const rel = String(item.release_date || "");
+            const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
+            pushUnique({
+              id: `movie_${item.id}`,
+              tmdbId: item.id,
+              mediaType: "movie",
+              title,
+              year,
+              director: "",
+              runtimeMins: 120,
+              genres: ["Movie"],
+              streamingService: "Streaming",
+              rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 7.8,
+              posterUrl: `https://image.tmdb.org/t/p/w500${item.poster_path}`,
+              overview: stripHtml(item.overview || ""),
+              becauseOf: batch.seedTitle ? `Because you watched ${batch.seedTitle}` : "Popular & Acclaimed Movie",
+            });
+          }
+        }
+      }
+    } catch (_) {}
+
+    return { results };
+  }
+
+  /**
    * Fetches full TV show details + complete episode list + cast from TMDB (`/3/tv/:id`) or TVMaze (`/shows/:id?embed[]=episodes&embed[]=cast`).
    */
   static async fetchFullShowFromTvMaze(tvmazeId, { fetchImpl = fetch, env = null } = {}) {

@@ -74,6 +74,19 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertNotIn("carousel-movie-watchlist", view_src)
         self.assertIn("carousel-recent-series", view_src)
         self.assertIn("carousel-recent-movies", view_src)
+        self.assertIn("hamburger-drawer", view_src)
+        self.assertIn("openHamburgerMenu", view_src)
+        self.assertIn("tab-swipe", view_src)
+        self.assertIn("decideSwipeCard", view_src)
+        self.assertIn("swipe-deck-container", view_src)
+        self.assertIn("home-status-select", view_src)
+        self.assertIn("search-sort-select", view_src)
+        self.assertIn("swipe-filter-select", view_src)
+        self.assertNotIn("All US", view_src)
+        self.assertNotIn("btn-3d-toggle", view_src)
+        self.assertNotIn("All Movies", view_src)
+        self.assertIn("completed series", view_src)
+        self.assertIn("completed episodes", view_src)
         harness = (
             view_src
             + """

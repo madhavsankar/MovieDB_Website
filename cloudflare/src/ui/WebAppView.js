@@ -103,7 +103,35 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
   </style>
 </head>
 <body class="min-h-screen pb-28 select-none">
-  <main class="max-w-xl mx-auto px-4 pt-4 space-y-4">
+  <main class="max-w-xl mx-auto px-4 pt-3 space-y-4">
+
+    <!-- ========================================================= -->
+    <!-- TOP BAR WITH HAMBURGER MENU (Stats, Export, Sync, Account)-->
+    <!-- ========================================================= -->
+    <header class="flex items-center justify-between gap-3">
+      <button
+        id="hamburger-menu-btn"
+        onclick="app.openHamburgerMenu()"
+        class="tv-pill-bar px-3.5 py-2 rounded-full flex items-center gap-2 text-zinc-200 hover:text-yellow-400 transition border border-zinc-800/80"
+        title="Open Personal Stats, Export &amp; Account Menu"
+      >
+        <svg class="w-5 h-5 tv-yellow-text" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+        <span class="text-xs font-extrabold tracking-tight text-white">TV Time</span>
+      </button>
+
+      <div class="flex items-center gap-2">
+        <button
+          onclick="app.openHamburgerMenu()"
+          class="tv-pill-bar px-3 py-1.5 rounded-full flex items-center gap-2 text-xs font-bold text-zinc-300 hover:text-yellow-400 transition border border-zinc-800/80"
+        >
+          <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span id="top-user-chip">@member</span>
+          <span class="text-zinc-500">· Stats &amp; Export</span>
+        </button>
+      </div>
+    </header>
 
     <!-- ========================================================= -->
     <!-- TAB 1: HOME (Shows | Movies | Upcoming)                   -->
@@ -122,47 +150,30 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         </button>
       </div>
 
-      <!-- Sub-Filter Row for Shows & Movies -->
-      <div id="home-subfilter-media" class="flex items-center justify-between gap-2">
-        <button id="sub-watchlist-label" onclick="app.setMediaFilter('all')" class="hidden text-xs font-semibold text-zinc-400 hover:text-white transition px-1 shrink-0">
-          All Movies
-        </button>
-        <div class="flex items-center gap-1.5 min-w-0">
-          <div class="tv-pill-bar p-1 rounded-full flex items-center gap-1 overflow-x-auto no-scrollbar">
-            <button id="sub-inprogress-btn" onclick="app.setMediaFilter('in_progress')" class="px-3 py-1.5 rounded-full text-xs font-bold tv-yellow-bg transition whitespace-nowrap">
-              In progress
-            </button>
-            <button id="sub-interested-btn" onclick="app.setMediaFilter('interested')" class="px-3 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition whitespace-nowrap">
-              Watchlist
-            </button>
-            <button id="sub-completed-btn" onclick="app.setMediaFilter('completed')" class="px-3 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition whitespace-nowrap">
-              Completed
-            </button>
-            <button id="sub-stopped-btn" onclick="app.setMediaFilter('stopped')" class="px-3 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition whitespace-nowrap">
-              Stopped
-            </button>
-          </div>
-          <button
-            id="btn-3d-toggle"
-            onclick="app.toggle3DView()"
-            title="3D Watch List Shelf View"
-            class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-yellow-400 transition shrink-0"
+      <!-- Dropdown Filter Row for Shows & Movies (Status Dropdown + Streaming Platform Multi-Select Dropdown) -->
+      <div id="home-subfilter-media" class="flex items-center justify-between gap-2 flex-wrap">
+        <div class="relative flex items-center">
+          <select
+            id="home-status-select"
+            onchange="app.setMediaFilter(this.value)"
+            class="tv-pill-bar pl-3.5 pr-8 py-2 rounded-full text-xs font-extrabold text-yellow-400 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
           >
-            ⊞
-          </button>
+            <option value="in_progress">Status: In progress</option>
+            <option value="interested">Status: Watchlist</option>
+            <option value="completed">Status: Completed</option>
+            <option value="stopped">Status: Stopped</option>
+          </select>
+          <span class="pointer-events-none absolute right-3 text-[10px] text-zinc-400">▾</span>
         </div>
-      </div>
 
-      <!-- US Streaming Platform Multi-Select Filter Bar (Home) -->
-      <div id="home-us-platform-bar" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5"></div>
+        <!-- US Streaming Platform Multi-Select Dropdown (Home) -->
+        <div id="home-us-platform-bar" class="relative flex items-center gap-1.5"></div>
+      </div>
 
       <!-- Sub-Filter Row for Upcoming -->
       <div id="home-subfilter-upcoming" class="hidden flex items-center justify-between gap-2">
         <span class="text-sm font-semibold text-zinc-400 px-1">Upcoming Episodes</span>
       </div>
-
-      <!-- 3D Shelf View Container (Toggleable) -->
-      <div id="home-3d-container" class="hidden shelf-3d-room rounded-3xl p-5 border border-zinc-800 space-y-6"></div>
 
       <!-- Main List Container -->
       <div id="home-list-container" class="space-y-3"></div>
@@ -185,22 +196,23 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         <button id="search-clear-btn" onclick="app.clearSearch()" class="text-yellow-400 font-bold text-sm px-1">✕</button>
       </div>
 
-      <!-- US Streaming Platform Multi-Select Filter Bar (Search / Discover) -->
-      <div id="search-us-platform-bar" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5"></div>
-
-      <!-- Results Count + Sort Bar: Top | Newest | Oldest -->
-      <div class="flex items-center justify-between gap-2">
-        <span id="search-count-label" class="text-xs font-medium text-zinc-400">Popular & Trending</span>
-        <div class="tv-pill-bar p-1 rounded-full flex items-center gap-1">
-          <button id="sort-top" onclick="app.setSearchSort('top')" class="px-3.5 py-1.5 rounded-full text-xs font-bold tv-yellow-bg transition">
-            Top
-          </button>
-          <button id="sort-newest" onclick="app.setSearchSort('newest')" class="px-3.5 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition">
-            Newest
-          </button>
-          <button id="sort-oldest" onclick="app.setSearchSort('oldest')" class="px-3.5 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition">
-            Oldest
-          </button>
+      <!-- Results Count + Dropdown Filters (Streaming Platform Dropdown + Sort Dropdown) -->
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <span id="search-count-label" class="text-xs font-medium text-zinc-400">Popular &amp; Trending</span>
+        <div class="flex items-center gap-2">
+          <div id="search-us-platform-bar" class="relative flex items-center gap-1.5"></div>
+          <div class="relative flex items-center">
+            <select
+              id="search-sort-select"
+              onchange="app.setSearchSort(this.value)"
+              class="tv-pill-bar pl-3 pr-7 py-1.5 rounded-full text-xs font-bold text-zinc-200 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
+            >
+              <option value="top">Sort: Top</option>
+              <option value="newest">Sort: Newest</option>
+              <option value="oldest">Sort: Oldest</option>
+            </select>
+            <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
+          </div>
         </div>
       </div>
 
@@ -209,116 +221,180 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
     </section>
 
     <!-- ========================================================= -->
-    <!-- TAB 3: PROFILE & STATS (👤)                               -->
+    <!-- TAB 3: TINDER-STYLE SWIPE RECOMMENDATIONS (🔥)            -->
     <!-- ========================================================= -->
-    <section id="tab-profile" class="hidden space-y-6">
-      <!-- Top Profile Header: Avatar, Name + Edit, @handle, Export & Sync Buttons -->
-      <div class="flex items-center justify-between gap-3 pt-1">
-        <div class="flex items-center gap-3.5">
-          <div class="relative">
-            <div
-              id="profile-avatar"
-              onclick="app.openAccountModal()"
-              class="w-16 h-16 rounded-full bg-gradient-to-tr from-yellow-400 via-amber-500 to-orange-500 p-0.5 cursor-pointer"
-            >
-              <div class="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center text-xl font-extrabold text-yellow-400" id="profile-avatar-initials">
-                TV
-              </div>
-            </div>
-            <button
-              onclick="app.openAccountModal()"
-              class="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full tv-yellow-bg flex items-center justify-center text-[11px] font-bold shadow"
-              title="Google Account & Sync"
-            >
-              🔐
-            </button>
-          </div>
-          <div>
-            <div class="flex items-center gap-1.5">
-              <h2 id="profile-display-name" class="text-lg font-extrabold text-white">Profile</h2>
-              <button onclick="app.openAccountModal()" class="text-zinc-400 hover:text-white text-xs">✎</button>
-            </div>
-            <p id="profile-handle" class="text-xs text-zinc-400">@member</p>
-          </div>
-        </div>
-
-        <div class="flex items-center gap-2">
-          <button onclick="app.openImportModal()" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold text-white hover:text-yellow-400 transition">
-            📤 Export
-          </button>
-          <button onclick="app.loadState(true)" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold text-yellow-400 hover:text-white transition">
-            ↻ Sync
-          </button>
-        </div>
-      </div>
-
-      <!-- WATCH STATS Card (Total Watch Hours, Series Watch Hours, Movie Watch Hours, Number of Series & Movies) -->
-      <div class="tv-card rounded-3xl p-5 space-y-4">
-        <div class="flex items-center justify-between">
-          <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">WATCH STATS</div>
-          <div id="stat-counts-badge" class="text-xs font-extrabold tv-yellow-text">0 Series · 0 Movies</div>
-        </div>
+    <section id="tab-swipe" class="hidden space-y-4">
+      <div class="flex items-center justify-between gap-2">
         <div>
-          <div id="stat-total-time" class="text-4xl font-black tv-yellow-text tracking-tight">0.0 hrs</div>
-          <div id="stat-total-sub" class="text-xs text-zinc-400 mt-0.5">Total Watch Hours (0d 0h)</div>
+          <h2 class="text-base font-extrabold text-white flex items-center gap-1.5">
+            <span>🔥 For You</span>
+            <span id="swipe-remaining-badge" class="px-2 py-0.5 rounded-full bg-zinc-800 text-[11px] font-bold tv-yellow-text">Recommendations</span>
+          </h2>
+          <p class="text-[11px] text-zinc-400">Swipe Left = Ignore · Up = Watchlist · Right = Completed</p>
         </div>
-        <div class="h-px bg-zinc-800"></div>
-        <div class="grid grid-cols-2 gap-4 pt-1">
-          <div>
-            <div id="stat-series-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
-            <div class="text-[11px] font-bold tv-yellow-text">Series Watch Hours</div>
-            <div id="stat-series-sub" class="text-xs text-zinc-400 mt-0.5">0 Series · 0 eps watched</div>
+        <div class="flex items-center gap-1.5">
+          <div class="relative flex items-center">
+            <select
+              id="swipe-filter-select"
+              onchange="app.setSwipeMediaFilter(this.value)"
+              class="tv-pill-bar pl-3 pr-7 py-1.5 rounded-full text-xs font-bold text-yellow-400 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
+            >
+              <option value="all">Filter: All</option>
+              <option value="show">Filter: Series</option>
+              <option value="movie">Filter: Movies</option>
+            </select>
+            <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
           </div>
-          <div class="text-right">
-            <div id="stat-movies-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
-            <div class="text-[11px] font-bold tv-yellow-text">Movie Watch Hours</div>
-            <div id="stat-movies-sub" class="text-xs text-zinc-400 mt-0.5">0 Movies (0 watched)</div>
-          </div>
+          <button
+            onclick="app.loadRecommendations(true)"
+            title="Fetch more recommendations"
+            class="tv-pill-bar w-8 h-8 rounded-full flex items-center justify-center text-yellow-400 hover:text-white text-xs font-bold transition"
+          >
+            ↻
+          </button>
         </div>
       </div>
 
-      <!-- Recently watched Series Carousel -->
-      <div class="space-y-2.5">
-        <div class="flex items-center justify-between">
-          <h3 class="text-base font-extrabold text-white">Recently watched <span id="label-recent-series-count" class="font-normal text-zinc-400">Series</span></h3>
-          <button onclick="app.switchTab('home'); app.setHomeSegment('shows'); app.setMediaFilter('in_progress');" class="text-xs font-semibold tv-yellow-text">See all</button>
-        </div>
-        <div id="carousel-recent-series" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
-      </div>
-
-      <!-- Recently watched Movies Carousel -->
-      <div class="space-y-2.5">
-        <div class="flex items-center justify-between">
-          <h3 class="text-base font-extrabold text-white">Recently watched <span id="label-recent-movies-count" class="font-normal text-zinc-400">Movies</span></h3>
-          <button onclick="app.switchTab('home'); app.setHomeSegment('movies'); app.setMediaFilter('completed');" class="text-xs font-semibold tv-yellow-text">See all</button>
-        </div>
-        <div id="carousel-recent-movies" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
-      </div>
+      <!-- Tinder Swipe Deck Container -->
+      <div id="swipe-deck-container" class="relative min-h-[470px] flex flex-col items-center justify-center"></div>
     </section>
 
   </main>
 
   <!-- ========================================================= -->
-  <!-- BOTTOM NAVIGATION BAR (Home ⌂ | Search 🔍 | Profile 👤)    -->
+  <!-- HAMBURGER MENU DRAWER: PERSONAL STATS, EXPORT & ACCOUNT   -->
+  <!-- ========================================================= -->
+  <div id="hamburger-backdrop" onclick="app.closeHamburgerMenu()" class="hidden fixed inset-0 bg-black/75 backdrop-blur-sm z-40"></div>
+  <aside
+    id="hamburger-drawer"
+    class="hidden fixed inset-y-0 left-0 w-full max-w-md bg-[#111115] border-r border-zinc-800 z-50 flex flex-col overflow-y-auto p-5 space-y-6 shadow-2xl"
+  >
+    <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
+      <div class="flex items-center gap-2">
+        <span class="text-lg">☰</span>
+        <span class="text-sm font-extrabold text-white uppercase tracking-wider">Personal Stats &amp; Menu</span>
+      </div>
+      <button onclick="app.closeHamburgerMenu()" class="w-8 h-8 rounded-full bg-zinc-800 text-zinc-300 hover:text-white text-sm font-bold">✕</button>
+    </div>
+
+    <!-- Top Profile Header: Avatar, Name + Edit, @handle, Export & Sync Buttons -->
+    <div class="flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3.5">
+        <div class="relative">
+          <div
+            id="profile-avatar"
+            onclick="app.closeHamburgerMenu(); app.openAccountModal();"
+            class="w-14 h-14 rounded-full bg-gradient-to-tr from-yellow-400 via-amber-500 to-orange-500 p-0.5 cursor-pointer"
+          >
+            <div class="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center text-lg font-extrabold text-yellow-400" id="profile-avatar-initials">
+              TV
+            </div>
+          </div>
+          <button
+            onclick="app.closeHamburgerMenu(); app.openAccountModal();"
+            class="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full tv-yellow-bg flex items-center justify-center text-[11px] font-bold shadow"
+            title="Google Account &amp; Sync"
+          >
+            🔐
+          </button>
+        </div>
+        <div>
+          <div class="flex items-center gap-1.5">
+            <h2 id="profile-display-name" class="text-base font-extrabold text-white">Profile</h2>
+            <button onclick="app.closeHamburgerMenu(); app.openAccountModal();" class="text-zinc-400 hover:text-white text-xs">✎</button>
+          </div>
+          <p id="profile-handle" class="text-xs text-zinc-400">@member</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <button onclick="app.closeHamburgerMenu(); app.openImportModal();" class="tv-pill-bar px-3 py-2 rounded-full text-xs font-semibold text-white hover:text-yellow-400 transition">
+          📤 Export
+        </button>
+        <button onclick="app.loadState(true)" class="tv-pill-bar px-3 py-2 rounded-full text-xs font-semibold text-yellow-400 hover:text-white transition">
+          ↻ Sync
+        </button>
+      </div>
+    </div>
+
+    <!-- WATCH STATS Card (Total Watch Hours, Series Watch Hours, Movie Watch Hours, Number of Series & Movies) -->
+    <div class="tv-card rounded-3xl p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">WATCH STATS</div>
+        <div id="stat-counts-badge" class="text-xs font-extrabold tv-yellow-text">0 Series · 0 Movies</div>
+      </div>
+      <div>
+        <div id="stat-total-time" class="text-4xl font-black tv-yellow-text tracking-tight">0.0 hrs</div>
+        <div id="stat-total-sub" class="text-xs text-zinc-400 mt-0.5">Total Watch Hours (0d 0h)</div>
+      </div>
+      <div class="h-px bg-zinc-800"></div>
+      <div class="grid grid-cols-2 gap-4 pt-1">
+        <div>
+          <div id="stat-series-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
+          <div class="text-[11px] font-bold tv-yellow-text">Series Watch Hours</div>
+          <div id="stat-series-sub" class="text-xs text-zinc-400 mt-0.5">0 Series · 0 eps watched</div>
+        </div>
+        <div class="text-right">
+          <div id="stat-movies-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
+          <div class="text-[11px] font-bold tv-yellow-text">Movie Watch Hours</div>
+          <div id="stat-movies-sub" class="text-xs text-zinc-400 mt-0.5">0 Movies (0 watched)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recently watched Series Carousel -->
+    <div class="space-y-2.5">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-extrabold text-white">Recently watched <span id="label-recent-series-count" class="font-normal text-zinc-400">Series</span></h3>
+        <button onclick="app.closeHamburgerMenu(); app.switchTab('home'); app.setHomeSegment('shows'); app.setMediaFilter('in_progress');" class="text-xs font-semibold tv-yellow-text">See all</button>
+      </div>
+      <div id="carousel-recent-series" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
+    </div>
+
+    <!-- Recently watched Movies Carousel -->
+    <div class="space-y-2.5">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-extrabold text-white">Recently watched <span id="label-recent-movies-count" class="font-normal text-zinc-400">Movies</span></h3>
+        <button onclick="app.closeHamburgerMenu(); app.switchTab('home'); app.setHomeSegment('movies'); app.setMediaFilter('completed');" class="text-xs font-semibold tv-yellow-text">See all</button>
+      </div>
+      <div id="carousel-recent-movies" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
+    </div>
+
+    <!-- Quick Hamburger Menu Action Buttons -->
+    <div class="grid grid-cols-2 gap-2.5 pt-2 border-t border-zinc-800">
+      <button onclick="app.closeHamburgerMenu(); app.openImportModal();" class="py-2.5 px-3 rounded-2xl bg-zinc-800/90 hover:bg-zinc-700 text-xs font-extrabold text-white flex items-center justify-center gap-1.5">
+        📤 Export / Import JSON
+      </button>
+      <button onclick="app.closeHamburgerMenu(); app.openAccountModal();" class="py-2.5 px-3 rounded-2xl bg-zinc-800/90 hover:bg-zinc-700 text-xs font-extrabold text-yellow-400 flex items-center justify-center gap-1.5">
+        🔐 Switch Account
+      </button>
+    </div>
+  </aside>
+
+  <!-- ========================================================= -->
+  <!-- BOTTOM NAVIGATION BAR (Home ⌂ | Search 🔍 | Swipe 🔥)     -->
   <!-- ========================================================= -->
   <nav class="fixed bottom-0 left-0 right-0 bg-[#09090b]/95 backdrop-blur-md border-t border-zinc-800/80 z-30">
     <div class="max-w-xl mx-auto grid grid-cols-3 h-16 items-center">
-      <button onclick="app.switchTab('home')" id="nav-btn-home" class="flex flex-col items-center justify-center gap-1 tv-yellow-text">
+      <button onclick="app.switchTab('home')" id="nav-btn-home" class="flex flex-col items-center justify-center gap-0.5 tv-yellow-text">
         <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3 10.5L12 3l9 7.5V20a1 1 0 01-1 1h-5.5v-5.5h-5V21H4a1 1 0 01-1-1v-9.5z" />
         </svg>
+        <span class="text-[10px] font-bold">Home</span>
       </button>
-      <button onclick="app.switchTab('search')" id="nav-btn-search" class="flex flex-col items-center justify-center gap-1 text-zinc-400 hover:text-white">
+      <button onclick="app.switchTab('search')" id="nav-btn-search" class="flex flex-col items-center justify-center gap-0.5 text-zinc-400 hover:text-white">
         <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
           <circle cx="11" cy="11" r="7" />
           <path stroke-linecap="round" stroke-linejoin="round" d="M20 20l-4.35-4.35" />
         </svg>
+        <span class="text-[10px] font-bold">Search</span>
       </button>
-      <button onclick="app.switchTab('profile')" id="nav-btn-profile" class="flex flex-col items-center justify-center gap-1 text-zinc-400 hover:text-white">
+      <button onclick="app.switchTab('swipe')" id="nav-btn-swipe" class="flex flex-col items-center justify-center gap-0.5 text-zinc-400 hover:text-white">
         <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
-          <circle cx="12" cy="8" r="4" />
-          <path stroke-linecap="round" stroke-linejoin="round" d="M5.5 21a6.5 6.5 0 0113 0" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 2c1.5 3.5 4 5.5 4 9a4 4 0 11-8 0c0-2 1-3.5 2-5-0.5 2 1 3 2 3s1-2 0-7z" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8.5 14.5A6.5 6.5 0 0018.5 13c0-3.5-2.5-6.5-6.5-11-4 4.5-6.5 7.5-6.5 11a6.5 6.5 0 003 5.5" />
         </svg>
+        <span class="text-[10px] font-bold">For You</span>
       </button>
     </div>
   </nav>
@@ -482,12 +558,18 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.openSeasons = new Set();
         this.pendingScrollSeason = null;
 
+        this.swipeMediaFilter = "all"; // "all" | "show" | "movie"
+        this.recPool = [];
+        this.recPage = 1;
+        this.isLoadingRecs = false;
+
         this.state = {
           userId: this.userId,
           email: this.userEmail || this.userId,
           shows: [],
           movies: [],
           actors: [],
+          decidedIds: [],
           followingUsers: ["partner"],
         };
 
@@ -495,6 +577,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.render();
         this.initAuthAndLoad();
         this.runDefaultDiscover();
+        this.loadRecommendations(false);
 
         document.addEventListener("visibilitychange", () => {
           if (!document.hidden && this.googleIdToken) {
@@ -696,6 +779,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           }
           if (res.ok) {
             const data = await res.json();
+            if (!Array.isArray(data.decidedIds)) data.decidedIds = [];
             this.state = data;
             if (data.email) {
               this.userEmail = String(data.email).trim().toLowerCase();
@@ -705,6 +789,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             }
             this.saveLocalCache();
             this.render();
+            if (this.recPool.length === 0) {
+              this.loadRecommendations(false);
+            }
           }
         } catch (_) {}
       }
@@ -722,25 +809,44 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               shows: this.state.shows,
               movies: this.state.movies,
               actors: this.state.actors,
+              decidedIds: Array.isArray(this.state.decidedIds) ? this.state.decidedIds : [],
               followingUsers: this.state.followingUsers,
             }),
           });
         } catch (_) {}
       }
 
+      openHamburgerMenu() {
+        this.renderProfile();
+        document.getElementById("hamburger-backdrop")?.classList.remove("hidden");
+        document.getElementById("hamburger-drawer")?.classList.remove("hidden");
+      }
+
+      closeHamburgerMenu() {
+        document.getElementById("hamburger-backdrop")?.classList.add("hidden");
+        document.getElementById("hamburger-drawer")?.classList.add("hidden");
+      }
+
       switchTab(tab) {
+        if (tab === "profile") {
+          this.openHamburgerMenu();
+          return;
+        }
         this.activeTab = tab;
-        ["home", "search", "profile"].forEach((t) => {
+        ["home", "search", "swipe"].forEach((t) => {
           const sec = document.getElementById("tab-" + t);
           const btn = document.getElementById("nav-btn-" + t);
           if (sec) sec.classList.toggle("hidden", t !== tab);
           if (btn) {
             btn.className =
               t === tab
-                ? "flex flex-col items-center justify-center gap-1 tv-yellow-text"
-                : "flex flex-col items-center justify-center gap-1 text-zinc-400 hover:text-white";
+                ? "flex flex-col items-center justify-center gap-0.5 tv-yellow-text"
+                : "flex flex-col items-center justify-center gap-0.5 text-zinc-400 hover:text-white";
           }
         });
+        if (tab === "swipe" && this.getFilteredRecommendations().length === 0) {
+          this.loadRecommendations(false);
+        }
         this.render();
       }
 
@@ -762,28 +868,28 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (platBar) platBar.classList.toggle("hidden", seg === "upcoming");
         if (upSub) upSub.classList.toggle("hidden", seg !== "upcoming");
 
-        const wlLabel = document.getElementById("sub-watchlist-label");
-        const ipBtn = document.getElementById("sub-inprogress-btn");
-        const intBtn = document.getElementById("sub-interested-btn");
-        const cpBtn = document.getElementById("sub-completed-btn");
-        const stBtn = document.getElementById("sub-stopped-btn");
+        const statusSelect = document.getElementById("home-status-select");
         if (seg === "movies") {
-          if (wlLabel) wlLabel.classList.remove("hidden");
-          if (ipBtn) ipBtn.classList.add("hidden");
-          if (stBtn) stBtn.classList.add("hidden");
-          if (intBtn) intBtn.textContent = "Watchlist";
-          if (cpBtn) cpBtn.textContent = "Watched";
-          if (this.mediaFilter === "in_progress" || this.mediaFilter === "stopped") {
-            this.mediaFilter = "all";
+          if (this.mediaFilter !== "completed") {
+            this.mediaFilter = "interested";
+          }
+          if (statusSelect) {
+            statusSelect.innerHTML =
+              '<option value="interested">Status: Watchlist</option>' +
+              '<option value="completed">Status: Watched</option>';
+            statusSelect.value = this.mediaFilter;
           }
         } else if (seg === "shows") {
-          if (wlLabel) wlLabel.classList.add("hidden");
-          if (ipBtn) ipBtn.classList.remove("hidden");
-          if (stBtn) stBtn.classList.remove("hidden");
-          if (intBtn) intBtn.textContent = "Watchlist";
-          if (cpBtn) cpBtn.textContent = "Completed";
-          if (this.mediaFilter === "all") {
+          if (!["in_progress", "interested", "completed", "stopped"].includes(this.mediaFilter)) {
             this.mediaFilter = "in_progress";
+          }
+          if (statusSelect) {
+            statusSelect.innerHTML =
+              '<option value="in_progress">Status: In progress</option>' +
+              '<option value="interested">Status: Watchlist</option>' +
+              '<option value="completed">Status: Completed</option>' +
+              '<option value="stopped">Status: Stopped</option>';
+            statusSelect.value = this.mediaFilter;
           }
         }
         this.setMediaFilter(this.mediaFilter);
@@ -791,42 +897,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
       setMediaFilter(filter) {
         this.mediaFilter = filter;
-        const wl = document.getElementById("sub-watchlist-label");
-        const ip = document.getElementById("sub-inprogress-btn");
-        const intr = document.getElementById("sub-interested-btn");
-        const cp = document.getElementById("sub-completed-btn");
-        const st = document.getElementById("sub-stopped-btn");
-        if (wl) {
-          const hiddenCls = wl.classList.contains("hidden") ? " hidden" : "";
-          wl.className =
-            (filter === "all"
-              ? "text-xs font-extrabold tv-yellow-text transition px-1 shrink-0"
-              : "text-xs font-semibold text-zinc-400 hover:text-white transition px-1 shrink-0") +
-            hiddenCls;
-        }
-        const styleBtn = (el, key) => {
-          if (!el) return;
-          const hiddenCls = el.classList.contains("hidden") ? " hidden" : "";
-          el.className =
-            (filter === key
-              ? "px-3 py-1.5 rounded-full text-xs font-bold tv-yellow-bg transition whitespace-nowrap"
-              : "px-3 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition whitespace-nowrap") +
-            hiddenCls;
-        };
-        styleBtn(ip, "in_progress");
-        styleBtn(intr, "interested");
-        styleBtn(cp, "completed");
-        styleBtn(st, "stopped");
-        this.renderHome();
-      }
-
-      toggle3DView() {
-        this.is3DView = !this.is3DView;
-        const btn = document.getElementById("btn-3d-toggle");
-        if (btn) {
-          btn.className = this.is3DView
-            ? "w-9 h-9 rounded-full flex items-center justify-center tv-yellow-bg font-bold transition shrink-0"
-            : "tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-yellow-400 transition shrink-0";
+        const statusSelect = document.getElementById("home-status-select");
+        if (statusSelect && statusSelect.value !== filter) {
+          statusSelect.value = filter;
         }
         this.renderHome();
       }
@@ -892,7 +965,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       toggleUsPlatform(platform) {
-        if (!platform || platform === "all") {
+        if (!platform || platform === "clear" || platform === "all") {
           this.selectedUsPlatforms.clear();
         } else if (this.selectedUsPlatforms.has(platform)) {
           this.selectedUsPlatforms.delete(platform);
@@ -909,34 +982,59 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       renderPlatformBars() {
-        const allActive = this.selectedUsPlatforms.size === 0;
-        const allBtn =
-          '<button onclick="app.toggleUsPlatform(&quot;all&quot;)" class="px-2.5 py-1 rounded-full text-[11px] font-bold transition whitespace-nowrap border ' +
-          (allActive
-            ? "tv-yellow-bg border-yellow-400"
-            : "bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white") +
-          '">🇺🇸 All US</button>';
-        const pills = this.usPlatforms
+        const selectedArr = Array.from(this.selectedUsPlatforms);
+        const hasFilter = selectedArr.length > 0;
+        const summaryLabel = hasFilter
+          ? "Streaming: " + selectedArr.join(", ")
+          : "Streaming: Filter";
+        const clearBtn = hasFilter
+          ? '<button onclick="app.toggleUsPlatform(&quot;clear&quot;)" title="Remove streaming filter" class="px-2.5 py-1.5 rounded-full text-xs font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 transition">✕ Clear</button>'
+          : "";
+        const itemsHtml = this.usPlatforms
           .map((p) => {
             const active = this.selectedUsPlatforms.has(p);
             return (
-              '<button onclick="app.toggleUsPlatform(&quot;' +
+              '<button type="button" onclick="app.toggleUsPlatform(&quot;' +
               escapeHtml(p) +
-              '&quot;)" class="px-2.5 py-1 rounded-full text-[11px] font-bold transition whitespace-nowrap border ' +
+              '&quot;)" class="w-full px-3 py-1.5 rounded-xl text-left text-xs font-bold flex items-center justify-between transition ' +
               (active
-                ? "tv-yellow-bg border-yellow-400"
-                : "bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white") +
+                ? "tv-yellow-bg"
+                : "text-zinc-300 hover:bg-zinc-800 hover:text-white") +
               '">' +
+              "<span>" +
               escapeHtml(p) +
+              "</span>" +
+              "<span>" +
+              (active ? "✓" : "") +
+              "</span>" +
               "</button>"
             );
           })
           .join("");
-        const html = allBtn + pills;
+
+        const buildDropdown = () =>
+          '<details class="relative group">' +
+          '<summary class="list-none tv-pill-bar px-3.5 py-1.5 rounded-full text-xs font-bold cursor-pointer flex items-center gap-1.5 border ' +
+          (hasFilter ? "border-yellow-400 tv-yellow-text" : "border-zinc-800 text-zinc-200") +
+          '">' +
+          '<span class="max-w-[165px] truncate">' +
+          escapeHtml(summaryLabel) +
+          "</span>" +
+          '<span class="text-[10px] text-zinc-400">▾</span>' +
+          "</summary>" +
+          '<div class="absolute right-0 mt-1.5 w-48 bg-[#18181d] border border-zinc-700 rounded-2xl p-2 shadow-2xl z-30 space-y-1">' +
+          (hasFilter
+            ? '<button type="button" onclick="app.toggleUsPlatform(&quot;clear&quot;)" class="w-full px-3 py-1.5 rounded-xl text-left text-xs font-extrabold text-rose-400 hover:bg-zinc-800">✕ Remove filter</button><div class="h-px bg-zinc-800 my-1"></div>'
+            : "") +
+          itemsHtml +
+          "</div>" +
+          "</details>" +
+          clearBtn;
+
         const homeBar = document.getElementById("home-us-platform-bar");
         const searchBar = document.getElementById("search-us-platform-bar");
-        if (homeBar) homeBar.innerHTML = html;
-        if (searchBar) searchBar.innerHTML = html;
+        if (homeBar) homeBar.innerHTML = buildDropdown();
+        if (searchBar) searchBar.innerHTML = buildDropdown();
       }
 
       render() {
@@ -944,6 +1042,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.renderHome();
         this.renderSearch();
         this.renderProfile();
+        this.renderSwipeDeck();
         if (this.detailItem) {
           this.renderDetailSheet();
         }
@@ -1229,9 +1328,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const filtered =
             this.mediaFilter === "completed"
               ? platformMovies.filter((m) => m.watched)
-              : this.mediaFilter === "interested" || this.mediaFilter === "in_progress"
-              ? platformMovies.filter((m) => !m.watched)
-              : platformMovies;
+              : platformMovies.filter((m) => !m.watched);
           listEl.innerHTML =
             filtered.map((m) => this.renderMovieCard(m)).join("") ||
             '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No movies in this view yet.</div>';
@@ -1441,15 +1538,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
       setSearchSort(sortKey) {
         this.searchSort = sortKey;
-        ["top", "newest", "oldest"].forEach((k) => {
-          const btn = document.getElementById("sort-" + k);
-          if (btn) {
-            btn.className =
-              k === sortKey
-                ? "px-3.5 py-1.5 rounded-full text-xs font-bold tv-yellow-bg transition"
-                : "px-3.5 py-1.5 rounded-full text-xs font-semibold text-zinc-400 hover:text-white transition";
-          }
-        });
+        const sortSel = document.getElementById("search-sort-select");
+        if (sortSel && sortSel.value !== sortKey) {
+          sortSel.value = sortKey;
+        }
         this.renderSearch();
       }
 
@@ -2017,9 +2109,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const nameEl = document.getElementById("profile-display-name");
         const handleEl = document.getElementById("profile-handle");
         const initEl = document.getElementById("profile-avatar-initials");
+        const topChipEl = document.getElementById("top-user-chip");
         if (nameEl) nameEl.textContent = cleanUser.charAt(0).toUpperCase() + cleanUser.slice(1);
         if (handleEl) handleEl.textContent = "@" + cleanUser;
         if (initEl) initEl.textContent = cleanUser.slice(0, 2).toUpperCase();
+        if (topChipEl) topChipEl.textContent = "@" + cleanUser;
 
         let epCount = 0;
         let showMins = 0;
@@ -2044,12 +2138,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           return d + "d " + h + "h";
         };
 
-        const interestedShows = shows.filter((s) => this.getEffectiveShowStatus(s) === "interested");
+        const completedShows = shows.filter((s) => this.getEffectiveShowStatus(s) === "completed");
         const activeOrCompletedShows = shows.filter((s) => {
           const st = this.getEffectiveShowStatus(s);
           return st === "in_progress" || st === "completed";
         });
-        const interestedMovies = movies.filter((m) => !m.watched);
         const watchedMovies = movies.filter((m) => m.watched);
 
         const countsBadgeEl = document.getElementById("stat-counts-badge");
@@ -2060,30 +2153,20 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const mTimeEl = document.getElementById("stat-movies-time");
         const mSubEl = document.getElementById("stat-movies-sub");
 
-        if (countsBadgeEl) countsBadgeEl.textContent = shows.length + " Series · " + movies.length + " Movies";
+        if (countsBadgeEl) {
+          countsBadgeEl.textContent =
+            completedShows.length + " Completed Series · " + watchedMovies.length + " Watched Movies";
+        }
         if (totalEl) totalEl.textContent = fmtHours(totalMins);
         if (totalSubEl) totalSubEl.textContent = "Total Watch Hours (" + fmtDaysHours(totalMins) + ")";
         if (sTimeEl) sTimeEl.textContent = fmtHours(showMins);
         if (sSubEl) {
           sSubEl.textContent =
-            shows.length +
-            " Series (" +
-            activeOrCompletedShows.length +
-            " active/done · " +
-            interestedShows.length +
-            " watchlist) · " +
-            epCount +
-            " eps";
+            completedShows.length + " completed series · " + epCount + " completed episodes";
         }
         if (mTimeEl) mTimeEl.textContent = fmtHours(movMins);
         if (mSubEl) {
-          mSubEl.textContent =
-            movies.length +
-            " Movies (" +
-            watchedMovies.length +
-            " watched · " +
-            interestedMovies.length +
-            " watchlist)";
+          mSubEl.textContent = watchedMovies.length + " watched movies";
         }
 
         const recSeriesCountEl = document.getElementById("label-recent-series-count");
@@ -2145,6 +2228,415 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               )
               .join("") || '<p class="text-xs text-zinc-400 py-2">No watched movies yet.</p>';
         }
+      }
+
+      // =========================================================
+      // TINDER-STYLE SWIPE RECOMMENDATIONS ENGINE
+      // =========================================================
+      isItemInDbOrDecided(item) {
+        if (!item) return true;
+        const normTitle = String(item.title || "").trim().toLowerCase();
+        const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
+        const movies = Array.isArray(this.state.movies) ? this.state.movies : [];
+        const decidedSet = new Set(Array.isArray(this.state.decidedIds) ? this.state.decidedIds : []);
+        for (const a of (this.state.actors || [])) {
+          if (a && a.role === "decided_rec") {
+            if (a.id) decidedSet.add(a.id);
+            if (a.name) decidedSet.add("title_" + String(a.name).trim().toLowerCase());
+          }
+        }
+        if (decidedSet.has(item.id) || (normTitle && decidedSet.has("title_" + normTitle))) {
+          return true;
+        }
+        if (item.tmdbId && decidedSet.has("tmdb_" + item.mediaType + "_" + item.tmdbId)) {
+          return true;
+        }
+        for (const s of shows) {
+          if (s.id === item.id) return true;
+          if (item.tmdbId && Number(s.tmdbId) === Number(item.tmdbId)) return true;
+          if (item.tvmazeId && Number(s.tvmazeId) === Number(item.tvmazeId)) return true;
+          if (normTitle && String(s.title || "").trim().toLowerCase() === normTitle) return true;
+        }
+        for (const m of movies) {
+          if (m.id === item.id) return true;
+          if (item.tmdbId && Number(m.tmdbId) === Number(item.tmdbId)) return true;
+          if (normTitle && String(m.title || "").trim().toLowerCase() === normTitle) return true;
+        }
+        return false;
+      }
+
+      markItemDecided(item) {
+        if (!item) return;
+        if (!Array.isArray(this.state.decidedIds)) {
+          this.state.decidedIds = [];
+        }
+        const set = new Set(this.state.decidedIds);
+        if (item.id) set.add(item.id);
+        const normTitle = String(item.title || "").trim().toLowerCase();
+        if (normTitle) set.add("title_" + normTitle);
+        if (item.tmdbId) set.add("tmdb_" + item.mediaType + "_" + item.tmdbId);
+        this.state.decidedIds = Array.from(set);
+
+        if (!Array.isArray(this.state.actors)) {
+          this.state.actors = [];
+        }
+        if (item.id && !this.state.actors.some((a) => a.id === item.id && a.role === "decided_rec")) {
+          this.state.actors.push({
+            id: item.id,
+            name: normTitle || item.id,
+            role: "decided_rec",
+            imageUrl: "",
+            imdbUrl: "",
+            knownFor: "",
+          });
+        }
+      }
+
+      getFilteredRecommendations() {
+        return (this.recPool || []).filter((item) => {
+          if (this.swipeMediaFilter !== "all" && item.mediaType !== this.swipeMediaFilter) {
+            return false;
+          }
+          return !this.isItemInDbOrDecided(item);
+        });
+      }
+
+      setSwipeMediaFilter(filter) {
+        this.swipeMediaFilter = filter || "all";
+        const sel = document.getElementById("swipe-filter-select");
+        if (sel && sel.value !== this.swipeMediaFilter) {
+          sel.value = this.swipeMediaFilter;
+        }
+        this.renderSwipeDeck();
+      }
+
+      async loadRecommendations(incrementPage = false) {
+        if (this.isLoadingRecs) return;
+        this.isLoadingRecs = true;
+        if (incrementPage) {
+          this.recPage = (this.recPage % 5) + 1;
+        }
+        this.renderSwipeDeck();
+
+        try {
+          const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
+          const movies = Array.isArray(this.state.movies) ? this.state.movies : [];
+
+          // Prioritize watched / in-progress series & watched movies as recommendation seeds
+          const watchedShows = shows.filter((s) => {
+            const eff = this.getEffectiveShowStatus(s);
+            return eff === "completed" || eff === "in_progress" || (s.watchedEpisodes || []).length > 0;
+          });
+          const seedShows = (watchedShows.length > 0 ? watchedShows : shows).slice(0, 5);
+          const watchedMovies = movies.filter((m) => m.watched);
+          const seedMovies = (watchedMovies.length > 0 ? watchedMovies : movies).slice(0, 5);
+
+          const tvSeedsParam = seedShows
+            .map((s) => (Number(s.tmdbId) || 0) + ":" + String(s.title || "").replace(/[|:]/g, " "))
+            .join("|");
+          const movieSeedsParam = seedMovies
+            .map((m) => (Number(m.tmdbId) || 0) + ":" + String(m.title || "").replace(/[|:]/g, " "))
+            .join("|");
+
+          const url =
+            "/api/recommendations?tvSeeds=" +
+            encodeURIComponent(tvSeedsParam) +
+            "&movieSeeds=" +
+            encodeURIComponent(movieSeedsParam) +
+            "&page=" +
+            this.recPage;
+          const res = await fetch(url);
+          if (res.ok) {
+            const data = await res.json();
+            const existingIds = new Set((this.recPool || []).map((r) => r.id));
+            for (const item of (data.results || [])) {
+              if (item && item.id && !existingIds.has(item.id)) {
+                existingIds.add(item.id);
+                this.recPool.push(item);
+              }
+            }
+          }
+        } catch (_) {}
+
+        this.isLoadingRecs = false;
+        this.renderSwipeDeck();
+      }
+
+      async decideSwipeCard(action) {
+        const deck = this.getFilteredRecommendations();
+        const item = deck[0];
+        if (!item) return;
+
+        // Animate active card out before committing
+        const cardEl = document.getElementById("swipe-active-card");
+        if (cardEl) {
+          cardEl.style.transition = "transform 0.22s ease-out, opacity 0.22s ease-out";
+          if (action === "ignore") {
+            cardEl.style.transform = "translate(-120%, 10px) rotate(-18deg)";
+          } else if (action === "completed") {
+            cardEl.style.transform = "translate(120%, 10px) rotate(18deg)";
+          } else {
+            cardEl.style.transform = "translate(0px, -110%) scale(0.92)";
+          }
+          cardEl.style.opacity = "0";
+          await new Promise((r) => setTimeout(r, 180));
+        }
+
+        this.markItemDecided(item);
+        this.recPool = (this.recPool || []).filter((r) => r.id !== item.id);
+
+        if (action === "watchlist") {
+          if (item.mediaType === "movie") {
+            this.state.movies = [
+              {
+                ...item,
+                watched: false,
+                watchedAt: "",
+                userRating: 0,
+                reaction: "",
+                rewatchCount: 0,
+                isFavorite: false,
+              },
+              ...(this.state.movies || []),
+            ];
+          } else {
+            let fullShow = null;
+            const lookupKey = item.tvmazeId || item.id;
+            if (lookupKey) {
+              try {
+                const res = await fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey));
+                if (res.ok) fullShow = await res.json();
+              } catch (_) {}
+            }
+            const newShow = {
+              ...(fullShow || item),
+              userStatus: "interested",
+              userRating: 0,
+              reaction: "",
+              isFavorite: false,
+              rewatchCount: 0,
+              watchedEpisodes: [],
+              episodes: fullShow?.episodes || [
+                { code: "S01E01", season: 1, number: 1, title: "Pilot", airDate: String(item.year || 2024) + "-01-01", runtimeMins: item.runtimeMins || 45 },
+              ],
+            };
+            this.state.shows = [newShow, ...(this.state.shows || [])];
+          }
+        } else if (action === "completed") {
+          if (item.mediaType === "movie") {
+            this.state.movies = [
+              {
+                ...item,
+                watched: true,
+                watchedAt: new Date().toISOString().slice(0, 10),
+                userRating: 0,
+                reaction: "",
+                rewatchCount: 0,
+                isFavorite: false,
+              },
+              ...(this.state.movies || []),
+            ];
+          } else {
+            let fullShow = null;
+            const lookupKey = item.tvmazeId || item.id;
+            if (lookupKey) {
+              try {
+                const res = await fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey));
+                if (res.ok) fullShow = await res.json();
+              } catch (_) {}
+            }
+            const eps = fullShow?.episodes || [
+              { code: "S01E01", season: 1, number: 1, title: "Pilot", airDate: String(item.year || 2024) + "-01-01", runtimeMins: item.runtimeMins || 45 },
+            ];
+            const newShow = {
+              ...(fullShow || item),
+              userStatus: "completed",
+              userRating: 0,
+              reaction: "",
+              isFavorite: false,
+              rewatchCount: 0,
+              lastWatchedAt: new Date().toISOString(),
+              watchedEpisodes: eps.map((e) => e.code).sort(),
+              episodes: eps,
+            };
+            this.state.shows = [newShow, ...(this.state.shows || [])];
+          }
+        }
+
+        await this.persistState();
+        if (this.getFilteredRecommendations().length <= 2 && !this.isLoadingRecs) {
+          this.loadRecommendations(true);
+        }
+      }
+
+      renderSwipeDeck() {
+        const container = document.getElementById("swipe-deck-container");
+        const remBadge = document.getElementById("swipe-remaining-badge");
+        if (!container) return;
+
+        const deck = this.getFilteredRecommendations();
+        if (remBadge) {
+          remBadge.textContent = deck.length + " picks";
+        }
+
+        if (deck.length === 0) {
+          container.innerHTML =
+            '<div class="tv-card rounded-3xl p-8 w-full text-center space-y-4">' +
+            '<div class="text-4xl">🎬</div>' +
+            '<div class="text-base font-extrabold text-white">' +
+            (this.isLoadingRecs ? "Finding personalized recommendations..." : "All caught up on this batch!") +
+            "</div>" +
+            '<p class="text-xs text-zinc-400">Based on your watched series and movies, we filter out everything already in your library or previously decided.</p>' +
+            '<button onclick="app.loadRecommendations(true)" class="px-5 py-2.5 rounded-full tv-yellow-bg text-xs font-extrabold">' +
+            (this.isLoadingRecs ? "Loading..." : "Load More Recommendations") +
+            "</button>" +
+            "</div>";
+          return;
+        }
+
+        const topItem = deck[0];
+        const nextItem = deck[1] || null;
+        const poster =
+          topItem.posterUrl ||
+          "https://via.placeholder.com/400x600/18181d/facc15?text=" + encodeURIComponent(topItem.title || "Pick");
+        const isMovie = topItem.mediaType === "movie";
+        const typeBadge = isMovie ? "MOVIE" : "TV SERIES";
+        const typeColor = isMovie
+          ? "bg-sky-500/20 text-sky-300 border-sky-400/40"
+          : "bg-yellow-400/20 text-yellow-300 border-yellow-400/40";
+
+        const nextCardHtml = nextItem
+          ? '<div class="w-full max-w-sm mx-auto tv-card rounded-3xl h-[410px] scale-[0.95] translate-y-3 opacity-45 pointer-events-none overflow-hidden border border-zinc-800"></div>'
+          : "";
+
+        container.innerHTML =
+          '<div class="relative w-full max-w-sm mx-auto flex flex-col items-center">' +
+          '<div class="relative w-full h-[430px] flex items-center justify-center">' +
+          nextCardHtml +
+          '<div id="swipe-active-card" class="absolute inset-0 tv-card rounded-3xl overflow-hidden border border-zinc-700/80 shadow-2xl flex flex-col cursor-grab active:cursor-grabbing touch-none">' +
+          // Stamp overlays for drag visual feedback
+          '<div id="swipe-stamp-completed" class="opacity-0 pointer-events-none absolute top-6 left-5 z-20 px-3.5 py-1 rounded-xl border-2 border-emerald-400 bg-emerald-950/80 text-emerald-300 font-black text-sm tracking-wider -rotate-12">✓ COMPLETED</div>' +
+          '<div id="swipe-stamp-ignore" class="opacity-0 pointer-events-none absolute top-6 right-5 z-20 px-3.5 py-1 rounded-xl border-2 border-rose-400 bg-rose-950/80 text-rose-300 font-black text-sm tracking-wider rotate-12">✕ IGNORE</div>' +
+          '<div id="swipe-stamp-watchlist" class="opacity-0 pointer-events-none absolute bottom-32 inset-x-0 mx-auto w-max z-20 px-4 py-1 rounded-xl border-2 border-yellow-400 bg-zinc-950/90 tv-yellow-text font-black text-sm tracking-wider">🔖 + WATCHLIST</div>' +
+          // Poster with gradient
+          '<div class="relative h-64 w-full bg-zinc-900 shrink-0 overflow-hidden">' +
+          '<img src="' +
+          escapeHtml(poster) +
+          '" draggable="false" class="w-full h-full object-cover pointer-events-none" />' +
+          '<div class="absolute inset-0 bg-gradient-to-t from-[#16161a] via-[#16161a]/30 to-transparent"></div>' +
+          '<div class="absolute top-3 left-3 right-3 flex items-center justify-between gap-2">' +
+          '<span class="px-2.5 py-1 rounded-full text-[10px] font-black uppercase border backdrop-blur-md ' +
+          typeColor +
+          '">' +
+          typeBadge +
+          "</span>" +
+          '<span class="px-2.5 py-1 rounded-full text-xs font-extrabold bg-black/75 text-white backdrop-blur-md flex items-center gap-1"><span class="tv-yellow-text">★</span>' +
+          Number(topItem.rating || 7.9).toFixed(1) +
+          "</span>" +
+          "</div>" +
+          '<div class="absolute bottom-2 left-3.5 right-3.5">' +
+          '<div class="text-[11px] font-bold tv-yellow-text truncate">' +
+          escapeHtml(topItem.becauseOf || "Recommended for you") +
+          "</div>" +
+          '<h3 class="text-xl font-black text-white leading-tight truncate">' +
+          escapeHtml(topItem.title) +
+          ' <span class="text-sm font-bold text-zinc-400">(' +
+          escapeHtml(topItem.year || 2024) +
+          ")</span></h3>" +
+          "</div>" +
+          "</div>" +
+          // Synopsis & metadata
+          '<div class="p-4 flex-1 flex flex-col justify-between bg-[#16161a]">' +
+          '<p class="text-xs text-zinc-300 line-clamp-4 leading-relaxed">' +
+          escapeHtml(topItem.overview || "Swipe right to mark completed, swipe up to add to your watchlist, or swipe left to ignore.") +
+          "</p>" +
+          '<div class="flex items-center justify-between text-[11px] text-zinc-500 pt-2 border-t border-zinc-800/80">' +
+          '<span>👈 Drag Left: Ignore</span>' +
+          '<span>👆 Up: Watchlist</span>' +
+          '<span>👉 Right: Completed</span>' +
+          "</div>" +
+          "</div>" +
+          "</div>" +
+          "</div>" +
+          // 3 Tinder Action Buttons
+          '<div class="flex items-center justify-center gap-5 pt-4 w-full">' +
+          '<button onclick="app.decideSwipeCard(&quot;ignore&quot;)" class="flex flex-col items-center gap-1 group">' +
+          '<div class="w-14 h-14 rounded-full bg-zinc-900 border-2 border-rose-500/60 text-rose-400 group-hover:bg-rose-500 group-hover:text-white flex items-center justify-center text-xl font-black shadow-lg transition">✕</div>' +
+          '<span class="text-[11px] font-bold text-zinc-400 group-hover:text-rose-400">Ignore</span>' +
+          "</button>" +
+          '<button onclick="app.decideSwipeCard(&quot;watchlist&quot;)" class="flex flex-col items-center gap-1 group">' +
+          '<div class="w-14 h-14 rounded-full bg-zinc-900 border-2 border-yellow-400/70 tv-yellow-text group-hover:bg-yellow-400 group-hover:text-black flex items-center justify-center text-lg font-black shadow-lg transition">🔖</div>' +
+          '<span class="text-[11px] font-bold text-zinc-400 group-hover:text-yellow-400">+ Watchlist</span>' +
+          "</button>" +
+          '<button onclick="app.decideSwipeCard(&quot;completed&quot;)" class="flex flex-col items-center gap-1 group">' +
+          '<div class="w-14 h-14 rounded-full bg-zinc-900 border-2 border-emerald-500/70 text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white flex items-center justify-center text-xl font-black shadow-lg transition">' +
+          CHECK_SVG +
+          "</div>" +
+          '<span class="text-[11px] font-bold text-zinc-400 group-hover:text-emerald-400">Completed</span>' +
+          "</button>" +
+          "</div>" +
+          "</div>";
+
+        this.bindSwipeCardGestures();
+      }
+
+      bindSwipeCardGestures() {
+        const card = document.getElementById("swipe-active-card");
+        if (!card) return;
+        const stampComp = document.getElementById("swipe-stamp-completed");
+        const stampIgn = document.getElementById("swipe-stamp-ignore");
+        const stampWl = document.getElementById("swipe-stamp-watchlist");
+
+        let startX = 0;
+        let startY = 0;
+        let dx = 0;
+        let dy = 0;
+        let dragging = false;
+
+        card.onpointerdown = (e) => {
+          dragging = true;
+          startX = e.clientX;
+          startY = e.clientY;
+          dx = 0;
+          dy = 0;
+          card.style.transition = "none";
+          try {
+            card.setPointerCapture(e.pointerId);
+          } catch (_) {}
+        };
+
+        card.onpointermove = (e) => {
+          if (!dragging) return;
+          dx = e.clientX - startX;
+          dy = e.clientY - startY;
+          const rot = dx * 0.06;
+          card.style.transform = "translate(" + dx + "px, " + dy + "px) rotate(" + rot + "deg)";
+
+          if (stampComp) stampComp.style.opacity = dx > 35 ? String(Math.min(1, (dx - 35) / 70)) : "0";
+          if (stampIgn) stampIgn.style.opacity = dx < -35 ? String(Math.min(1, (-dx - 35) / 70)) : "0";
+          if (stampWl) stampWl.style.opacity = dy < -35 && Math.abs(dx) < 70 ? String(Math.min(1, (-dy - 35) / 65)) : "0";
+        };
+
+        const finishDrag = () => {
+          if (!dragging) return;
+          dragging = false;
+          if (dx > 85) {
+            this.decideSwipeCard("completed");
+          } else if (dx < -85) {
+            this.decideSwipeCard("ignore");
+          } else if (dy < -75 && Math.abs(dx) < 85) {
+            this.decideSwipeCard("watchlist");
+          } else {
+            card.style.transition = "transform 0.2s ease-out";
+            card.style.transform = "translate(0px, 0px) rotate(0deg)";
+            if (stampComp) stampComp.style.opacity = "0";
+            if (stampIgn) stampIgn.style.opacity = "0";
+            if (stampWl) stampWl.style.opacity = "0";
+          }
+        };
+
+        card.onpointerup = finishDrag;
+        card.onpointercancel = finishDrag;
       }
 
       openFollowingSheet(tab = "actors") {

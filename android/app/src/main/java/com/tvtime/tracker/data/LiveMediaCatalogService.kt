@@ -144,6 +144,196 @@ object LiveMediaCatalogService {
         results
     }
 
+    suspend fun fetchRecommendations(
+        shows: List<ShowEntity>,
+        movies: List<MovieEntity>,
+        page: Int = 1
+    ): List<SearchResultItem> = withContext(Dispatchers.IO) {
+        val safePage = page.coerceIn(1, 10)
+        val results = mutableListOf<SearchResultItem>()
+        val seenKeys = mutableSetOf<String>()
+
+        fun addUnique(item: SearchResultItem) {
+            if (item.title.isBlank() || item.posterUrl.isBlank()) return
+            val normKey = "${item.mediaType}_${item.title.trim().lowercase()}"
+            if (seenKeys.contains(item.externalId) || seenKeys.contains(normKey)) return
+            seenKeys.add(item.externalId)
+            seenKeys.add(normKey)
+            results.add(item)
+        }
+
+        val tmdbToken = BuildConfig.TMDB_READ_TOKEN.trim()
+        val tmdbKey = BuildConfig.TMDB_API_KEY.trim()
+        if (tmdbToken.isNotEmpty() || tmdbKey.isNotEmpty()) {
+            fun getTmdbJson(pathWithQuery: String): JSONObject? {
+                return try {
+                    val sep = if (pathWithQuery.contains("?")) "&" else "?"
+                    val url = if (tmdbToken.isNotEmpty()) {
+                        "https://api.themoviedb.org/3$pathWithQuery"
+                    } else {
+                        "https://api.themoviedb.org/3$pathWithQuery${sep}api_key=$tmdbKey"
+                    }
+                    val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        if (tmdbToken.isNotEmpty()) setRequestProperty("Authorization", "Bearer $tmdbToken")
+                        setRequestProperty("Accept", "application/json")
+                        connectTimeout = 5000
+                        readTimeout = 5000
+                    }
+                    if (conn.responseCode in 200..299) {
+                        JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                    } else null
+                } catch (_: Exception) {
+                    null
+                }
+            }
+
+            val watchedShows = shows.filter { it.watchedCodesCsv.isNotBlank() || it.userStatus == "completed" }
+            val seedShows = (watchedShows.ifEmpty { shows }).take(4)
+            val watchedMovies = movies.filter { it.watched }
+            val seedMovies = (watchedMovies.ifEmpty { movies }).take(4)
+
+            for (s in seedShows) {
+                var tid = s.tmdbId
+                if (tid <= 0 && s.title.isNotBlank()) {
+                    val enc = URLEncoder.encode(s.title, "UTF-8")
+                    tid = getTmdbJson("/search/tv?query=$enc&language=en-US&page=1")
+                        ?.optJSONArray("results")
+                        ?.optJSONObject(0)
+                        ?.optInt("id", 0) ?: 0
+                }
+                if (tid > 0) {
+                    val arr = getTmdbJson("/tv/$tid/recommendations?language=en-US&page=$safePage")
+                        ?.optJSONArray("results") ?: JSONArray()
+                    for (i in 0 until minOf(arr.length(), 8)) {
+                        val item = arr.optJSONObject(i) ?: continue
+                        val id = item.optInt("id", 0)
+                        if (id <= 0) continue
+                        val posterPath = item.optString("poster_path", "")
+                        if (posterPath.isBlank() || posterPath == "null") continue
+                        val title = item.optString("name", item.optString("original_name", ""))
+                        val year = item.optString("first_air_date", "").take(4).toIntOrNull() ?: 2024
+                        val rating = (item.optDouble("vote_average", 7.9).takeIf { !it.isNaN() && it > 0 } ?: 7.9)
+                        addUnique(
+                            SearchResultItem(
+                                externalId = "tmdb_tv_$id",
+                                tvmazeId = 0,
+                                tmdbId = id,
+                                mediaType = "show",
+                                title = title,
+                                year = year,
+                                networkOrDirector = "Because you watched ${s.title}",
+                                status = "Running",
+                                runtimeMins = 45,
+                                genresCsv = "TV Series",
+                                rating = Math.round(rating * 10.0) / 10.0,
+                                posterUrl = "https://image.tmdb.org/t/p/w500$posterPath",
+                                overview = stripHtml(item.optString("overview", ""))
+                            )
+                        )
+                    }
+                }
+            }
+
+            for (m in seedMovies) {
+                var mid = m.tmdbId
+                if (mid <= 0 && m.title.isNotBlank()) {
+                    val enc = URLEncoder.encode(m.title, "UTF-8")
+                    mid = getTmdbJson("/search/movie?query=$enc&language=en-US&page=1")
+                        ?.optJSONArray("results")
+                        ?.optJSONObject(0)
+                        ?.optInt("id", 0) ?: 0
+                }
+                if (mid > 0) {
+                    val arr = getTmdbJson("/movie/$mid/recommendations?language=en-US&page=$safePage")
+                        ?.optJSONArray("results") ?: JSONArray()
+                    for (i in 0 until minOf(arr.length(), 8)) {
+                        val item = arr.optJSONObject(i) ?: continue
+                        val id = item.optInt("id", 0)
+                        if (id <= 0) continue
+                        val posterPath = item.optString("poster_path", "")
+                        if (posterPath.isBlank() || posterPath == "null") continue
+                        val title = item.optString("title", item.optString("original_title", ""))
+                        val year = item.optString("release_date", "").take(4).toIntOrNull() ?: 2024
+                        val rating = (item.optDouble("vote_average", 7.8).takeIf { !it.isNaN() && it > 0 } ?: 7.8)
+                        addUnique(
+                            SearchResultItem(
+                                externalId = "movie_$id",
+                                tmdbId = id,
+                                mediaType = "movie",
+                                title = title,
+                                year = year,
+                                networkOrDirector = "Because you watched ${m.title}",
+                                status = "Released",
+                                runtimeMins = 120,
+                                genresCsv = "Movie",
+                                rating = Math.round(rating * 10.0) / 10.0,
+                                posterUrl = "https://image.tmdb.org/t/p/w500$posterPath",
+                                overview = stripHtml(item.optString("overview", ""))
+                            )
+                        )
+                    }
+                }
+            }
+
+            // Supplement with trending TV & movies
+            val trendTv = getTmdbJson("/trending/tv/week?language=en-US&page=$safePage")?.optJSONArray("results") ?: JSONArray()
+            for (i in 0 until minOf(trendTv.length(), 8)) {
+                val item = trendTv.optJSONObject(i) ?: continue
+                val id = item.optInt("id", 0)
+                val posterPath = item.optString("poster_path", "")
+                if (id <= 0 || posterPath.isBlank() || posterPath == "null") continue
+                val title = item.optString("name", item.optString("original_name", ""))
+                val year = item.optString("first_air_date", "").take(4).toIntOrNull() ?: 2024
+                val rating = (item.optDouble("vote_average", 8.0).takeIf { !it.isNaN() && it > 0 } ?: 8.0)
+                addUnique(
+                    SearchResultItem(
+                        externalId = "tmdb_tv_$id",
+                        tvmazeId = 0,
+                        tmdbId = id,
+                        mediaType = "show",
+                        title = title,
+                        year = year,
+                        networkOrDirector = "Popular & Acclaimed Series",
+                        status = "Running",
+                        runtimeMins = 45,
+                        genresCsv = "TV Series",
+                        rating = Math.round(rating * 10.0) / 10.0,
+                        posterUrl = "https://image.tmdb.org/t/p/w500$posterPath",
+                        overview = stripHtml(item.optString("overview", ""))
+                    )
+                )
+            }
+            val trendMov = getTmdbJson("/trending/movie/week?language=en-US&page=$safePage")?.optJSONArray("results") ?: JSONArray()
+            for (i in 0 until minOf(trendMov.length(), 8)) {
+                val item = trendMov.optJSONObject(i) ?: continue
+                val id = item.optInt("id", 0)
+                val posterPath = item.optString("poster_path", "")
+                if (id <= 0 || posterPath.isBlank() || posterPath == "null") continue
+                val title = item.optString("title", item.optString("original_title", ""))
+                val year = item.optString("release_date", "").take(4).toIntOrNull() ?: 2024
+                val rating = (item.optDouble("vote_average", 7.8).takeIf { !it.isNaN() && it > 0 } ?: 7.8)
+                addUnique(
+                    SearchResultItem(
+                        externalId = "movie_$id",
+                        tmdbId = id,
+                        mediaType = "movie",
+                        title = title,
+                        year = year,
+                        networkOrDirector = "Popular & Acclaimed Movie",
+                        status = "Released",
+                        runtimeMins = 120,
+                        genresCsv = "Movie",
+                        rating = Math.round(rating * 10.0) / 10.0,
+                        posterUrl = "https://image.tmdb.org/t/p/w500$posterPath",
+                        overview = stripHtml(item.optString("overview", ""))
+                    )
+                )
+            }
+        }
+        results
+    }
+
     private fun stripHtml(raw: String?): String =
         (raw ?: "").replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
 

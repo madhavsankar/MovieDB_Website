@@ -168,6 +168,7 @@ def get_user_state_from_firestore(user_id):
             "shows": parsed.get("shows") if isinstance(parsed.get("shows"), list) else [],
             "movies": parsed.get("movies") if isinstance(parsed.get("movies"), list) else [],
             "actors": parsed.get("actors") if isinstance(parsed.get("actors"), list) else default_user_state(clean)["actors"],
+            "decidedIds": parsed.get("decidedIds") if isinstance(parsed.get("decidedIds"), list) else [],
             "followingUsers": parsed.get("followingUsers") if isinstance(parsed.get("followingUsers"), list) else [],
             "updatedAt": parsed.get("updatedAt") or datetime.now(timezone.utc).isoformat(),
         }
@@ -183,6 +184,7 @@ def save_user_state_to_firestore(user_id, state):
     shows = state.get("shows") if isinstance(state.get("shows"), list) else []
     movies = state.get("movies") if isinstance(state.get("movies"), list) else []
     actors = state.get("actors") if isinstance(state.get("actors"), list) else []
+    decided_ids = state.get("decidedIds") if isinstance(state.get("decidedIds"), list) else []
     following_users = state.get("followingUsers") if isinstance(state.get("followingUsers"), list) else []
     updated_at = datetime.now(timezone.utc).isoformat()
 
@@ -192,6 +194,7 @@ def save_user_state_to_firestore(user_id, state):
         "shows": shows,
         "movies": movies,
         "actors": actors,
+        "decidedIds": decided_ids,
         "followingUsers": following_users,
         "updatedAt": updated_at,
     }
@@ -473,6 +476,124 @@ def discover_by_us_providers(providers_csv):
     }
 
 
+def fetch_recommendations(tv_seeds_raw, mv_seeds_raw, page=1):
+    safe_page = max(1, min(10, int(page or 1)))
+    tmdb_token = (CONFIG.get("TMDB_READ_TOKEN") or os.environ.get("TMDB_READ_TOKEN") or "").strip()
+    tmdb_key = (CONFIG.get("TMDB_API_KEY") or os.environ.get("TMDB_API_KEY") or "").strip()
+    results = []
+    seen = set()
+
+    def parse_seeds(raw):
+        out = []
+        for entry in str(raw or "").split("|"):
+            entry = entry.strip()
+            if not entry:
+                continue
+            if ":" in entry:
+                tid, ttitle = entry.split(":", 1)
+                out.append((int(tid) if tid.isdigit() else 0, ttitle.strip()))
+            else:
+                out.append((int(entry) if entry.isdigit() else 0, entry))
+        return out[:5]
+
+    if tmdb_token or tmdb_key:
+        req_headers = {"User-Agent": "TVTimeTracker/1.0", "Accept": "application/json"}
+        if tmdb_token:
+            req_headers["Authorization"] = f"Bearer {tmdb_token}"
+        key_suffix = "" if tmdb_token else f"&api_key={urllib.parse.quote(tmdb_key)}"
+
+        for tid, ttitle in parse_seeds(tv_seeds_raw):
+            if tid <= 0 and ttitle:
+                try:
+                    s_url = f"https://api.themoviedb.org/3/search/tv?query={urllib.parse.quote(ttitle)}&language=en-US&page=1{key_suffix}"
+                    req = urllib.request.Request(s_url, headers=req_headers)
+                    with urllib.request.urlopen(req, timeout=6) as r:
+                        d = json.loads(r.read().decode("utf-8"))
+                    tid = int((d.get("results") or [{}])[0].get("id") or 0)
+                except Exception:
+                    pass
+            if tid > 0:
+                try:
+                    rec_url = f"https://api.themoviedb.org/3/tv/{tid}/recommendations?language=en-US&page={safe_page}{key_suffix}"
+                    req = urllib.request.Request(rec_url, headers=req_headers)
+                    with urllib.request.urlopen(req, timeout=6) as r:
+                        rec_data = json.loads(r.read().decode("utf-8"))
+                    for s in (rec_data.get("results") or [])[:8]:
+                        title = s.get("name") or s.get("original_name")
+                        if not s.get("id") or not title or not s.get("poster_path"):
+                            continue
+                        item_id = f"tmdb_tv_{s['id']}"
+                        if item_id in seen:
+                            continue
+                        seen.add(item_id)
+                        prem = str(s.get("first_air_date") or "2024")[:4]
+                        yr = int(prem) if prem.isdigit() else 2024
+                        results.append({
+                            "id": item_id,
+                            "tvmazeId": 0,
+                            "tmdbId": s["id"],
+                            "mediaType": "show",
+                            "title": title,
+                            "year": yr,
+                            "network": "Streaming",
+                            "status": "Running",
+                            "runtimeMins": 45,
+                            "genres": ["TV Series"],
+                            "rating": round(float(s.get("vote_average") or 7.9), 1),
+                            "posterUrl": f"https://image.tmdb.org/t/p/w500{s['poster_path']}",
+                            "overview": s.get("overview") or "",
+                            "becauseOf": f"Because you watched {ttitle}" if ttitle else "Recommended Series",
+                        })
+                except Exception:
+                    pass
+
+        for mid, mtitle in parse_seeds(mv_seeds_raw):
+            if mid <= 0 and mtitle:
+                try:
+                    s_url = f"https://api.themoviedb.org/3/search/movie?query={urllib.parse.quote(mtitle)}&language=en-US&page=1{key_suffix}"
+                    req = urllib.request.Request(s_url, headers=req_headers)
+                    with urllib.request.urlopen(req, timeout=6) as r:
+                        d = json.loads(r.read().decode("utf-8"))
+                    mid = int((d.get("results") or [{}])[0].get("id") or 0)
+                except Exception:
+                    pass
+            if mid > 0:
+                try:
+                    rec_url = f"https://api.themoviedb.org/3/movie/{mid}/recommendations?language=en-US&page={safe_page}{key_suffix}"
+                    req = urllib.request.Request(rec_url, headers=req_headers)
+                    with urllib.request.urlopen(req, timeout=6) as r:
+                        rec_data = json.loads(r.read().decode("utf-8"))
+                    for m in (rec_data.get("results") or [])[:8]:
+                        title = m.get("title") or m.get("original_title")
+                        if not m.get("id") or not title or not m.get("poster_path"):
+                            continue
+                        item_id = f"movie_{m['id']}"
+                        if item_id in seen:
+                            continue
+                        seen.add(item_id)
+                        rel = str(m.get("release_date") or "2024")[:4]
+                        yr = int(rel) if rel.isdigit() else 2024
+                        results.append({
+                            "id": item_id,
+                            "tmdbId": m["id"],
+                            "mediaType": "movie",
+                            "title": title,
+                            "year": yr,
+                            "runtimeMins": 120,
+                            "genres": ["Movie"],
+                            "director": "",
+                            "streamingService": "Streaming",
+                            "rating": round(float(m.get("vote_average") or 7.8), 1),
+                            "posterUrl": f"https://image.tmdb.org/t/p/w500{m['poster_path']}",
+                            "overview": m.get("overview") or "",
+                            "becauseOf": f"Because you watched {mtitle}" if mtitle else "Recommended Movie",
+                        })
+                except Exception:
+                    pass
+
+    return {"results": results}
+
+
 def fetch_full_show_from_tvmaze(tvmaze_id):
     num_id = re.sub(r"^tvmaze_", "", str(tvmaze_id or "").strip())
     if not num_id:
@@ -604,6 +725,13 @@ class TvTimeHttpHandler(BaseHTTPRequestHandler):
             self._send_json(discover_by_us_providers(providers))
             return
 
+        if path == "/api/recommendations":
+            tv_seeds_raw = (qs.get("tvSeeds") or [""])[0]
+            mv_seeds_raw = (qs.get("movieSeeds") or [""])[0]
+            page = int((qs.get("page") or ["1"])[0] or "1")
+            self._send_json(fetch_recommendations(tv_seeds_raw, mv_seeds_raw, page))
+            return
+
         if path == "/api/show-details":
             tvmaze_id = (qs.get("tvmazeId") or [""])[0]
             show = fetch_full_show_from_tvmaze(tvmaze_id)
@@ -642,6 +770,7 @@ class TvTimeHttpHandler(BaseHTTPRequestHandler):
                 "shows": body.get("shows") if isinstance(body.get("shows"), list) else [],
                 "movies": body.get("movies") if isinstance(body.get("movies"), list) else [],
                 "actors": body.get("actors") if isinstance(body.get("actors"), list) else [],
+                "decidedIds": body.get("decidedIds") if isinstance(body.get("decidedIds"), list) else [],
                 "followingUsers": body.get("followingUsers") if isinstance(body.get("followingUsers"), list) else [],
             }
             saved = save_user_state_to_firestore(user_id, state)

@@ -219,6 +219,7 @@ export class FirestoreRepository {
       })),
       movies: STARTER_MOVIES.map((m) => ({ ...m })),
       actors: STARTER_ACTORS.map((a) => ({ ...a })),
+      decidedIds: [],
       followingUsers: ["partner"],
       updatedAt: new Date().toISOString(),
     };
@@ -245,6 +246,7 @@ export class FirestoreRepository {
       const shows = Array.isArray(parsed.shows) ? parsed.shows : [];
       const movies = Array.isArray(parsed.movies) ? parsed.movies : [];
       const actors = Array.isArray(parsed.actors) ? parsed.actors : STARTER_ACTORS.map((a) => ({ ...a }));
+      const decidedIds = Array.isArray(parsed.decidedIds) ? parsed.decidedIds : [];
       const followingUsers = Array.isArray(parsed.followingUsers) ? parsed.followingUsers : [];
 
       return {
@@ -253,6 +255,7 @@ export class FirestoreRepository {
         shows,
         movies,
         actors,
+        decidedIds,
         followingUsers,
         updatedAt: parsed.updatedAt || doc?.fields?.updatedAt?.stringValue || new Date().toISOString(),
       };
@@ -271,6 +274,7 @@ export class FirestoreRepository {
     const shows = Array.isArray(state.shows) ? state.shows : [];
     const movies = Array.isArray(state.movies) ? state.movies : [];
     const actors = Array.isArray(state.actors) ? state.actors : [];
+    const decidedIds = Array.isArray(state.decidedIds) ? state.decidedIds : [];
     const followingUsers = Array.isArray(state.followingUsers) ? state.followingUsers : [];
     const updatedAt = new Date().toISOString();
 
@@ -280,6 +284,7 @@ export class FirestoreRepository {
       shows,
       movies,
       actors,
+      decidedIds,
       followingUsers,
       updatedAt,
     };

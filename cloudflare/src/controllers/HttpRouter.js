@@ -174,6 +174,32 @@ export class HttpRouter {
       return this.json(data);
     }
 
+    if (request.method === "GET" && path === "/api/recommendations") {
+      const parseSeeds = (raw) =>
+        String(raw || "")
+          .split("|")
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map((entry) => {
+            const idx = entry.indexOf(":");
+            if (idx === -1) return { tmdbId: Number(entry) || 0, title: entry };
+            return {
+              tmdbId: Number(entry.slice(0, idx)) || 0,
+              title: entry.slice(idx + 1).trim(),
+            };
+          });
+      const tvSeeds = parseSeeds(url.searchParams.get("tvSeeds") || "");
+      const movieSeeds = parseSeeds(url.searchParams.get("movieSeeds") || "");
+      const page = Number(url.searchParams.get("page") || 1) || 1;
+      const data = await LiveCatalogService.fetchRecommendations({
+        tvSeeds,
+        movieSeeds,
+        page,
+        env: this.env,
+      });
+      return this.json(data);
+    }
+
     if (request.method === "GET" && path === "/api/show-details") {
       const id = url.searchParams.get("tvmazeId") || url.searchParams.get("id") || "";
       const show = await LiveCatalogService.fetchFullShowFromTvMaze(id, { env: this.env });
@@ -243,6 +269,7 @@ export class HttpRouter {
           shows: Array.isArray(body.shows) ? body.shows : [],
           movies: Array.isArray(body.movies) ? body.movies : [],
           actors: Array.isArray(body.actors) ? body.actors : [],
+          decidedIds: Array.isArray(body.decidedIds) ? body.decidedIds : [],
           followingUsers: Array.isArray(body.followingUsers) ? body.followingUsers : [],
         };
         await this.repo.saveUserState(userParam, state);

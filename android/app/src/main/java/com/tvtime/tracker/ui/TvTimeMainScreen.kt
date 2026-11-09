@@ -8,6 +8,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -16,8 +17,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -26,11 +28,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
@@ -49,6 +56,7 @@ import com.tvtime.tracker.ui.theme.TvTimePalette
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TvTimeMainScreen(
     dao: TvTimeDao,
@@ -59,13 +67,11 @@ fun TvTimeMainScreen(
     val scope = rememberCoroutineScope()
 
     var currentUserId by remember { mutableStateOf(initialUserId) }
-    var activeBottomTab by remember { mutableStateOf("home") } // "home" | "search" | "profile"
+    var activeBottomTab by remember { mutableStateOf("home") } // "home" | "search" | "swipe"
 
     // Home Tab State
     var homeTopSegment by remember { mutableStateOf("shows") } // "shows" | "movies" | "upcoming"
     var mediaSubFilter by remember { mutableStateOf("in_progress") } // "in_progress" | "interested" | "completed" | "stopped"
-    var is3DShelfMode by remember { mutableStateOf(false) }
-    var havenStartedCollapsed by remember { mutableStateOf(false) }
 
     // Home & Search US Streaming Platform Filter State (Multi-select)
     var selectedUsPlatforms by remember { mutableStateOf(emptySet<String>()) }
@@ -76,7 +82,11 @@ fun TvTimeMainScreen(
     var searchResults by remember { mutableStateOf<List<SearchResultItem>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
 
+    // Swipe Recommendations Tab State
+    var swipeMediaFilter by remember { mutableStateOf("all") } // "all" | "tv" | "movie"
+
     // Modals & Bottom Sheets
+    var showHamburgerSheet by remember { mutableStateOf(false) }
     var selectedShowForDetail by remember { mutableStateOf<ShowEntity?>(null) }
     var selectedMovieForDetail by remember { mutableStateOf<MovieEntity?>(null) }
     var showImportDialog by remember { mutableStateOf(false) }
@@ -92,6 +102,10 @@ fun TvTimeMainScreen(
 
     val shows by dao.observeShowsForUser(currentUserId).collectAsState(initial = emptyList())
     val movies by dao.observeMoviesForUser(currentUserId).collectAsState(initial = emptyList())
+    val actors by dao.observeActorsForUser(currentUserId).collectAsState(initial = emptyList())
+    val decidedIds = remember(actors) {
+        actors.filter { it.role == "decided_rec" }.map { it.externalId }.toSet()
+    }
 
     // Initial Search & US Provider Discovery Results load
     LaunchedEffect(searchQuery, selectedUsPlatforms) {
@@ -112,7 +126,7 @@ fun TvTimeMainScreen(
     }
 
     val toggleUsPlatform: (String) -> Unit = { platform ->
-        selectedUsPlatforms = if (platform == "all") {
+        selectedUsPlatforms = if (platform == "clear") {
             emptySet()
         } else if (selectedUsPlatforms.contains(platform)) {
             selectedUsPlatforms - platform
@@ -123,6 +137,62 @@ fun TvTimeMainScreen(
 
     Scaffold(
         containerColor = TvTimePalette.Background,
+        topBar = {
+            Surface(
+                color = TvTimePalette.Background,
+                tonalElevation = 0.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = TvTimePalette.Yellow,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = "TV",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                    color = TvTimePalette.OnYellow
+                                )
+                            }
+                        }
+                        Text(
+                            text = "TV Time",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                            color = Color.White
+                        )
+                    }
+
+                    Surface(
+                        onClick = { showHamburgerSheet = true },
+                        shape = CircleShape,
+                        color = TvTimePalette.SurfacePill,
+                        border = BorderStroke(1.dp, TvTimePalette.Border),
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Menu,
+                                contentDescription = "Menu, Stats & Export",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        },
         bottomBar = {
             NavigationBar(
                 containerColor = TvTimePalette.Background,
@@ -132,7 +202,7 @@ fun TvTimeMainScreen(
                 val navItems = listOf(
                     "home" to Icons.Default.Home,
                     "search" to Icons.Default.Search,
-                    "profile" to Icons.Default.Person
+                    "swipe" to Icons.Default.Favorite
                 )
                 navItems.forEach { (key, icon) ->
                     val selected = activeBottomTab == key
@@ -168,18 +238,18 @@ fun TvTimeMainScreen(
                         topSegment = homeTopSegment,
                         onSelectTopSegment = { seg ->
                             homeTopSegment = seg
-                            if (seg == "movies" && (mediaSubFilter == "in_progress" || mediaSubFilter == "stopped")) {
-                                mediaSubFilter = "interested"
-                            } else if (seg == "shows" && mediaSubFilter == "all") {
-                                mediaSubFilter = "in_progress"
+                            if (seg == "movies") {
+                                if (mediaSubFilter != "interested" && mediaSubFilter != "completed") {
+                                    mediaSubFilter = "interested"
+                                }
+                            } else if (seg == "shows") {
+                                if (mediaSubFilter != "in_progress" && mediaSubFilter != "interested" && mediaSubFilter != "completed" && mediaSubFilter != "stopped") {
+                                    mediaSubFilter = "in_progress"
+                                }
                             }
                         },
                         mediaFilter = mediaSubFilter,
                         onSelectMediaFilter = { mediaSubFilter = it },
-                        is3DShelfMode = is3DShelfMode,
-                        onToggle3DShelf = { is3DShelfMode = !is3DShelfMode },
-                        havenStartedCollapsed = havenStartedCollapsed,
-                        onToggleHavenStarted = { havenStartedCollapsed = !havenStartedCollapsed },
                         selectedUsPlatforms = selectedUsPlatforms,
                         onToggleUsPlatform = toggleUsPlatform,
                         onOpenShow = { selectedShowForDetail = it },
@@ -316,29 +386,143 @@ fun TvTimeMainScreen(
                     )
                 }
 
-                "profile" -> {
-                    ProfileTabScreen(
-                        currentUserId = currentUserId,
+                "swipe" -> {
+                    SwipeRecommendationsTabScreen(
                         shows = shows,
                         movies = movies,
-                        onOpenShow = { selectedShowForDetail = it },
-                        onOpenMovie = { selectedMovieForDetail = it },
-                        onOpenImport = { showImportDialog = true },
-                        onOpenAccountSwitch = { showAccountSwitcherDialog = true },
-                        onSyncNow = {
+                        decidedIds = decidedIds,
+                        swipeFilter = swipeMediaFilter,
+                        onSelectSwipeFilter = { swipeMediaFilter = it },
+                        onSwipeDecision = { item, action ->
                             scope.launch {
-                                FirestoreSyncService.pullFromFirestoreIfNeeded(dao, currentUserId)
-                                val ok = FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                Toast.makeText(
-                                    context,
-                                    if (ok) "Synced with Cloud Firestore" else "Saved locally",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                                // 1. Record decision so we never suggest this again
+                                if (!decidedIds.contains(item.externalId)) {
+                                    dao.insertActor(
+                                        ActorEntity(
+                                            userId = currentUserId,
+                                            externalId = item.externalId,
+                                            name = item.title.lowercase(),
+                                            role = "decided_rec"
+                                        )
+                                    )
+                                }
+
+                                // 2. If watchlist or completed, add to DB
+                                if (action == "watchlist" || action == "completed") {
+                                    val isCompleted = action == "completed"
+                                    if (item.mediaType == "movie") {
+                                        val existingMovie = movies.firstOrNull { it.externalId == item.externalId }
+                                        if (existingMovie == null) {
+                                            dao.insertMovie(
+                                                MovieEntity(
+                                                    userId = currentUserId,
+                                                    externalId = item.externalId,
+                                                    tmdbId = item.tmdbId,
+                                                    title = item.title,
+                                                    year = item.year,
+                                                    runtimeMins = item.runtimeMins,
+                                                    genresCsv = item.genresCsv,
+                                                    director = item.networkOrDirector,
+                                                    streamingService = item.networkOrDirector,
+                                                    rating = item.rating,
+                                                    posterUrl = item.posterUrl,
+                                                    overview = item.overview,
+                                                    watched = isCompleted
+                                                )
+                                            )
+                                        }
+                                    } else {
+                                        val existingShow = shows.firstOrNull { it.externalId == item.externalId }
+                                        if (existingShow == null) {
+                                            val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+                                                tvmazeId = item.tvmazeId,
+                                                tmdbId = item.tmdbId,
+                                                title = item.title,
+                                                externalId = item.externalId
+                                            )
+                                            val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else listOf(
+                                                EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
+                                            )
+                                            val watchedCsv = if (isCompleted) {
+                                                TvTimeProgressCalculator.serializeWatchedSet(
+                                                    finalEps.map { it.code.uppercase() }.toSet()
+                                                )
+                                            } else ""
+                                            dao.insertShow(
+                                                ShowEntity(
+                                                    userId = currentUserId,
+                                                    externalId = item.externalId,
+                                                    tvmazeId = item.tvmazeId,
+                                                    tmdbId = item.tmdbId,
+                                                    title = item.title,
+                                                    year = item.year,
+                                                    network = item.networkOrDirector,
+                                                    status = item.status,
+                                                    runtimeMins = item.runtimeMins,
+                                                    genresCsv = item.genresCsv,
+                                                    castCsv = fetchedCast.joinToString(", "),
+                                                    rating = item.rating,
+                                                    posterUrl = item.posterUrl,
+                                                    overview = item.overview,
+                                                    userStatus = if (isCompleted) "completed" else "interested",
+                                                    watchedCodesCsv = watchedCsv,
+                                                    episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                                                )
+                                            )
+                                        }
+                                    }
+                                    val msg = if (isCompleted) "Marked ${item.title} completed ✓" else "Added ${item.title} to Watchlist"
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                }
+                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
                             }
                         }
                     )
                 }
             }
+        }
+    }
+
+    // Hamburger Menu Drawer / Sheet (Stats, Recently Watched, Export, Sync, Account Switch)
+    if (showHamburgerSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showHamburgerSheet = false },
+            containerColor = Color(0xFF141418),
+            contentColor = Color.White,
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            ProfileTabScreen(
+                currentUserId = currentUserId,
+                shows = shows,
+                movies = movies,
+                onOpenShow = {
+                    showHamburgerSheet = false
+                    selectedShowForDetail = it
+                },
+                onOpenMovie = {
+                    showHamburgerSheet = false
+                    selectedMovieForDetail = it
+                },
+                onOpenImport = {
+                    showHamburgerSheet = false
+                    showImportDialog = true
+                },
+                onOpenAccountSwitch = {
+                    showHamburgerSheet = false
+                    showAccountSwitcherDialog = true
+                },
+                onSyncNow = {
+                    scope.launch {
+                        FirestoreSyncService.pullFromFirestoreIfNeeded(dao, currentUserId)
+                        val ok = FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                        Toast.makeText(
+                            context,
+                            if (ok) "Synced with Cloud Firestore" else "Saved locally",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            )
         }
     }
 
@@ -543,43 +727,185 @@ fun TvTimeMainScreen(
 
 
 @Composable
+private fun TvFilterDropdown(
+    prefixLabel: String,
+    selectedKey: String,
+    options: List<Pair<String, String>>,
+    onSelect: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val activeLabel = options.firstOrNull { it.first == selectedKey }?.second
+        ?: options.firstOrNull()?.second.orEmpty()
+
+    Box {
+        Surface(
+            onClick = { expanded = true },
+            shape = RoundedCornerShape(50),
+            color = TvTimePalette.SurfacePill,
+            border = BorderStroke(1.dp, TvTimePalette.Border)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (prefixLabel.isNotBlank()) {
+                    Text(
+                        text = "$prefixLabel:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TvTimePalette.TextSecondary
+                    )
+                }
+                Text(
+                    text = "$activeLabel ▾",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = TvTimePalette.Yellow
+                )
+            }
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(Color(0xFF18181D))
+        ) {
+            options.forEach { (key, label) ->
+                val isSelected = key == selectedKey
+                DropdownMenuItem(
+                    text = {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) TvTimePalette.Yellow else Color.White,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
+                            if (isSelected) {
+                                Text(
+                                    text = "✓",
+                                    color = TvTimePalette.Yellow,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier.padding(start = 12.dp)
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(key)
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun UsStreamingPlatformFilterBar(
     selectedPlatforms: Set<String>,
     onTogglePlatform: (String) -> Unit
 ) {
-    LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxWidth()
+    var expanded by remember { mutableStateOf(false) }
+    val hasSelection = selectedPlatforms.isNotEmpty()
+    val summaryText = if (!hasSelection) {
+        "🇺🇸 Streaming: Filter ▾"
+    } else if (selectedPlatforms.size <= 2) {
+        "🇺🇸 Streaming: ${selectedPlatforms.joinToString(", ")} ▾"
+    } else {
+        "🇺🇸 Streaming: ${selectedPlatforms.size} selected ▾"
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item(key = "us_platform_all") {
-            val allActive = selectedPlatforms.isEmpty()
+        Box {
             Surface(
-                onClick = { onTogglePlatform("all") },
+                onClick = { expanded = true },
                 shape = RoundedCornerShape(50),
-                color = if (allActive) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
-                border = if (allActive) null else BorderStroke(1.dp, TvTimePalette.Border)
+                color = TvTimePalette.SurfacePill,
+                border = BorderStroke(
+                    1.dp,
+                    if (hasSelection) TvTimePalette.Yellow else TvTimePalette.Border
+                )
             ) {
                 Text(
-                    text = "🇺🇸 All US",
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                    color = if (allActive) TvTimePalette.OnYellow else TvTimePalette.TextSecondary,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    text = summaryText,
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = if (hasSelection) TvTimePalette.Yellow else Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                 )
             }
+
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.background(Color(0xFF18181D))
+            ) {
+                if (hasSelection) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "✕ Remove filter",
+                                color = Color(0xFFF87171),
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        onClick = {
+                            onTogglePlatform("clear")
+                            expanded = false
+                        }
+                    )
+                    HorizontalDivider(color = TvTimePalette.Border)
+                }
+
+                LiveMediaCatalogService.US_PLATFORMS.forEach { platform ->
+                    val active = selectedPlatforms.contains(platform)
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = platform,
+                                    color = if (active) TvTimePalette.Yellow else Color.White,
+                                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal
+                                )
+                                if (active) {
+                                    Text(
+                                        text = "✓",
+                                        color = TvTimePalette.Yellow,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        modifier = Modifier.padding(start = 12.dp)
+                                    )
+                                }
+                            }
+                        },
+                        onClick = { onTogglePlatform(platform) }
+                    )
+                }
+            }
         }
-        items(LiveMediaCatalogService.US_PLATFORMS, key = { "us_platform_$it" }) { platform ->
-            val active = selectedPlatforms.contains(platform)
+
+        if (hasSelection) {
             Surface(
-                onClick = { onTogglePlatform(platform) },
+                onClick = { onTogglePlatform("clear") },
                 shape = RoundedCornerShape(50),
-                color = if (active) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
-                border = if (active) null else BorderStroke(1.dp, TvTimePalette.Border)
+                color = Color(0x26EF4444),
+                border = BorderStroke(1.dp, Color(0x66EF4444))
             ) {
                 Text(
-                    text = platform,
+                    text = "✕ Clear",
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                    color = if (active) TvTimePalette.OnYellow else TvTimePalette.TextSecondary,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    color = Color(0xFFF87171),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
                 )
             }
         }
@@ -595,10 +921,6 @@ private fun HomeTabScreen(
     onSelectTopSegment: (String) -> Unit,
     mediaFilter: String,
     onSelectMediaFilter: (String) -> Unit,
-    is3DShelfMode: Boolean,
-    onToggle3DShelf: () -> Unit,
-    havenStartedCollapsed: Boolean,
-    onToggleHavenStarted: () -> Unit,
     selectedUsPlatforms: Set<String>,
     onToggleUsPlatform: (String) -> Unit,
     onOpenShow: (ShowEntity) -> Unit,
@@ -661,125 +983,52 @@ private fun HomeTabScreen(
             }
         }
 
-        // 2. Sub-filter Row
+        // 2. Dropdown Filter Row (Status Dropdown + US Streaming Platform Dropdown)
         item(key = "subfilter_row") {
             if (topSegment == "shows") {
+                val showStatusOptions = listOf(
+                    "in_progress" to "In progress",
+                    "interested" to "Watchlist",
+                    "completed" to "Completed",
+                    "stopped" to "Stopped"
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = TvTimePalette.SurfacePill,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            listOf(
-                                "in_progress" to "In progress",
-                                "interested" to "Watchlist",
-                                "completed" to "Completed",
-                                "stopped" to "Stopped"
-                            ).forEach { (key, label) ->
-                                val active = mediaFilter == key
-                                Surface(
-                                    onClick = { onSelectMediaFilter(key) },
-                                    shape = RoundedCornerShape(50),
-                                    color = if (active) TvTimePalette.Yellow else Color.Transparent
-                                ) {
-                                    Text(
-                                        text = label,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (active) TvTimePalette.OnYellow else TvTimePalette.TextSecondary,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    Surface(
-                        onClick = onToggle3DShelf,
-                        shape = CircleShape,
-                        color = if (is3DShelfMode) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "⊞",
-                                fontSize = 15.sp,
-                                color = if (is3DShelfMode) TvTimePalette.OnYellow else Color.White
-                            )
-                        }
-                    }
+                    TvFilterDropdown(
+                        prefixLabel = "Status",
+                        selectedKey = mediaFilter,
+                        options = showStatusOptions,
+                        onSelect = onSelectMediaFilter
+                    )
+                    UsStreamingPlatformFilterBar(
+                        selectedPlatforms = selectedUsPlatforms,
+                        onTogglePlatform = onToggleUsPlatform
+                    )
                 }
             } else if (topSegment == "movies") {
+                val movieStatusOptions = listOf(
+                    "interested" to "Watchlist",
+                    "completed" to "Watched"
+                )
+                val effectiveMovieFilter = if (mediaFilter == "completed") "completed" else "interested"
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "All Movies",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (mediaFilter == "all") TvTimePalette.Yellow else TvTimePalette.TextSecondary,
-                        modifier = Modifier
-                            .clickable { onSelectMediaFilter("all") }
-                            .padding(horizontal = 4.dp, vertical = 6.dp)
+                    TvFilterDropdown(
+                        prefixLabel = "Movies",
+                        selectedKey = effectiveMovieFilter,
+                        options = movieStatusOptions,
+                        onSelect = onSelectMediaFilter
                     )
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = TvTimePalette.SurfacePill
-                        ) {
-                            Row(modifier = Modifier.padding(4.dp)) {
-                                listOf(
-                                    "interested" to "Watchlist",
-                                    "completed" to "Watched"
-                                ).forEach { (key, label) ->
-                                    val active = mediaFilter == key
-                                    Surface(
-                                        onClick = { onSelectMediaFilter(key) },
-                                        shape = RoundedCornerShape(50),
-                                        color = if (active) TvTimePalette.Yellow else Color.Transparent
-                                    ) {
-                                        Text(
-                                            text = label,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = if (active) TvTimePalette.OnYellow else TvTimePalette.TextSecondary,
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Surface(
-                            onClick = onToggle3DShelf,
-                            shape = CircleShape,
-                            color = if (is3DShelfMode) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = "⊞",
-                                    fontSize = 15.sp,
-                                    color = if (is3DShelfMode) TvTimePalette.OnYellow else Color.White
-                                )
-                            }
-                        }
-                    }
+                    UsStreamingPlatformFilterBar(
+                        selectedPlatforms = selectedUsPlatforms,
+                        onTogglePlatform = onToggleUsPlatform
+                    )
                 }
             } else {
                 Row(
@@ -797,116 +1046,7 @@ private fun HomeTabScreen(
             }
         }
 
-        // 2b. US Streaming Platform Filter Bar (Home)
-        if (topSegment != "upcoming") {
-            item(key = "home_us_platform_bar") {
-                UsStreamingPlatformFilterBar(
-                    selectedPlatforms = selectedUsPlatforms,
-                    onTogglePlatform = onToggleUsPlatform
-                )
-            }
-        }
-
-        // 3. Optional 3D Watch List Shelf View
-        if (is3DShelfMode && topSegment != "upcoming") {
-            item(key = "3d_shelf_room") {
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = Color(0xFF0E0A1A),
-                    border = BorderStroke(1.dp, Color(0xFF3B1D5E)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = if (topSegment == "shows") "Shows" else "Movies",
-                                style = MaterialTheme.typography.titleLarge,
-                                color = Color(0xFF34D399)
-                            )
-                            Text(
-                                text = "Watch List 3D",
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = Color(0xFFD946EF)
-                            )
-                        }
-
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            if (topSegment == "shows") {
-                                items(platformFilteredShows, key = { "shelf_s_${it.id}" }) { s ->
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier
-                                            .width(78.dp)
-                                            .clickable { onOpenShow(s) }
-                                    ) {
-                                        NetworkPosterImage(
-                                            url = s.posterUrl,
-                                            title = s.title,
-                                            width = 78.dp,
-                                            height = 112.dp,
-                                            cornerRadius = 8.dp
-                                        )
-                                        Text(
-                                            text = s.title,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color.White,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.padding(top = 4.dp)
-                                        )
-                                    }
-                                }
-                            } else {
-                                items(platformFilteredMovies, key = { "shelf_m_${it.id}" }) { m ->
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier
-                                            .width(78.dp)
-                                            .clickable { onOpenMovie(m) }
-                                    ) {
-                                        NetworkPosterImage(
-                                            url = m.posterUrl,
-                                            title = m.title,
-                                            width = 78.dp,
-                                            height = 112.dp,
-                                            cornerRadius = 8.dp
-                                        )
-                                        Text(
-                                            text = m.title,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color.White,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.padding(top = 4.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(8.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFFA16207))
-                        )
-                    }
-                }
-            }
-        }
-
-        // 4. Main Content List
+        // 3. Main Content List
         if (topSegment == "shows") {
             val partitioned = platformFilteredShows.map { s ->
                 val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
@@ -948,15 +1088,6 @@ private fun HomeTabScreen(
                         )
                     }
                 }
-                "all" -> {
-                    items(platformFilteredShows, key = { it.id }) { show ->
-                        TvShowWatchCard(
-                            show = show,
-                            onCardClick = { onOpenShow(show) },
-                            onEyeClick = { onMarkNextEpisode(show) }
-                        )
-                    }
-                }
                 else -> {
                     items(startedInProgress, key = { it.id }) { show ->
                         TvShowWatchCard(
@@ -968,10 +1099,10 @@ private fun HomeTabScreen(
                 }
             }
         } else if (topSegment == "movies") {
-            val filteredMovies = when (mediaFilter) {
-                "completed" -> platformFilteredMovies.filter { it.watched }
-                "interested" -> platformFilteredMovies.filter { !it.watched }
-                else -> platformFilteredMovies
+            val filteredMovies = if (mediaFilter == "completed") {
+                platformFilteredMovies.filter { it.watched }
+            } else {
+                platformFilteredMovies.filter { !it.watched }
             }
             items(filteredMovies, key = { it.id }) { movie ->
                 TvMovieWatchCard(
@@ -1149,53 +1280,35 @@ private fun SearchTabScreen(
             }
         }
 
-        // 1b. US Streaming Platform Filter Bar (Search & Discover)
-        item(key = "search_us_platform_bar") {
-            UsStreamingPlatformFilterBar(
-                selectedPlatforms = selectedUsPlatforms,
-                onTogglePlatform = onToggleUsPlatform
-            )
-        }
-
-        // 2. Results Count + Sort Bar: Top | Newest | Oldest
+        // 2. Dropdown Filter Row: US Streaming Platform Dropdown + Sort Dropdown
         item(key = "search_sort_row") {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            val sortOptions = listOf(
+                "top" to "Top",
+                "newest" to "Newest",
+                "oldest" to "Oldest"
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    UsStreamingPlatformFilterBar(
+                        selectedPlatforms = selectedUsPlatforms,
+                        onTogglePlatform = onToggleUsPlatform
+                    )
+                    TvFilterDropdown(
+                        prefixLabel = "Sort",
+                        selectedKey = sortKey,
+                        options = sortOptions,
+                        onSelect = onSortChange
+                    )
+                }
                 Text(
                     text = if (isSearching) "Searching..." else "${sortedResults.size} results",
                     style = MaterialTheme.typography.bodySmall,
                     color = TvTimePalette.TextSecondary
                 )
-
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = TvTimePalette.SurfacePill
-                ) {
-                    Row(modifier = Modifier.padding(4.dp)) {
-                        listOf(
-                            "top" to "Top",
-                            "newest" to "Newest",
-                            "oldest" to "Oldest"
-                        ).forEach { (key, label) ->
-                            val active = sortKey == key
-                            Surface(
-                                onClick = { onSortChange(key) },
-                                shape = RoundedCornerShape(50),
-                                color = if (active) TvTimePalette.Yellow else Color.Transparent
-                            ) {
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = if (active) TvTimePalette.OnYellow else TvTimePalette.TextSecondary,
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                                )
-                            }
-                        }
-                    }
-                }
             }
         }
 
@@ -1208,6 +1321,486 @@ private fun SearchTabScreen(
                 onCardClick = { onAddOrOpenResult(item) },
                 onActionClick = { onAddOrOpenResult(item) }
             )
+        }
+    }
+}
+
+
+@Composable
+private fun SwipeRecommendationsTabScreen(
+    shows: List<ShowEntity>,
+    movies: List<MovieEntity>,
+    decidedIds: Set<String>,
+    swipeFilter: String,
+    onSelectSwipeFilter: (String) -> Unit,
+    onSwipeDecision: (SearchResultItem, String) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var rawDeck by remember { mutableStateOf<List<SearchResultItem>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(false) }
+    var currentPage by remember { mutableStateOf(1) }
+    var localDismissedIds by remember { mutableStateOf(emptySet<String>()) }
+
+    val existingIds = remember(shows, movies) {
+        (shows.map { it.externalId } + movies.map { it.externalId }).toSet()
+    }
+    val existingTitles = remember(shows, movies) {
+        (shows.map { it.title.lowercase().trim() } + movies.map { it.title.lowercase().trim() }).toSet()
+    }
+
+    val loadMore: (Int) -> Unit = { pageToFetch ->
+        if (!isLoading) {
+            isLoading = true
+            scope.launch {
+                val fetched = LiveMediaCatalogService.fetchRecommendations(
+                    shows = shows,
+                    movies = movies,
+                    page = pageToFetch
+                )
+                val merged = (rawDeck + fetched).distinctBy { it.externalId }
+                rawDeck = merged
+                isLoading = false
+            }
+        }
+    }
+
+    LaunchedEffect(shows.size, movies.size) {
+        if (rawDeck.isEmpty()) {
+            loadMore(1)
+        }
+    }
+
+    val filteredDeck = remember(rawDeck, existingIds, existingTitles, decidedIds, localDismissedIds, swipeFilter) {
+        rawDeck.filter { item ->
+            !existingIds.contains(item.externalId) &&
+                !existingTitles.contains(item.title.lowercase().trim()) &&
+                !decidedIds.contains(item.externalId) &&
+                !localDismissedIds.contains(item.externalId) &&
+                (swipeFilter == "all" || item.mediaType == swipeFilter)
+        }
+    }
+
+    LaunchedEffect(filteredDeck.size) {
+        if (filteredDeck.size <= 3 && !isLoading && rawDeck.isNotEmpty() && currentPage < 5) {
+            val nextPage = currentPage + 1
+            currentPage = nextPage
+            loadMore(nextPage)
+        }
+    }
+
+    val topItem = filteredDeck.firstOrNull()
+    val nextItem = filteredDeck.getOrNull(1)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Header + Filter Dropdown
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(
+                    text = "🔥 For You",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold),
+                    color = Color.White
+                )
+                Text(
+                    text = "Swipe based on what you watched",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TvTimePalette.TextSecondary
+                )
+            }
+
+            TvFilterDropdown(
+                prefixLabel = "Filter",
+                selectedKey = swipeFilter,
+                options = listOf(
+                    "all" to "All (Series & Movies)",
+                    "tv" to "Series Only",
+                    "movie" to "Movies Only"
+                ),
+                onSelect = onSelectSwipeFilter
+            )
+        }
+
+        // Main Deck Area
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isLoading && topItem == null) {
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = TvTimePalette.SurfaceCard,
+                    border = BorderStroke(1.dp, TvTimePalette.Border),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("🍿", fontSize = 42.sp)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Finding recommendations for you...",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Analyzing your watched series & movies",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TvTimePalette.TextSecondary,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            } else if (topItem == null) {
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = TvTimePalette.SurfaceCard,
+                    border = BorderStroke(1.dp, TvTimePalette.Border),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("✨", fontSize = 42.sp)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "You're all caught up!",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Load more recommendations based on your library.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TvTimePalette.TextSecondary,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Button(
+                            onClick = {
+                                val next = currentPage + 1
+                                currentPage = next
+                                loadMore(next)
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = TvTimePalette.Yellow,
+                                contentColor = TvTimePalette.OnYellow
+                            )
+                        ) {
+                            Text("↻ Load More Suggestions", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            } else {
+                // Background Next Card Preview
+                if (nextItem != null) {
+                    Surface(
+                        shape = RoundedCornerShape(28.dp),
+                        color = Color(0xFF141418),
+                        border = BorderStroke(1.dp, TvTimePalette.Border),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {}
+                }
+
+                // Active Draggable Top Card
+                var dragX by remember(topItem.externalId) { mutableStateOf(0f) }
+                var dragY by remember(topItem.externalId) { mutableStateOf(0f) }
+
+                val handleDecision: (String) -> Unit = { action ->
+                    localDismissedIds = localDismissedIds + topItem.externalId
+                    onSwipeDecision(topItem, action)
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = Color(0xFF18181D),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .offset { IntOffset(dragX.roundToInt(), dragY.roundToInt()) }
+                        .graphicsLayer {
+                            rotationZ = (dragX * 0.04f).coerceIn(-15f, 15f)
+                        }
+                        .pointerInput(topItem.externalId) {
+                            detectDragGestures(
+                                onDragEnd = {
+                                    when {
+                                        dragX > 180f -> handleDecision("completed")
+                                        dragX < -180f -> handleDecision("ignore")
+                                        dragY < -160f && kotlin.math.abs(dragX) < 150f -> handleDecision("watchlist")
+                                        else -> {
+                                            dragX = 0f
+                                            dragY = 0f
+                                        }
+                                    }
+                                },
+                                onDragCancel = {
+                                    dragX = 0f
+                                    dragY = 0f
+                                },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    dragX += dragAmount.x
+                                    dragY += dragAmount.y
+                                }
+                            )
+                        }
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            // Poster Banner Area
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(0.58f)
+                                    .background(Color(0xFF101014)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                NetworkPosterImage(
+                                    url = topItem.posterUrl,
+                                    title = topItem.title,
+                                    width = 210.dp,
+                                    height = 300.dp,
+                                    cornerRadius = 18.dp
+                                )
+
+                                // Top Badges
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .align(Alignment.TopStart)
+                                        .padding(14.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = Color.Black.copy(alpha = 0.75f),
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+                                    ) {
+                                        Text(
+                                            text = if (topItem.mediaType == "movie") "MOVIE" else "TV SERIES",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                            color = TvTimePalette.Yellow,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                        )
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = Color.Black.copy(alpha = 0.75f),
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+                                    ) {
+                                        Text(
+                                            text = "★ ${"%.1f".format(topItem.rating)}",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                            color = Color.White,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Details Area
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(0.42f)
+                                    .padding(18.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                if (topItem.status.startsWith("Because")) {
+                                    Text(
+                                        text = "✨ ${topItem.status}",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                        color = Color(0xFF4ADE80),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Text(
+                                    text = topItem.title,
+                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${topItem.year} · ${topItem.genresCsv} · ${topItem.runtimeMins}m",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = TvTimePalette.Yellow,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = topItem.overview,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TvTimePalette.TextSecondary,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        // Swipe Dynamic Stamp Overlays
+                        if (dragX > 60f) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.Black.copy(alpha = 0.6f),
+                                border = BorderStroke(3.dp, Color(0xFF4ADE80)),
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .padding(24.dp)
+                            ) {
+                                Text(
+                                    text = "✓ COMPLETED",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                    color = Color(0xFF4ADE80),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                        } else if (dragX < -60f) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.Black.copy(alpha = 0.6f),
+                                border = BorderStroke(3.dp, Color(0xFFF87171)),
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(24.dp)
+                            ) {
+                                Text(
+                                    text = "✕ IGNORE",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                    color = Color(0xFFF87171),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                        } else if (dragY < -60f) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.Black.copy(alpha = 0.6f),
+                                border = BorderStroke(3.dp, TvTimePalette.Yellow),
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(bottom = 24.dp)
+                            ) {
+                                Text(
+                                    text = "+ WATCHLIST",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                    color = TvTimePalette.Yellow,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Bottom 3 Action Buttons: Ignore (Left) | + Watchlist (Up) | Completed (Right)
+        if (topItem != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Ignore
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Surface(
+                        onClick = {
+                            localDismissedIds = localDismissedIds + topItem.externalId
+                            onSwipeDecision(topItem, "ignore")
+                        },
+                        shape = CircleShape,
+                        color = Color(0x1FF87171),
+                        border = BorderStroke(2.dp, Color(0x99F87171)),
+                        modifier = Modifier.size(56.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text("✕", fontSize = 22.sp, color = Color(0xFFF87171), fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Text(
+                        text = "Ignore",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = TvTimePalette.TextSecondary
+                    )
+                }
+
+                // + Watchlist
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Surface(
+                        onClick = {
+                            localDismissedIds = localDismissedIds + topItem.externalId
+                            onSwipeDecision(topItem, "watchlist")
+                        },
+                        shape = CircleShape,
+                        color = Color(0x24FACC15),
+                        border = BorderStroke(2.dp, TvTimePalette.Yellow),
+                        modifier = Modifier.size(64.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text("🔖", fontSize = 24.sp)
+                        }
+                    }
+                    Text(
+                        text = "+ Watchlist",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = TvTimePalette.Yellow
+                    )
+                }
+
+                // Completed
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Surface(
+                        onClick = {
+                            localDismissedIds = localDismissedIds + topItem.externalId
+                            onSwipeDecision(topItem, "completed")
+                        },
+                        shape = CircleShape,
+                        color = Color(0x2422C55E),
+                        border = BorderStroke(2.dp, Color(0xFF4ADE80)),
+                        modifier = Modifier.size(56.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text("✓", fontSize = 22.sp, color = Color(0xFF4ADE80), fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Text(
+                        text = "Completed",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = Color(0xFF4ADE80)
+                    )
+                }
+            }
         }
     }
 }
@@ -1259,13 +1852,12 @@ private fun ProfileTabScreen(
             s to effectiveStatus
         }
     }
-    val interestedShows = remember(partitionedShows) {
-        partitionedShows.filter { it.second == "interested" }.map { it.first }
+    val completedShows = remember(partitionedShows) {
+        partitionedShows.filter { it.second == "completed" }.map { it.first }
     }
     val watchedOrInProgressShows = remember(partitionedShows) {
         partitionedShows.filter { it.second == "completed" || it.second == "in_progress" }.map { it.first }
     }
-    val interestedMovies = remember(movies) { movies.filter { !it.watched } }
     val watchedMovies = remember(movies) { movies.filter { it.watched } }
 
     LazyColumn(
@@ -1371,7 +1963,7 @@ private fun ProfileTabScreen(
             }
         }
 
-        // 2. WATCH STATS Card (Total Watch Hours, Series Watch Hours, Movie Watch Hours, Number of Series & Movies)
+        // 2. WATCH STATS Card (Simplified: Completed Series & Completed Episodes, Watched Movies)
         item(key = "total_watch_time_card") {
             Surface(
                 shape = RoundedCornerShape(26.dp),
@@ -1394,7 +1986,7 @@ private fun ProfileTabScreen(
                             color = TvTimePalette.TextSecondary
                         )
                         Text(
-                            text = "${stats.totalSeriesCount} Series · ${stats.totalMoviesCount} Movies",
+                            text = "${completedShows.size} Completed Series · ${watchedMovies.size} Watched Movies",
                             style = MaterialTheme.typography.labelMedium,
                             color = TvTimePalette.Yellow
                         )
@@ -1431,7 +2023,7 @@ private fun ProfileTabScreen(
                                 color = TvTimePalette.Yellow
                             )
                             Text(
-                                text = "${stats.totalSeriesCount} Series (${watchedOrInProgressShows.size} active/done · ${interestedShows.size} watchlist) · ${stats.totalEpisodesWatched} eps",
+                                text = "${completedShows.size} completed series · ${stats.totalEpisodesWatched} completed episodes",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TvTimePalette.TextSecondary
                             )
@@ -1454,7 +2046,7 @@ private fun ProfileTabScreen(
                                 color = TvTimePalette.Yellow
                             )
                             Text(
-                                text = "${stats.totalMoviesCount} Movies (${watchedMovies.size} watched · ${interestedMovies.size} watchlist)",
+                                text = "${watchedMovies.size} watched movies",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TvTimePalette.TextSecondary
                             )
