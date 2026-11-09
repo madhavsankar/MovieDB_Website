@@ -3,7 +3,7 @@
 Local Web & API Server for TV Time: Show & Movie Tracker.
 Mirrors the Cloudflare Worker (`cloudflare/worker.js`) so you can run and test the full
 Web App locally on macOS (`python3 server.py`) with live Firebase Cloud Firestore sync
-(`places-tracker-989b5` -> `tvtime_state/user_state_{userId}`), TVMaze API, and Apple iTunes Search API.
+(`tvtime_state/user_state_{userId}`), TVMaze API, and Apple iTunes Search API.
 """
 
 import json
@@ -22,8 +22,8 @@ JSC_BIN = "/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/
 
 def load_local_properties():
     props = {
-        "FIREBASE_PROJECT_ID": os.environ.get("FIREBASE_PROJECT_ID", "places-tracker-989b5"),
-        "DEFAULT_USER_ID": os.environ.get("DEFAULT_USER_ID", "madhavsankar"),
+        "FIREBASE_PROJECT_ID": os.environ.get("FIREBASE_PROJECT_ID", ""),
+        "DEFAULT_USER_ID": os.environ.get("DEFAULT_USER_ID", "default"),
     }
     prop_path = os.path.join(ROOT_DIR, "android", "local.properties")
     if os.path.exists(prop_path):
@@ -40,7 +40,7 @@ def load_local_properties():
 
 
 CONFIG = load_local_properties()
-FIREBASE_PROJECT_ID = CONFIG.get("FIREBASE_PROJECT_ID", "places-tracker-989b5")
+FIREBASE_PROJECT_ID = CONFIG.get("FIREBASE_PROJECT_ID", "")
 
 
 def load_web_app_html():
@@ -66,8 +66,8 @@ def load_starter_seed():
         )
     harness = (
         repo_src
-        + "\nconst r = new FirestoreRepository({FIREBASE_PROJECT_ID: 'places-tracker-989b5'});"
-        + "\nprint(JSON.stringify(r.defaultState('madhavsankar')));"
+        + "\nconst r = new FirestoreRepository({FIREBASE_PROJECT_ID: 'demo-project'});"
+        + "\nprint(JSON.stringify(r.defaultState('demo_user')));"
     )
     proc = subprocess.run([JSC_BIN, "-e", harness], capture_output=True, text=True, check=True)
     return json.loads(proc.stdout.strip().splitlines()[-1])

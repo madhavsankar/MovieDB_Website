@@ -56,6 +56,7 @@ jobs:
           if [ -n "$GOOGLE_SERVICES_JSON" ]; then
             printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json
           fi
+          ARTIFACT_ZIP_PASSWORD="$KEYSTORE_PASSWORD"
           if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ]; then
             echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/release-keystore.jks
             export KEYSTORE_FILE="release-keystore.jks"
@@ -85,8 +86,10 @@ jobs:
             cp app/build/outputs/apk/debug/*.apk dist/TVTimeTracker.apk
           fi
           cp dist/TVTimeTracker.apk dist/TVTimeTracker-firebase.apk || true
-          if [ -n "$KEYSTORE_PASSWORD" ] && [ -f dist/TVTimeTracker.apk ]; then
-            zip -j -P "$KEYSTORE_PASSWORD" dist/TVTimeTracker-Protected.zip dist/TVTimeTracker.apk
+          if [ -n "$ARTIFACT_ZIP_PASSWORD" ] && [ -f dist/TVTimeTracker.apk ]; then
+            zip -j -P "$ARTIFACT_ZIP_PASSWORD" dist/TVTimeTracker-Protected.zip dist/TVTimeTracker.apk
+            rm -f dist/TVTimeTracker.apk
+          else
             rm -f dist/TVTimeTracker.apk
           fi
 

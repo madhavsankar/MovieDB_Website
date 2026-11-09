@@ -186,7 +186,7 @@ export const STARTER_ACTORS = [];
 
 export class FirestoreRepository {
   constructor(env) {
-    this.projectId = (env?.FIREBASE_PROJECT_ID || "places-tracker-989b5").trim();
+    this.projectId = String(env?.FIREBASE_PROJECT_ID || "").trim();
   }
 
   static sanitizeUserId(raw) {

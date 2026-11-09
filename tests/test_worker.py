@@ -40,10 +40,10 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
             + svc_src
             + """
             const code = formatEpisodeCode(2, 4);
-            const repo = new FirestoreRepository({ FIREBASE_PROJECT_ID: 'places-tracker-989b5' });
-            const defState = repo.defaultState('madhavsankar');
+            const repo = new FirestoreRepository({ FIREBASE_PROJECT_ID: 'demo-firebase-project' });
+            const defState = repo.defaultState('demo_user');
             const stats = LiveCatalogService.computeStats(defState);
-            const docUrl = repo.docUrlForUser('madhavsankar');
+            const docUrl = repo.docUrlForUser('demo_user');
             const normalizedUs = LiveCatalogService.normalizeUsProvidersFromTmdb({ flatrate: [{ provider_id: 8, provider_name: 'Netflix' }, { provider_id: 9, provider_name: 'Amazon Prime Video' }] }, '');
             const out = JSON.stringify({ code, stats, docUrl, showsCount: defState.shows.length, normalizedUs, platformsCount: LiveCatalogService.US_STREAMING_PLATFORMS.length });
             if (typeof console !== 'undefined' && console.log) console.log(out);
@@ -53,7 +53,7 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
 
         out = self._run_js(harness)
         self.assertEqual(out["code"], "S02E04")
-        self.assertIn("tvtime_state/user_state_madhavsankar", out["docUrl"])
+        self.assertIn("tvtime_state/user_state_demo_user", out["docUrl"])
         self.assertEqual(out["showsCount"], 3)
         self.assertEqual(out["normalizedUs"], "Netflix / Prime Video")
         self.assertEqual(out["platformsCount"], 8)
@@ -331,15 +331,39 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
     def test_local_python_server_helpers(self):
         import server
 
-        st = server.default_user_state("madhavsankar")
+        st = server.default_user_state("demo_user")
         stats = server.compute_stats(st)
         html = server.load_web_app_html()
         self.assertTrue(html.startswith("<!DOCTYPE html>"))
         self.assertNotIn("export const WEB_APP_HTML", html)
-        self.assertEqual(st["userId"], "madhavsankar")
+        self.assertEqual(st["userId"], "demo_user")
         self.assertEqual(len(st["shows"]), 3)
         self.assertEqual(st["shows"][0]["tvmazeId"], 44933)
         self.assertGreater(stats["totalMins"], 1000)
+
+    def test_public_repo_security_invariants(self):
+        """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""
+        proc = subprocess.run(
+            ["git", "ls-files"],
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        tracked_files = [f.strip() for f in proc.stdout.splitlines() if f.strip()]
+        forbidden_Files = {"local.properties", "android/local.properties", "google-services.json", "android/app/google-services.json"}
+        for tf in tracked_files:
+            self.assertNotIn(tf, forbidden_Files, f"Sensitive config file {tf} must not be tracked in git")
+            self.assertFalse(tf.endswith((".jks", ".keystore", ".apk")), f"Binary key/apk {tf} must not be tracked in git")
+            if tf == "tests/test_worker.py" or tf.endswith(".jar"):
+                continue
+            full_path = os.path.join(ROOT_DIR, tf)
+            if os.path.isfile(full_path):
+                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                self.assertNotIn("places-tracker-989b5", content, f"Hardcoded Firebase project ID found in {tf}")
+                self.assertNotIn("AIzaSy", content, f"Hardcoded Google API key found in {tf}")
+                self.assertNotIn("GOCSPX-", content, f"Hardcoded Google OAuth secret found in {tf}")
 
 
 if __name__ == "__main__":
