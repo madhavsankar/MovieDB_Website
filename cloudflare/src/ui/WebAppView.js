@@ -261,9 +261,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
     <section id="tab-stats" class="hidden space-y-4">
       <div class="flex items-center gap-2.5">
         <button
-          onclick="app.switchTab('home')"
+          onclick="app.goBack()"
           class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
-          title="Back to Home"
+          title="Back"
         >
           ←
         </button>
@@ -315,9 +315,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
     <section id="tab-recent" class="hidden space-y-5">
       <div class="flex items-center gap-2.5">
         <button
-          onclick="app.switchTab('home')"
+          onclick="app.goBack()"
           class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
-          title="Back to Home"
+          title="Back"
         >
           ←
         </button>
@@ -352,9 +352,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
     <section id="tab-import" class="hidden space-y-5">
       <div class="flex items-center gap-2.5">
         <button
-          onclick="app.switchTab('home')"
+          onclick="app.goBack()"
           class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
-          title="Back to Home"
+          title="Back"
         >
           ←
         </button>
@@ -413,9 +413,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       <div class="flex items-center justify-between gap-2">
         <div class="flex items-center gap-2.5">
           <button
-            onclick="app.switchTab('home')"
+            onclick="app.goBack()"
             class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
-            title="Back to Home"
+            title="Back"
           >
             ←
           </button>
@@ -758,6 +758,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.recPool = [];
         this.recPage = 1;
         this.isLoadingRecs = false;
+        this.tabHistory = [];
+        this._handlingPopState = false;
 
         this.state = {
           userId: this.userId,
@@ -775,6 +777,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.runDefaultDiscover();
         this.loadRecommendations(false);
         this.initPullToRefresh();
+        this.initBackNavigation();
 
         document.addEventListener("visibilitychange", () => {
           if (!document.hidden && this.googleIdToken) {
@@ -1115,8 +1118,63 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         } catch (_) {}
       }
 
+      initBackNavigation() {
+        try {
+          window.history.replaceState({ tab: "home", segment: "shows" }, "");
+        } catch (_) {}
+
+        window.addEventListener("popstate", () => {
+          this._handlingPopState = true;
+          try {
+            const detailOpen = !document.getElementById("detail-sheet")?.classList.contains("hidden");
+            const drawerOpen = !document.getElementById("hamburger-drawer")?.classList.contains("hidden");
+            const importOpen = !document.getElementById("import-modal")?.classList.contains("hidden");
+            const accountOpen = !document.getElementById("account-modal")?.classList.contains("hidden");
+            const followingOpen = !document.getElementById("following-sheet")?.classList.contains("hidden");
+
+            if (importOpen) {
+              this.closeImportModal();
+            } else if (accountOpen) {
+              this.closeAccountModal();
+            } else if (followingOpen) {
+              this.closeFollowingSheet();
+            } else if (detailOpen) {
+              this.closeDetailSheet();
+            } else if (drawerOpen) {
+              this.closeHamburgerMenu();
+            } else if (this.tabHistory.length > 0) {
+              const prevTab = this.tabHistory.pop();
+              this.switchTab(prevTab, true);
+            } else if (this.activeTab !== "home") {
+              this.switchTab("home", true);
+            } else if (this.homeSegment !== "shows") {
+              this.setHomeSegment("shows");
+            }
+          } finally {
+            this._handlingPopState = false;
+          }
+        });
+      }
+
+      pushHistoryEntry(tag) {
+        if (this._handlingPopState) return;
+        try {
+          window.history.pushState({ tag: tag || "nav", tab: this.activeTab, segment: this.homeSegment }, "");
+        } catch (_) {}
+      }
+
+      goBack() {
+        if (this.tabHistory.length > 0) {
+          const prevTab = this.tabHistory.pop();
+          this.switchTab(prevTab, true);
+        } else {
+          this.switchTab("home", true);
+        }
+      }
+
       openHamburgerMenu() {
         this.renderProfile();
+        this.pushHistoryEntry("drawer");
         document.getElementById("hamburger-backdrop")?.classList.remove("hidden");
         document.getElementById("hamburger-drawer")?.classList.remove("hidden");
       }
@@ -1126,8 +1184,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         document.getElementById("hamburger-drawer")?.classList.add("hidden");
       }
 
-      switchTab(tab) {
+      switchTab(tab, fromBack = false) {
         const resolvedTab = tab === "profile" ? "stats" : tab;
+        if (!fromBack && resolvedTab !== this.activeTab) {
+          this.tabHistory.push(this.activeTab);
+          if (this.tabHistory.length > 12) this.tabHistory.shift();
+          this.pushHistoryEntry("tab_" + resolvedTab);
+        }
         this.activeTab = resolvedTab;
         ["home", "search", "swipe", "stats", "recent", "import", "settings"].forEach((t) => {
           const sec = document.getElementById("tab-" + t);
@@ -2050,6 +2113,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       showDetailSheetModal() {
+        this.pushHistoryEntry("detail");
         document.getElementById("detail-sheet-backdrop")?.classList.remove("hidden");
         document.getElementById("detail-sheet")?.classList.remove("hidden");
         this.renderDetailSheet();

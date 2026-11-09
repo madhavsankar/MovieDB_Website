@@ -2,6 +2,7 @@ package com.tvtime.tracker.ui
 
 import android.app.Activity
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -73,6 +74,7 @@ fun TvTimeMainScreen(
 
     var currentUserId by remember { mutableStateOf(initialUserId) }
     var activeBottomTab by remember { mutableStateOf("home") } // "home" | "search" | "swipe"
+    var tabBackStack by remember { mutableStateOf(listOf<String>()) }
 
     // Home Tab State
     var homeTopSegment by remember { mutableStateOf("shows") } // "shows" | "movies" | "upcoming"
@@ -97,6 +99,41 @@ fun TvTimeMainScreen(
     var showImportDialog by remember { mutableStateOf(false) }
     var showAccountSwitcherDialog by remember(currentUserId) {
         mutableStateOf(!FirestoreSyncService.isUserAllowed(currentUserId))
+    }
+
+    val switchTab: (String) -> Unit = { nextTab ->
+        if (nextTab != activeBottomTab) {
+            tabBackStack = (tabBackStack + activeBottomTab).takeLast(12)
+            activeBottomTab = nextTab
+        }
+    }
+
+    val navigateBack: () -> Unit = {
+        when {
+            showImportDialog -> showImportDialog = false
+            selectedShowForDetail != null -> selectedShowForDetail = null
+            selectedMovieForDetail != null -> selectedMovieForDetail = null
+            showHamburgerSheet -> showHamburgerSheet = false
+            tabBackStack.isNotEmpty() -> {
+                val previous = tabBackStack.last()
+                tabBackStack = tabBackStack.dropLast(1)
+                activeBottomTab = previous
+            }
+            activeBottomTab != "home" -> activeBottomTab = "home"
+            homeTopSegment != "shows" -> homeTopSegment = "shows"
+        }
+    }
+
+    val canInterceptBack = showImportDialog ||
+        selectedShowForDetail != null ||
+        selectedMovieForDetail != null ||
+        showHamburgerSheet ||
+        tabBackStack.isNotEmpty() ||
+        activeBottomTab != "home" ||
+        homeTopSegment != "shows"
+
+    BackHandler(enabled = canInterceptBack) {
+        navigateBack()
     }
 
     LaunchedEffect(currentUserId) {
@@ -251,7 +288,7 @@ fun TvTimeMainScreen(
                     val selected = activeBottomTab == key
                     NavigationBarItem(
                         selected = selected,
-                        onClick = { activeBottomTab = key },
+                        onClick = { switchTab(key) },
                         icon = {
                             if (key == "swipe") {
                                 Text(
@@ -535,7 +572,8 @@ fun TvTimeMainScreen(
                 "stats" -> {
                     StatisticsFullPageScreen(
                         shows = shows,
-                        movies = movies
+                        movies = movies,
+                        onBack = navigateBack
                     )
                 }
 
@@ -544,7 +582,8 @@ fun TvTimeMainScreen(
                         shows = shows,
                         movies = movies,
                         onOpenShow = { selectedShowForDetail = it },
-                        onOpenMovie = { selectedMovieForDetail = it }
+                        onOpenMovie = { selectedMovieForDetail = it },
+                        onBack = navigateBack
                     )
                 }
 
@@ -555,16 +594,34 @@ fun TvTimeMainScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Text(
-                            text = "⇅ Import / Export CSV & JSON",
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-                            color = Color.White
-                        )
-                        Text(
-                            text = "Backup or restore your entire TV Time library across devices.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TvTimePalette.TextSecondary
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Surface(
+                                onClick = navigateBack,
+                                shape = CircleShape,
+                                color = TvTimePalette.SurfacePill,
+                                border = BorderStroke(1.dp, TvTimePalette.Border),
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("←", color = Color.White, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = "⇅ Import / Export CSV & JSON",
+                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Backup or restore your entire TV Time library across devices.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TvTimePalette.TextSecondary
+                                )
+                            }
+                        }
                         Surface(
                             shape = RoundedCornerShape(24.dp),
                             color = TvTimePalette.SurfaceCard,
@@ -594,7 +651,7 @@ fun TvTimeMainScreen(
                     SettingsFullPageScreen(
                         currentUserId = currentUserId,
                         onOpenImport = {
-                            activeBottomTab = "import"
+                            switchTab("import")
                             showImportDialog = true
                         },
                         onOpenAccountSwitch = { showAccountSwitcherDialog = true },
@@ -608,7 +665,8 @@ fun TvTimeMainScreen(
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
-                        }
+                        },
+                        onBack = navigateBack
                     )
                 }
             }
@@ -747,7 +805,7 @@ fun TvTimeMainScreen(
                             )
                             LeftDrawerItemRow(icon = "⌂", label = "Home") {
                                 showHamburgerSheet = false
-                                activeBottomTab = "home"
+                                switchTab("home")
                             }
                         }
 
@@ -771,11 +829,11 @@ fun TvTimeMainScreen(
                             )
                             LeftDrawerItemRow(icon = "◷", label = "Recently Watched") {
                                 showHamburgerSheet = false
-                                activeBottomTab = "recent"
+                                switchTab("recent")
                             }
                             LeftDrawerItemRow(icon = "▤", label = "Statistics") {
                                 showHamburgerSheet = false
-                                activeBottomTab = "stats"
+                                switchTab("stats")
                             }
                         }
 
@@ -799,12 +857,12 @@ fun TvTimeMainScreen(
                             )
                             LeftDrawerItemRow(icon = "⇅", label = "Import / Export CSV") {
                                 showHamburgerSheet = false
-                                activeBottomTab = "import"
+                                switchTab("import")
                                 showImportDialog = true
                             }
                             LeftDrawerItemRow(icon = "⚙", label = "Settings") {
                                 showHamburgerSheet = false
-                                activeBottomTab = "settings"
+                                switchTab("settings")
                             }
                         }
                     }
@@ -2162,7 +2220,8 @@ private fun SwipeRecommendationsTabScreen(
 @Composable
 private fun StatisticsFullPageScreen(
     shows: List<ShowEntity>,
-    movies: List<MovieEntity>
+    movies: List<MovieEntity>,
+    onBack: () -> Unit
 ) {
     val stats = remember(shows, movies) {
         var epCount = 0
@@ -2207,17 +2266,33 @@ private fun StatisticsFullPageScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item(key = "stats_page_header") {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "📊 Statistics",
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-                    color = Color.White
-                )
-                Text(
-                    text = "Your total watch time, series, episodes, and movies breakdown.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TvTimePalette.TextSecondary
-                )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    onClick = onBack,
+                    shape = CircleShape,
+                    color = TvTimePalette.SurfacePill,
+                    border = BorderStroke(1.dp, TvTimePalette.Border),
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("←", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "📊 Statistics",
+                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Your total watch time, series, episodes, and movies breakdown.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TvTimePalette.TextSecondary
+                    )
+                }
             }
         }
 
@@ -2350,7 +2425,8 @@ private fun SettingsFullPageScreen(
     currentUserId: String,
     onOpenImport: () -> Unit,
     onOpenAccountSwitch: () -> Unit,
-    onSyncNow: () -> Unit
+    onSyncNow: () -> Unit,
+    onBack: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -2363,26 +2439,40 @@ private fun SettingsFullPageScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
+                Row(
                     modifier = Modifier
                         .weight(1f)
                         .padding(end = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(
-                        text = "⚙️ Settings",
-                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "Profile, cloud sync & library backup",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TvTimePalette.TextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Surface(
+                        onClick = onBack,
+                        shape = CircleShape,
+                        color = TvTimePalette.SurfacePill,
+                        border = BorderStroke(1.dp, TvTimePalette.Border),
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text("←", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "⚙️ Settings",
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "Profile, cloud sync & library backup",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TvTimePalette.TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
                 Surface(
                     onClick = onSyncNow,
@@ -2541,7 +2631,8 @@ private fun RecentlyWatchedFullPageScreen(
     shows: List<ShowEntity>,
     movies: List<MovieEntity>,
     onOpenShow: (ShowEntity) -> Unit,
-    onOpenMovie: (MovieEntity) -> Unit
+    onOpenMovie: (MovieEntity) -> Unit,
+    onBack: () -> Unit
 ) {
     val watchedOrInProgressShows = remember(shows) {
         shows.filter { s ->
@@ -2560,17 +2651,33 @@ private fun RecentlyWatchedFullPageScreen(
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         item(key = "recent_header") {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "🎬 Recently Watched",
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-                    color = Color.White
-                )
-                Text(
-                    text = "Series and movies you have watched or are currently watching.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TvTimePalette.TextSecondary
-                )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    onClick = onBack,
+                    shape = CircleShape,
+                    color = TvTimePalette.SurfacePill,
+                    border = BorderStroke(1.dp, TvTimePalette.Border),
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("←", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "🎬 Recently Watched",
+                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Series and movies you have watched or are currently watching.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TvTimePalette.TextSecondary
+                    )
+                }
             }
         }
 
