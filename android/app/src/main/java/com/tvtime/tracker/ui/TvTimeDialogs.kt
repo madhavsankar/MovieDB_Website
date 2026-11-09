@@ -285,12 +285,18 @@ fun ShowDetailBottomSheet(
                     }
                 }
 
-                // Separate Watchlist Button (Only allowed when 0 episodes are watched)
+                // Separate Watchlist Button (Only allowed when 0 episodes are watched; clicking when in Watchlist removes it)
                 val canSetWatchlist = watchedSet.isEmpty()
                 val isInWatchlist = effectiveStatus == "interested" && watchedSet.isEmpty()
                 Surface(
                     onClick = {
-                        if (canSetWatchlist && !isInWatchlist) {
+                        if (isInWatchlist) {
+                            scope.launch {
+                                dao.deleteShow(show.id)
+                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                onDismiss()
+                            }
+                        } else if (canSetWatchlist) {
                             userStatus = "interested"
                             persistUpdatedShow(nextWatchedSet = emptySet(), nextStatus = "interested")
                         }
@@ -677,8 +683,16 @@ fun MovieDetailBottomSheet(
             ) {
                 Surface(
                     onClick = {
-                        isWatched = false
-                        persistMovie(nextWatched = false)
+                        if (!isWatched) {
+                            scope.launch {
+                                dao.deleteMovie(movie.id)
+                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                onDismiss()
+                            }
+                        } else {
+                            isWatched = false
+                            persistMovie(nextWatched = false)
+                        }
                     },
                     shape = RoundedCornerShape(50),
                     color = if (!isWatched) TvTimePalette.Yellow else TvTimePalette.SurfacePill,

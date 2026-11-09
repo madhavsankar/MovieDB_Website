@@ -1752,6 +1752,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       async setMovieStatus(movieId, isWatched) {
         const movie = (this.state.movies || []).find((m) => m.id === movieId);
         if (!movie) return;
+        if (!isWatched && !movie.watched) {
+          await this.removeItemFromLibrary(movieId);
+          return;
+        }
         movie.watched = Boolean(isWatched);
         movie.watchedAt = movie.watched ? new Date().toISOString().slice(0, 10) : "";
         await this.persistState();
@@ -2169,10 +2173,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
         const watchlistBtnHtml =
           '<button ' +
-          (canSetWatchlist && !isInWatchlist
-            ? 'onclick="app.setShowStatus(&quot;' + escapeHtml(show.id) + '&quot;, &quot;interested&quot;)" '
+          (isInWatchlist
+            ? 'onclick="app.removeItemFromLibrary(&quot;' + escapeHtml(show.id) + '&quot;)" '
             : canSetWatchlist
-            ? ""
+            ? 'onclick="app.setShowStatus(&quot;' + escapeHtml(show.id) + '&quot;, &quot;interested&quot;)" '
             : "disabled ") +
           'class="w-full py-2 px-3 rounded-full text-xs font-extrabold transition border ' +
           (isInWatchlist
