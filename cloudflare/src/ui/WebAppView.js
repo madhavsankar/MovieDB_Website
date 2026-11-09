@@ -219,7 +219,6 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             <span>✨ For You</span>
             <span id="swipe-remaining-badge" class="px-2 py-0.5 rounded-full bg-zinc-800 text-[11px] font-bold tv-yellow-text">Recommendations</span>
           </h2>
-          <p class="text-[11px] text-zinc-400">Swipe Left = Ignore · Up = Watchlist · Right = Completed</p>
         </div>
         <div class="flex items-center gap-1.5">
           <div class="relative flex items-center">

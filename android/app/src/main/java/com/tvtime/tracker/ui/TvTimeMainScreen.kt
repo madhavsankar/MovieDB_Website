@@ -1668,18 +1668,11 @@ private fun SwipeRecommendationsTabScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column {
-                Text(
-                    text = "✨ For You",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold),
-                    color = Color.White
-                )
-                Text(
-                    text = "Swipe based on what you watched",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TvTimePalette.TextSecondary
-                )
-            }
+            Text(
+                text = "✨ For You",
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold),
+                color = Color.White
+            )
 
             TvFilterDropdown(
                 prefixLabel = "",
