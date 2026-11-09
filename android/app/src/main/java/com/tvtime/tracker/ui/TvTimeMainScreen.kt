@@ -26,15 +26,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
@@ -107,8 +112,62 @@ fun TvTimeMainScreen(
         actors.filter { it.role == "decided_rec" }.map { it.externalId }.toSet()
     }
 
+    var refreshTrigger by remember { mutableIntStateOf(0) }
+    var isRefreshing by remember { mutableStateOf(false) }
+    var pullOffsetPx by remember { mutableFloatStateOf(0f) }
+
+    val triggerPullRefresh: () -> Unit = {
+        if (!isRefreshing) {
+            isRefreshing = true
+            scope.launch {
+                FirestoreSyncService.pullFromFirestoreIfNeeded(dao, currentUserId)
+                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                refreshTrigger += 1
+                isRefreshing = false
+                pullOffsetPx = 0f
+                Toast.makeText(context, "Refreshed & synced", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val pullToRefreshNestedScroll = remember(activeBottomTab, isRefreshing) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (activeBottomTab == "swipe") return Offset.Zero
+                if (source == NestedScrollSource.Drag && available.y < 0f && pullOffsetPx > 0f) {
+                    val consumedY = available.y.coerceAtLeast(-pullOffsetPx)
+                    pullOffsetPx = (pullOffsetPx + consumedY).coerceAtLeast(0f)
+                    return Offset(0f, consumedY)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                if (activeBottomTab == "swipe" || isRefreshing) return Offset.Zero
+                if (source == NestedScrollSource.Drag && available.y > 0f) {
+                    pullOffsetPx = (pullOffsetPx + available.y * 0.55f).coerceAtMost(240f)
+                    return Offset(0f, available.y)
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (pullOffsetPx >= 130f && !isRefreshing) {
+                    triggerPullRefresh()
+                } else {
+                    pullOffsetPx = 0f
+                }
+                return Velocity.Zero
+            }
+        }
+    }
+
     // Initial Search & US Provider Discovery Results load
-    LaunchedEffect(searchQuery, selectedUsPlatforms) {
+    LaunchedEffect(searchQuery, selectedUsPlatforms, refreshTrigger) {
         isSearching = true
         if (searchQuery.isNotBlank()) delay(250)
         searchResults = if (searchQuery.isBlank() && selectedUsPlatforms.isNotEmpty()) {
@@ -221,6 +280,7 @@ fun TvTimeMainScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .nestedScroll(pullToRefreshNestedScroll)
         ) {
             when (activeBottomTab) {
                 "home" -> {
@@ -549,6 +609,30 @@ fun TvTimeMainScreen(
                                 ).show()
                             }
                         }
+                    )
+                }
+            }
+
+            // Pull-to-Refresh Top Floating Pill Indicator
+            if (pullOffsetPx > 20f || isRefreshing) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = TvTimePalette.SurfacePill,
+                    border = BorderStroke(1.dp, TvTimePalette.Yellow.copy(alpha = 0.5f)),
+                    shadowElevation = 8.dp,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 8.dp)
+                ) {
+                    Text(
+                        text = when {
+                            isRefreshing -> "↻ Refreshing..."
+                            pullOffsetPx >= 130f -> "↻ Release to refresh"
+                            else -> "↻ Pull down to refresh"
+                        },
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.ExtraBold),
+                        color = TvTimePalette.Yellow,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
                 }
             }

@@ -105,6 +105,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 <body class="min-h-screen pb-28 select-none">
   <main class="max-w-xl mx-auto px-4 pt-4 space-y-4" style="padding-top: max(1rem, calc(env(safe-area-inset-top) + 0.5rem));">
 
+    <!-- Pull-to-Refresh Indicator -->
+    <div id="pull-refresh-indicator" class="hidden flex items-center justify-center overflow-hidden transition-all duration-150">
+      <div class="tv-pill-bar px-4 py-1.5 rounded-full border border-yellow-400/40 flex items-center gap-2 text-xs font-extrabold tv-yellow-text shadow-lg">
+        <span id="pull-refresh-icon" class="inline-block transition-transform">↻</span>
+        <span id="pull-refresh-label">Pull down to refresh</span>
+      </div>
+    </div>
+
     <!-- ========================================================= -->
     <!-- TOP BAR WITH HAMBURGER MENU (Stats, Export, Sync, Account)-->
     <!-- ========================================================= -->
@@ -764,12 +772,115 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.initAuthAndLoad();
         this.runDefaultDiscover();
         this.loadRecommendations(false);
+        this.initPullToRefresh();
 
         document.addEventListener("visibilitychange", () => {
           if (!document.hidden && this.googleIdToken) {
             this.loadState(false);
           }
         });
+      }
+
+      initPullToRefresh() {
+        let startY = 0;
+        let startX = 0;
+        let pullDy = 0;
+        let pulling = false;
+        let refreshing = false;
+
+        window.addEventListener(
+          "touchstart",
+          (e) => {
+            if (refreshing) return;
+            if (window.scrollY > 2) return;
+            const target = e.target;
+            if (
+              target &&
+              target.closest &&
+              (target.closest("#swipe-active-card") ||
+                target.closest("#detail-sheet") ||
+                target.closest("#hamburger-drawer") ||
+                target.closest("#following-sheet"))
+            ) {
+              return;
+            }
+            const t = e.touches && e.touches[0];
+            if (!t) return;
+            startY = t.clientY;
+            startX = t.clientX;
+            pullDy = 0;
+            pulling = true;
+          },
+          { passive: true }
+        );
+
+        window.addEventListener(
+          "touchmove",
+          (e) => {
+            if (!pulling || refreshing) return;
+            if (window.scrollY > 2) {
+              pulling = false;
+              return;
+            }
+            const t = e.touches && e.touches[0];
+            if (!t) return;
+            const dy = t.clientY - startY;
+            const dx = t.clientX - startX;
+            if (dy <= 12 || Math.abs(dx) > dy) {
+              return;
+            }
+            pullDy = Math.min(110, dy);
+            const ind = document.getElementById("pull-refresh-indicator");
+            const lbl = document.getElementById("pull-refresh-label");
+            const icn = document.getElementById("pull-refresh-icon");
+            if (ind) {
+              ind.classList.remove("hidden");
+              ind.style.height = Math.min(48, Math.round(pullDy * 0.5)) + "px";
+            }
+            if (lbl) {
+              lbl.textContent = pullDy >= 65 ? "Release to refresh" : "Pull down to refresh";
+            }
+            if (icn) {
+              icn.style.transform = "rotate(" + Math.round(pullDy * 3) + "deg)";
+            }
+          },
+          { passive: true }
+        );
+
+        const finishPull = async () => {
+          if (!pulling || refreshing) return;
+          pulling = false;
+          const ind = document.getElementById("pull-refresh-indicator");
+          const lbl = document.getElementById("pull-refresh-label");
+          if (pullDy >= 65) {
+            refreshing = true;
+            if (ind) ind.style.height = "40px";
+            if (lbl) lbl.textContent = "Refreshing...";
+            await this.refreshApp();
+            refreshing = false;
+          }
+          pullDy = 0;
+          if (ind) {
+            ind.style.height = "0px";
+            setTimeout(() => ind.classList.add("hidden"), 150);
+          }
+        };
+
+        window.addEventListener("touchend", finishPull, { passive: true });
+        window.addEventListener("touchcancel", finishPull, { passive: true });
+      }
+
+      async refreshApp() {
+        await this.loadState(true);
+        if (this.activeTab === "search") {
+          if (this.searchQuery && this.searchQuery.trim()) {
+            this.onSearchInput(this.searchQuery);
+          } else {
+            await this.runDefaultDiscover();
+          }
+        } else if (this.activeTab === "swipe") {
+          await this.loadRecommendations(false);
+        }
       }
 
       decodeJwtPayload(token) {

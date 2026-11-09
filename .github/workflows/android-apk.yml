@@ -28,7 +28,8 @@ jobs:
       - name: Setup Gradle 8.7 with Retry
         run: |
           if ! command -v gradle >/dev/null 2>&1 || ! gradle --version | grep -q "8.7"; then
-            curl --retry 5 --retry-delay 5 --retry-all-errors -fsSL https://services.gradle.org/distributions/gradle-8.7-bin.zip -o /tmp/gradle-8.7-bin.zip
+            curl --retry 5 --retry-delay 3 --retry-all-errors -fsSL https://github.com/gradle/gradle-distributions/releases/download/v8.7.0/gradle-8.7-bin.zip -o /tmp/gradle-8.7-bin.zip \
+              || curl --retry 5 --retry-delay 5 --retry-all-errors -fsSL https://services.gradle.org/distributions/gradle-8.7-bin.zip -o /tmp/gradle-8.7-bin.zip
             sudo unzip -q -d /opt /tmp/gradle-8.7-bin.zip
             echo "/opt/gradle-8.7/bin" >> $GITHUB_PATH
           fi
