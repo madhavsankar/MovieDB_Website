@@ -159,7 +159,18 @@ export class HttpRouter {
     // Public catalog endpoints so live TMDB / TVMaze / iTunes search works seamlessly
     if (request.method === "GET" && path === "/api/search") {
       const q = url.searchParams.get("q") || "";
+      const providers = url.searchParams.get("providers") || "";
+      if (providers && !q.trim()) {
+        const data = await LiveCatalogService.discoverByUsProviders(providers, { env: this.env });
+        return this.json(data);
+      }
       const data = await LiveCatalogService.searchMulti(q, { env: this.env });
+      return this.json(data);
+    }
+
+    if (request.method === "GET" && path === "/api/discover-providers") {
+      const providers = url.searchParams.get("providers") || "";
+      const data = await LiveCatalogService.discoverByUsProviders(providers, { env: this.env });
       return this.json(data);
     }
 

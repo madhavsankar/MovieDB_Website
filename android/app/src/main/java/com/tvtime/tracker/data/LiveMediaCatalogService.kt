@@ -20,6 +20,130 @@ import java.net.URLEncoder
  */
 object LiveMediaCatalogService {
 
+    val US_PLATFORMS: List<String> = listOf(
+        "Netflix",
+        "Prime Video",
+        "Hulu",
+        "Max",
+        "Disney+",
+        "Apple TV+",
+        "Paramount+",
+        "Peacock"
+    )
+
+    private val US_PLATFORM_PROVIDER_IDS: Map<String, List<Int>> = mapOf(
+        "Netflix" to listOf(8, 1796),
+        "Prime Video" to listOf(9, 119, 2100),
+        "Hulu" to listOf(15),
+        "Max" to listOf(1899, 384),
+        "Disney+" to listOf(337),
+        "Apple TV+" to listOf(350, 2),
+        "Paramount+" to listOf(531, 1853, 2303),
+        "Peacock" to listOf(386, 387)
+    )
+
+    fun matchesUsPlatforms(rawPlatformText: String, selectedPlatforms: Set<String>): Boolean {
+        if (selectedPlatforms.isEmpty()) return true
+        val s = rawPlatformText.lowercase()
+        for (plat in selectedPlatforms) {
+            when (plat.lowercase()) {
+                "netflix" -> if (s.contains("netflix")) return true
+                "prime video" -> if (s.contains("prime") || s.contains("amazon")) return true
+                "hulu" -> if (s.contains("hulu") || s.contains("fx")) return true
+                "max" -> if (s.contains("max") || s.contains("hbo")) return true
+                "disney+" -> if (s.contains("disney")) return true
+                "apple tv+" -> if (s.contains("apple")) return true
+                "paramount+" -> if (s.contains("paramount") || s.contains("cbs") || s.contains("showtime")) return true
+                "peacock" -> if (s.contains("peacock") || s.contains("nbc")) return true
+            }
+        }
+        return false
+    }
+
+    suspend fun discoverByUsProviders(selectedPlatforms: Set<String>): List<SearchResultItem> = withContext(Dispatchers.IO) {
+        if (selectedPlatforms.isEmpty()) return@withContext searchMulti("Game of Thrones")
+        val tmdbToken = BuildConfig.TMDB_READ_TOKEN.trim()
+        val tmdbKey = BuildConfig.TMDB_API_KEY.trim()
+        val providerIds = selectedPlatforms.flatMap { US_PLATFORM_PROVIDER_IDS[it] ?: emptyList() }.distinct()
+        val providerPipe = providerIds.joinToString("|")
+        val platformLabel = selectedPlatforms.joinToString(" / ")
+        val results = mutableListOf<SearchResultItem>()
+
+        if (providerPipe.isNotEmpty() && (tmdbToken.isNotEmpty() || tmdbKey.isNotEmpty())) {
+            val encPipe = URLEncoder.encode(providerPipe, "UTF-8")
+            fun fetchDiscover(mediaType: String) {
+                try {
+                    val base = "https://api.themoviedb.org/3/discover/$mediaType?watch_region=US&with_watch_monetization_types=flatrate&with_watch_providers=$encPipe&sort_by=popularity.desc&language=en-US&page=1"
+                    val url = if (tmdbToken.isNotEmpty()) base else "$base&api_key=$tmdbKey"
+                    val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        setRequestProperty("Accept", "application/json")
+                        if (tmdbToken.isNotEmpty()) {
+                            setRequestProperty("Authorization", "Bearer $tmdbToken")
+                        }
+                        connectTimeout = 5000
+                        readTimeout = 5000
+                    }
+                    if (conn.responseCode in 200..299) {
+                        val text = conn.inputStream.bufferedReader().use { it.readText() }
+                        val arr = JSONObject(text).optJSONArray("results") ?: JSONArray()
+                        for (i in 0 until minOf(12, arr.length())) {
+                            val item = arr.optJSONObject(i) ?: continue
+                            val id = item.optInt("id", 0)
+                            if (id <= 0) continue
+                            val posterPath = item.optString("poster_path", "")
+                            val poster = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else ""
+                            if (mediaType == "tv") {
+                                val title = item.optString("name", item.optString("original_name", "Untitled Show"))
+                                val year = item.optString("first_air_date", "").take(4).toIntOrNull() ?: 2024
+                                val rating = (item.optDouble("vote_average", 8.0).takeIf { !it.isNaN() && it > 0 } ?: 8.0)
+                                results.add(
+                                    SearchResultItem(
+                                        externalId = "tmdb_tv_$id",
+                                        tmdbId = id,
+                                        mediaType = "show",
+                                        title = title,
+                                        year = year,
+                                        networkOrDirector = platformLabel,
+                                        status = "Running",
+                                        runtimeMins = 45,
+                                        genresCsv = "TV Series",
+                                        rating = Math.round(rating * 10.0) / 10.0,
+                                        posterUrl = poster,
+                                        overview = stripHtml(item.optString("overview", ""))
+                                    )
+                                )
+                            } else {
+                                val title = item.optString("title", item.optString("original_title", "Untitled Movie"))
+                                val year = item.optString("release_date", "").take(4).toIntOrNull() ?: 2024
+                                val rating = (item.optDouble("vote_average", 7.8).takeIf { !it.isNaN() && it > 0 } ?: 7.8)
+                                results.add(
+                                    SearchResultItem(
+                                        externalId = "movie_$id",
+                                        tmdbId = id,
+                                        mediaType = "movie",
+                                        title = title,
+                                        year = year,
+                                        networkOrDirector = platformLabel,
+                                        status = "Released",
+                                        runtimeMins = 120,
+                                        genresCsv = "Movie",
+                                        rating = Math.round(rating * 10.0) / 10.0,
+                                        posterUrl = poster,
+                                        overview = stripHtml(item.optString("overview", ""))
+                                    )
+                                )
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+            fetchDiscover("tv")
+            fetchDiscover("movie")
+        }
+        results
+    }
+
     private fun stripHtml(raw: String?): String =
         (raw ?: "").replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
 

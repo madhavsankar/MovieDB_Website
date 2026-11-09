@@ -37,7 +37,8 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
             const defState = repo.defaultState('madhavsankar');
             const stats = LiveCatalogService.computeStats(defState);
             const docUrl = repo.docUrlForUser('madhavsankar');
-            const out = JSON.stringify({ code, stats, docUrl, showsCount: defState.shows.length });
+            const normalizedUs = LiveCatalogService.normalizeUsProvidersFromTmdb({ flatrate: [{ provider_id: 8, provider_name: 'Netflix' }, { provider_id: 9, provider_name: 'Amazon Prime Video' }] }, '');
+            const out = JSON.stringify({ code, stats, docUrl, showsCount: defState.shows.length, normalizedUs, platformsCount: LiveCatalogService.US_STREAMING_PLATFORMS.length });
             if (typeof console !== 'undefined' && console.log) console.log(out);
             else if (typeof print !== 'undefined') print(out);
             """
@@ -52,6 +53,8 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["code"], "S02E04")
         self.assertIn("tvtime_state/user_state_madhavsankar", out["docUrl"])
         self.assertEqual(out["showsCount"], 3)
+        self.assertEqual(out["normalizedUs"], "Netflix / Prime Video")
+        self.assertEqual(out["platformsCount"], 8)
         self.assertGreater(out["stats"]["totalEpisodesWatched"], 0)
         self.assertGreater(out["stats"]["totalMoviesWatched"], 0)
         self.assertGreater(out["stats"]["totalHours"], 0)

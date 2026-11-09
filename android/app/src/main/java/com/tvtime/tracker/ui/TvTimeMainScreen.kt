@@ -67,6 +67,9 @@ fun TvTimeMainScreen(
     var is3DShelfMode by remember { mutableStateOf(false) }
     var havenStartedCollapsed by remember { mutableStateOf(false) }
 
+    // Home & Search US Streaming Platform Filter State (Multi-select)
+    var selectedUsPlatforms by remember { mutableStateOf(emptySet<String>()) }
+
     // Search Tab State
     var searchQuery by remember { mutableStateOf("") }
     var searchSort by remember { mutableStateOf("top") } // "top" | "newest" | "oldest"
@@ -90,13 +93,32 @@ fun TvTimeMainScreen(
     val shows by dao.observeShowsForUser(currentUserId).collectAsState(initial = emptyList())
     val movies by dao.observeMoviesForUser(currentUserId).collectAsState(initial = emptyList())
 
-    // Initial Search Results load
-    LaunchedEffect(searchQuery) {
+    // Initial Search & US Provider Discovery Results load
+    LaunchedEffect(searchQuery, selectedUsPlatforms) {
         isSearching = true
         if (searchQuery.isNotBlank()) delay(250)
-        searchResults = LiveMediaCatalogService.searchMulti(searchQuery.ifBlank { "Game of Thrones" })
-            .filter { it.mediaType != "actor" }
+        searchResults = if (searchQuery.isBlank() && selectedUsPlatforms.isNotEmpty()) {
+            LiveMediaCatalogService.discoverByUsProviders(selectedUsPlatforms)
+        } else {
+            val raw = LiveMediaCatalogService.searchMulti(searchQuery.ifBlank { "Game of Thrones" })
+                .filter { it.mediaType != "actor" }
+            if (selectedUsPlatforms.isNotEmpty()) {
+                raw.filter { LiveMediaCatalogService.matchesUsPlatforms(it.networkOrDirector, selectedUsPlatforms) }
+            } else {
+                raw
+            }
+        }
         isSearching = false
+    }
+
+    val toggleUsPlatform: (String) -> Unit = { platform ->
+        selectedUsPlatforms = if (platform == "all") {
+            emptySet()
+        } else if (selectedUsPlatforms.contains(platform)) {
+            selectedUsPlatforms - platform
+        } else {
+            selectedUsPlatforms + platform
+        }
     }
 
     Scaffold(
@@ -158,6 +180,8 @@ fun TvTimeMainScreen(
                         onToggle3DShelf = { is3DShelfMode = !is3DShelfMode },
                         havenStartedCollapsed = havenStartedCollapsed,
                         onToggleHavenStarted = { havenStartedCollapsed = !havenStartedCollapsed },
+                        selectedUsPlatforms = selectedUsPlatforms,
+                        onToggleUsPlatform = toggleUsPlatform,
                         onOpenShow = { selectedShowForDetail = it },
                         onOpenMovie = { selectedMovieForDetail = it },
                         onMarkNextEpisode = { show ->
@@ -216,6 +240,8 @@ fun TvTimeMainScreen(
                         onQueryChange = { searchQuery = it },
                         sortKey = searchSort,
                         onSortChange = { searchSort = it },
+                        selectedUsPlatforms = selectedUsPlatforms,
+                        onToggleUsPlatform = toggleUsPlatform,
                         results = searchResults,
                         isSearching = isSearching,
                         existingExternalIds = (shows.map { it.externalId } + movies.map { it.externalId }).toSet(),
@@ -236,6 +262,7 @@ fun TvTimeMainScreen(
                                                 runtimeMins = item.runtimeMins,
                                                 genresCsv = item.genresCsv,
                                                 director = item.networkOrDirector,
+                                                streamingService = item.networkOrDirector,
                                                 rating = item.rating,
                                                 posterUrl = item.posterUrl,
                                                 overview = item.overview,
@@ -516,6 +543,51 @@ fun TvTimeMainScreen(
 
 
 @Composable
+private fun UsStreamingPlatformFilterBar(
+    selectedPlatforms: Set<String>,
+    onTogglePlatform: (String) -> Unit
+) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        item(key = "us_platform_all") {
+            val allActive = selectedPlatforms.isEmpty()
+            Surface(
+                onClick = { onTogglePlatform("all") },
+                shape = RoundedCornerShape(50),
+                color = if (allActive) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
+                border = if (allActive) null else BorderStroke(1.dp, TvTimePalette.Border)
+            ) {
+                Text(
+                    text = "🇺🇸 All US",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = if (allActive) TvTimePalette.OnYellow else TvTimePalette.TextSecondary,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
+        items(LiveMediaCatalogService.US_PLATFORMS, key = { "us_platform_$it" }) { platform ->
+            val active = selectedPlatforms.contains(platform)
+            Surface(
+                onClick = { onTogglePlatform(platform) },
+                shape = RoundedCornerShape(50),
+                color = if (active) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
+                border = if (active) null else BorderStroke(1.dp, TvTimePalette.Border)
+            ) {
+                Text(
+                    text = platform,
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = if (active) TvTimePalette.OnYellow else TvTimePalette.TextSecondary,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
+    }
+}
+
+
+@Composable
 private fun HomeTabScreen(
     shows: List<ShowEntity>,
     movies: List<MovieEntity>,
@@ -527,11 +599,22 @@ private fun HomeTabScreen(
     onToggle3DShelf: () -> Unit,
     havenStartedCollapsed: Boolean,
     onToggleHavenStarted: () -> Unit,
+    selectedUsPlatforms: Set<String>,
+    onToggleUsPlatform: (String) -> Unit,
     onOpenShow: (ShowEntity) -> Unit,
     onOpenMovie: (MovieEntity) -> Unit,
     onMarkNextEpisode: (ShowEntity) -> Unit,
     onToggleMovieWatched: (MovieEntity) -> Unit
 ) {
+    val platformFilteredShows = remember(shows, selectedUsPlatforms) {
+        if (selectedUsPlatforms.isEmpty()) shows
+        else shows.filter { LiveMediaCatalogService.matchesUsPlatforms(it.network, selectedUsPlatforms) }
+    }
+    val platformFilteredMovies = remember(movies, selectedUsPlatforms) {
+        if (selectedUsPlatforms.isEmpty()) movies
+        else movies.filter { LiveMediaCatalogService.matchesUsPlatforms(it.streamingService.ifBlank { it.director }, selectedUsPlatforms) }
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
@@ -714,6 +797,16 @@ private fun HomeTabScreen(
             }
         }
 
+        // 2b. US Streaming Platform Filter Bar (Home)
+        if (topSegment != "upcoming") {
+            item(key = "home_us_platform_bar") {
+                UsStreamingPlatformFilterBar(
+                    selectedPlatforms = selectedUsPlatforms,
+                    onTogglePlatform = onToggleUsPlatform
+                )
+            }
+        }
+
         // 3. Optional 3D Watch List Shelf View
         if (is3DShelfMode && topSegment != "upcoming") {
             item(key = "3d_shelf_room") {
@@ -749,7 +842,7 @@ private fun HomeTabScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             if (topSegment == "shows") {
-                                items(shows, key = { "shelf_s_${it.id}" }) { s ->
+                                items(platformFilteredShows, key = { "shelf_s_${it.id}" }) { s ->
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         modifier = Modifier
@@ -774,7 +867,7 @@ private fun HomeTabScreen(
                                     }
                                 }
                             } else {
-                                items(movies, key = { "shelf_m_${it.id}" }) { m ->
+                                items(platformFilteredMovies, key = { "shelf_m_${it.id}" }) { m ->
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         modifier = Modifier
@@ -815,7 +908,7 @@ private fun HomeTabScreen(
 
         // 4. Main Content List
         if (topSegment == "shows") {
-            val partitioned = shows.map { s ->
+            val partitioned = platformFilteredShows.map { s ->
                 val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
                 val w = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
                 val prog = TvTimeProgressCalculator.computeShowProgress(eps, w)
@@ -856,7 +949,7 @@ private fun HomeTabScreen(
                     }
                 }
                 "all" -> {
-                    items(shows, key = { it.id }) { show ->
+                    items(platformFilteredShows, key = { it.id }) { show ->
                         TvShowWatchCard(
                             show = show,
                             onCardClick = { onOpenShow(show) },
@@ -876,9 +969,9 @@ private fun HomeTabScreen(
             }
         } else if (topSegment == "movies") {
             val filteredMovies = when (mediaFilter) {
-                "completed" -> movies.filter { it.watched }
-                "interested" -> movies.filter { !it.watched }
-                else -> movies
+                "completed" -> platformFilteredMovies.filter { it.watched }
+                "interested" -> platformFilteredMovies.filter { !it.watched }
+                else -> platformFilteredMovies
             }
             items(filteredMovies, key = { it.id }) { movie ->
                 TvMovieWatchCard(
@@ -981,6 +1074,8 @@ private fun SearchTabScreen(
     onQueryChange: (String) -> Unit,
     sortKey: String,
     onSortChange: (String) -> Unit,
+    selectedUsPlatforms: Set<String>,
+    onToggleUsPlatform: (String) -> Unit,
     results: List<SearchResultItem>,
     isSearching: Boolean,
     existingExternalIds: Set<String>,
@@ -1052,6 +1147,14 @@ private fun SearchTabScreen(
                     }
                 }
             }
+        }
+
+        // 1b. US Streaming Platform Filter Bar (Search & Discover)
+        item(key = "search_us_platform_bar") {
+            UsStreamingPlatformFilterBar(
+                selectedPlatforms = selectedUsPlatforms,
+                onTogglePlatform = onToggleUsPlatform
+            )
         }
 
         // 2. Results Count + Sort Bar: Top | Newest | Oldest

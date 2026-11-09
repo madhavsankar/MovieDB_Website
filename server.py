@@ -368,6 +368,111 @@ def search_multi(query):
         }
 
 
+US_PROVIDER_IDS = {
+    "Netflix": [8, 1796],
+    "Prime Video": [9, 119, 2100],
+    "Hulu": [15],
+    "Max": [1899, 384],
+    "Disney+": [337],
+    "Apple TV+": [350, 2],
+    "Paramount+": [531, 1853, 2303],
+    "Peacock": [386, 387],
+}
+
+
+def discover_by_us_providers(providers_csv):
+    names = [p.strip() for p in str(providers_csv or "").split(",") if p.strip() in US_PROVIDER_IDS]
+    if not names:
+        return {"results": [], "shows": [], "movies": [], "actors": [], "providers": []}
+    provider_ids = []
+    for n in names:
+        for pid in US_PROVIDER_IDS[n]:
+            if pid not in provider_ids:
+                provider_ids.append(pid)
+    pipe_ids = "|".join(str(pid) for pid in provider_ids)
+    badge = " / ".join(names)
+    tmdb_token = (CONFIG.get("TMDB_READ_TOKEN") or os.environ.get("TMDB_READ_TOKEN") or "").strip()
+    tmdb_key = (CONFIG.get("TMDB_API_KEY") or os.environ.get("TMDB_API_KEY") or "").strip()
+    shows, movies = [], []
+    if tmdb_token or tmdb_key:
+        req_headers = {"User-Agent": "TVTimeTracker/1.0", "Accept": "application/json"}
+        if tmdb_token:
+            req_headers["Authorization"] = f"Bearer {tmdb_token}"
+        key_suffix = "" if tmdb_token else f"&api_key={urllib.parse.quote(tmdb_key)}"
+        try:
+            tv_url = (
+                f"https://api.themoviedb.org/3/discover/tv?include_adult=false&language=en-US&page=1"
+                f"&sort_by=popularity.desc&watch_region=US&with_watch_monetization_types=flatrate"
+                f"&with_watch_providers={urllib.parse.quote(pipe_ids)}{key_suffix}"
+            )
+            req = urllib.request.Request(tv_url, headers=req_headers)
+            with urllib.request.urlopen(req, timeout=8) as r:
+                tv_data = json.loads(r.read().decode("utf-8"))
+            for s in (tv_data.get("results") or [])[:15]:
+                title = s.get("name") or s.get("original_name")
+                if not s.get("id") or not title:
+                    continue
+                prem = str(s.get("first_air_date") or "2024")[:4]
+                yr = int(prem) if prem.isdigit() else 2024
+                poster_path = s.get("poster_path") or ""
+                shows.append({
+                    "id": f"tmdb_tv_{s['id']}",
+                    "tvmazeId": 0,
+                    "tmdbId": s["id"],
+                    "mediaType": "show",
+                    "title": title,
+                    "year": yr,
+                    "network": badge,
+                    "status": "Running",
+                    "runtimeMins": 45,
+                    "genres": ["TV Series"],
+                    "rating": round(float(s.get("vote_average") or 7.8), 1),
+                    "posterUrl": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else "",
+                    "overview": s.get("overview") or "",
+                })
+        except Exception:
+            pass
+        try:
+            mv_url = (
+                f"https://api.themoviedb.org/3/discover/movie?include_adult=false&language=en-US&page=1"
+                f"&sort_by=popularity.desc&watch_region=US&with_watch_monetization_types=flatrate"
+                f"&with_watch_providers={urllib.parse.quote(pipe_ids)}{key_suffix}"
+            )
+            req = urllib.request.Request(mv_url, headers=req_headers)
+            with urllib.request.urlopen(req, timeout=8) as r:
+                mv_data = json.loads(r.read().decode("utf-8"))
+            for m in (mv_data.get("results") or [])[:15]:
+                title = m.get("title") or m.get("original_title")
+                if not m.get("id") or not title:
+                    continue
+                rel = str(m.get("release_date") or "2024")[:4]
+                yr = int(rel) if rel.isdigit() else 2024
+                poster_path = m.get("poster_path") or ""
+                movies.append({
+                    "id": f"movie_{m['id']}",
+                    "tmdbId": m["id"],
+                    "mediaType": "movie",
+                    "title": title,
+                    "year": yr,
+                    "runtimeMins": 125,
+                    "genres": ["Movie"],
+                    "director": badge,
+                    "streamingService": badge,
+                    "rating": round(float(m.get("vote_average") or 7.8), 1),
+                    "posterUrl": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else "",
+                    "overview": m.get("overview") or "",
+                })
+        except Exception:
+            pass
+    return {
+        "results": shows + movies,
+        "shows": shows,
+        "movies": movies,
+        "actors": [],
+        "providers": names,
+    }
+
+
 def fetch_full_show_from_tvmaze(tvmaze_id):
     num_id = re.sub(r"^tvmaze_", "", str(tvmaze_id or "").strip())
     if not num_id:
@@ -487,7 +592,16 @@ class TvTimeHttpHandler(BaseHTTPRequestHandler):
 
         if path == "/api/search":
             q = (qs.get("q") or [""])[0]
-            self._send_json(search_multi(q))
+            providers = (qs.get("providers") or [""])[0]
+            if not q.strip() and providers:
+                self._send_json(discover_by_us_providers(providers))
+            else:
+                self._send_json(search_multi(q))
+            return
+
+        if path == "/api/discover-providers":
+            providers = (qs.get("providers") or [""])[0]
+            self._send_json(discover_by_us_providers(providers))
             return
 
         if path == "/api/show-details":

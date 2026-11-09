@@ -153,6 +153,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- US Streaming Platform Multi-Select Filter Bar (Home) -->
+      <div id="home-us-platform-bar" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5"></div>
+
       <!-- Sub-Filter Row for Upcoming -->
       <div id="home-subfilter-upcoming" class="hidden flex items-center justify-between gap-2">
         <span class="text-sm font-semibold text-zinc-400 px-1">Upcoming Episodes</span>
@@ -181,6 +184,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         />
         <button id="search-clear-btn" onclick="app.clearSearch()" class="text-yellow-400 font-bold text-sm px-1">✕</button>
       </div>
+
+      <!-- US Streaming Platform Multi-Select Filter Bar (Search / Discover) -->
+      <div id="search-us-platform-bar" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5"></div>
 
       <!-- Results Count + Sort Bar: Top | Newest | Oldest -->
       <div class="flex items-center justify-between gap-2">
@@ -462,6 +468,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.upcomingFilter = "watchlist"; // "watchlist" | "actors"
         this.is3DView = false;
         this.havenStartedCollapsed = false;
+        this.usPlatforms = ["Netflix", "Prime Video", "Hulu", "Max", "Disney+", "Apple TV+", "Paramount+", "Peacock"];
+        this.selectedUsPlatforms = new Set();
 
         this.searchQuery = "";
         this.searchSort = "top"; // "top" | "newest" | "oldest"
@@ -749,7 +757,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         });
         const mediaSub = document.getElementById("home-subfilter-media");
         const upSub = document.getElementById("home-subfilter-upcoming");
+        const platBar = document.getElementById("home-us-platform-bar");
         if (mediaSub) mediaSub.classList.toggle("hidden", seg === "upcoming");
+        if (platBar) platBar.classList.toggle("hidden", seg === "upcoming");
         if (upSub) upSub.classList.toggle("hidden", seg !== "upcoming");
 
         const wlLabel = document.getElementById("sub-watchlist-label");
@@ -864,7 +874,73 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         return raw === "stopped" ? "stopped" : "interested";
       }
 
+      matchesUsPlatforms(rawText) {
+        if (!this.selectedUsPlatforms || this.selectedUsPlatforms.size === 0) return true;
+        const s = String(rawText || "").toLowerCase();
+        for (const plat of this.selectedUsPlatforms) {
+          const p = plat.toLowerCase();
+          if (p === "netflix" && s.includes("netflix")) return true;
+          if (p === "prime video" && (s.includes("prime") || s.includes("amazon"))) return true;
+          if (p === "hulu" && (s.includes("hulu") || s.includes("fx"))) return true;
+          if (p === "max" && (s.includes("max") || s.includes("hbo"))) return true;
+          if (p === "disney+" && s.includes("disney")) return true;
+          if (p === "apple tv+" && s.includes("apple")) return true;
+          if (p === "paramount+" && (s.includes("paramount") || s.includes("cbs") || s.includes("showtime"))) return true;
+          if (p === "peacock" && (s.includes("peacock") || s.includes("nbc"))) return true;
+        }
+        return false;
+      }
+
+      toggleUsPlatform(platform) {
+        if (!platform || platform === "all") {
+          this.selectedUsPlatforms.clear();
+        } else if (this.selectedUsPlatforms.has(platform)) {
+          this.selectedUsPlatforms.delete(platform);
+        } else {
+          this.selectedUsPlatforms.add(platform);
+        }
+        this.renderPlatformBars();
+        this.renderHome();
+        if (!this.searchQuery.trim()) {
+          this.runDefaultDiscover();
+        } else {
+          this.renderSearch();
+        }
+      }
+
+      renderPlatformBars() {
+        const allActive = this.selectedUsPlatforms.size === 0;
+        const allBtn =
+          '<button onclick="app.toggleUsPlatform(&quot;all&quot;)" class="px-2.5 py-1 rounded-full text-[11px] font-bold transition whitespace-nowrap border ' +
+          (allActive
+            ? "tv-yellow-bg border-yellow-400"
+            : "bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white") +
+          '">🇺🇸 All US</button>';
+        const pills = this.usPlatforms
+          .map((p) => {
+            const active = this.selectedUsPlatforms.has(p);
+            return (
+              '<button onclick="app.toggleUsPlatform(&quot;' +
+              escapeHtml(p) +
+              '&quot;)" class="px-2.5 py-1 rounded-full text-[11px] font-bold transition whitespace-nowrap border ' +
+              (active
+                ? "tv-yellow-bg border-yellow-400"
+                : "bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white") +
+              '">' +
+              escapeHtml(p) +
+              "</button>"
+            );
+          })
+          .join("");
+        const html = allBtn + pills;
+        const homeBar = document.getElementById("home-us-platform-bar");
+        const searchBar = document.getElementById("search-us-platform-bar");
+        if (homeBar) homeBar.innerHTML = html;
+        if (searchBar) searchBar.innerHTML = html;
+      }
+
       render() {
+        this.renderPlatformBars();
         this.renderHome();
         this.renderSearch();
         this.renderProfile();
@@ -932,11 +1008,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
         let statusLineHtml = "";
         let actionBtnHtml = "";
+        const netLabel = show.network ? " · " + escapeHtml(show.network) : "";
         if (effStatus === "completed") {
           statusLineHtml =
             '<div class="text-[11px] font-bold ' +
             statusClass +
-            '">TV Show · ' +
+            '">TV Show' +
+            netLabel +
+            " · " +
             statusBadge +
             "</div>" +
             '<div class="text-xs text-zinc-400">Completed · <span class="font-bold tv-yellow-text">All ' +
@@ -952,7 +1031,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           statusLineHtml =
             '<div class="text-[11px] font-bold ' +
             statusClass +
-            '">TV Show · ' +
+            '">TV Show' +
+            netLabel +
+            " · " +
             statusBadge +
             "</div>" +
             '<div class="text-xs text-zinc-400">Stopped watching (' +
@@ -970,7 +1051,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           statusLineHtml =
             '<div class="text-[11px] font-bold ' +
             statusClass +
-            '">TV Show · ' +
+            '">TV Show' +
+            netLabel +
+            " · " +
             statusBadge +
             "</div>" +
             '<div class="w-28 h-1.5 bg-zinc-800 rounded-full overflow-hidden my-1">' +
@@ -1067,7 +1150,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           "</div>" +
           '<div class="text-xs font-bold ' +
           (movie.watched ? "text-emerald-400" : "tv-yellow-text") +
-          '">Movie · ' +
+          '">Movie' +
+          (movie.streamingService ? " · " + escapeHtml(movie.streamingService) : "") +
+          " · " +
           (Number(movie.runtimeMins) || 120) +
           "m · " +
           (movie.watched ? "Watched" : "Watchlist") +
@@ -1102,11 +1187,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
 
         if (this.homeSegment === "shows") {
+          const filteredShows = shows.filter((s) => this.matchesUsPlatforms(s.network));
           const startedInProgress = [];
           const notStarted = [];
           const completed = [];
           const stopped = [];
-          for (const s of shows) {
+          for (const s of filteredShows) {
             const eff = this.getEffectiveShowStatus(s);
             if (eff === "stopped") stopped.push(s);
             else if (eff === "completed") completed.push(s);
@@ -1117,34 +1203,35 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           if (this.mediaFilter === "completed") {
             listEl.innerHTML =
               completed.map((s) => this.renderShowCard(s)).join("") ||
-              '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No completed shows yet.</div>';
+              '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No completed shows matching filter.</div>';
           } else if (this.mediaFilter === "interested") {
             listEl.innerHTML =
               notStarted.map((s) => this.renderShowCard(s)).join("") ||
-              '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No shows in your Watchlist.</div>';
+              '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No shows in your Watchlist matching filter.</div>';
           } else if (this.mediaFilter === "stopped") {
             listEl.innerHTML =
               stopped.map((s) => this.renderShowCard(s)).join("") ||
-              '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No stopped shows.</div>';
+              '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No stopped shows matching filter.</div>';
           } else if (this.mediaFilter === "all") {
             listEl.innerHTML =
-              shows.map((s) => this.renderShowCard(s)).join("") ||
+              filteredShows.map((s) => this.renderShowCard(s)).join("") ||
               '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">Your Watch List is empty. Tap 🔍 below to add shows.</div>';
           } else {
             listEl.innerHTML =
               startedInProgress.map((s) => this.renderShowCard(s)).join("") ||
-              '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No shows in progress. Tap 🔍 to search and add series!</div>';
+              '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No shows in progress matching filter. Tap 🔍 to search and add series!</div>';
           }
           return;
         }
 
         if (this.homeSegment === "movies") {
+          const platformMovies = movies.filter((m) => this.matchesUsPlatforms(m.streamingService));
           const filtered =
             this.mediaFilter === "completed"
-              ? movies.filter((m) => m.watched)
+              ? platformMovies.filter((m) => m.watched)
               : this.mediaFilter === "interested" || this.mediaFilter === "in_progress"
-              ? movies.filter((m) => !m.watched)
-              : movies;
+              ? platformMovies.filter((m) => !m.watched)
+              : platformMovies;
           listEl.innerHTML =
             filtered.map((m) => this.renderMovieCard(m)).join("") ||
             '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No movies in this view yet.</div>';
@@ -1312,7 +1399,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       // =========================================================
       async runDefaultDiscover() {
         try {
-          const res = await fetch("/api/search?q=" + encodeURIComponent("Game of Thrones"));
+          const provCsv = Array.from(this.selectedUsPlatforms).join(",");
+          const url = provCsv
+            ? "/api/discover-providers?providers=" + encodeURIComponent(provCsv)
+            : "/api/search?q=" + encodeURIComponent("Game of Thrones");
+          const res = await fetch(url);
           if (res.ok) {
             const data = await res.json();
             this.searchResults = (data.results || []).filter((r) => r.mediaType !== "actor");
@@ -1325,7 +1416,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.searchQuery = String(val || "");
         if (this.searchTimer) clearTimeout(this.searchTimer);
         this.searchTimer = setTimeout(async () => {
-          const q = this.searchQuery.trim() || "Game of Thrones";
+          const q = this.searchQuery.trim();
+          if (!q) {
+            await this.runDefaultDiscover();
+            return;
+          }
           try {
             const res = await fetch("/api/search?q=" + encodeURIComponent(q));
             if (res.ok) {
@@ -1363,7 +1458,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const countEl = document.getElementById("search-count-label");
         if (!listEl) return;
 
-        const items = [...(this.searchResults || [])].filter((r) => r.mediaType !== "actor");
+        const items = [...(this.searchResults || [])].filter((r) => {
+          if (r.mediaType === "actor") return false;
+          if (this.searchQuery.trim() && this.selectedUsPlatforms.size > 0) {
+            return this.matchesUsPlatforms(r.network || r.streamingService || r.director);
+          }
+          return true;
+        });
         if (this.searchSort === "newest") {
           items.sort((a, b) => (Number(b.year) || 0) - (Number(a.year) || 0));
         } else if (this.searchSort === "oldest") {
@@ -1382,7 +1483,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             .map((item) => {
               const isInLib = existingShowIds.has(item.id) || existingMovieIds.has(item.id);
               const badgeClass = item.mediaType === "movie" ? "text-sky-400" : "tv-yellow-text";
-              const badgeLabel = item.mediaType === "movie" ? "Movie" : "TV Show";
+              const platInfo = item.network || item.streamingService || "";
+              const badgeLabel =
+                (item.mediaType === "movie" ? "Movie" : "TV Show") +
+                (platInfo ? " · " + platInfo : "");
               const subtitle =
                 item.overview || item.director || item.network || "Tap + to add to your TV Time tracker";
               const poster =

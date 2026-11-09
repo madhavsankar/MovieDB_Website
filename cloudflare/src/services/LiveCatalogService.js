@@ -194,6 +194,56 @@ export class LiveCatalogService {
     return null;
   }
 
+  static US_STREAMING_PLATFORMS = [
+    { key: "Netflix", providerIds: [8, 1796], matchRe: /netflix/i },
+    { key: "Prime Video", providerIds: [9, 119, 2100], matchRe: /prime video|amazon/i },
+    { key: "Hulu", providerIds: [15], matchRe: /hulu|\bfx\b/i },
+    { key: "Max", providerIds: [1899, 384], matchRe: /\bmax\b|\bhbo\b/i },
+    { key: "Disney+", providerIds: [337], matchRe: /disney/i },
+    { key: "Apple TV+", providerIds: [350, 2], matchRe: /apple tv/i },
+    { key: "Paramount+", providerIds: [531, 1853, 2303], matchRe: /paramount|\bcbs\b|showtime/i },
+    { key: "Peacock", providerIds: [386, 387], matchRe: /peacock|\bnbc\b/i },
+  ];
+
+  static normalizeUsProvidersFromTmdb(usWatchObj, fallbackText = "") {
+    const names = [];
+    const seen = new Set();
+    const pushClean = (rawName) => {
+      const s = String(rawName || "").trim();
+      if (!s) return;
+      for (const p of LiveCatalogService.US_STREAMING_PLATFORMS) {
+        if (p.matchRe.test(s)) {
+          if (!seen.has(p.key)) {
+            seen.add(p.key);
+            names.push(p.key);
+          }
+          return;
+        }
+      }
+      if (!seen.has(s)) {
+        seen.add(s);
+        names.push(s);
+      }
+    };
+
+    if (usWatchObj && typeof usWatchObj === "object") {
+      const buckets = [
+        ...(usWatchObj.flatrate || []),
+        ...(usWatchObj.free || []),
+        ...(usWatchObj.ads || []),
+      ];
+      for (const b of buckets) {
+        if (b?.provider_name) pushClean(b.provider_name);
+      }
+    }
+    if (fallbackText) {
+      for (const part of String(fallbackText).split(/[,/]/)) {
+        pushClean(part);
+      }
+    }
+    return names.join(" / ") || fallbackText || "Streaming";
+  }
+
   static _buildTmdbRequest(path, env = null) {
     const readToken = String(env?.TMDB_READ_TOKEN || "").trim();
     const apiKey = String(env?.TMDB_API_KEY || "").trim();
@@ -393,6 +443,94 @@ export class LiveCatalogService {
   }
 
   /**
+   * Discovers US TV Shows & Movies streaming on the specified US platform(s) via TMDB `/3/discover/tv` and `/3/discover/movie`
+   * (`watch_region=US&with_watch_monetization_types=flatrate&with_watch_providers=...`).
+   */
+  static async discoverByUsProviders(platformsCsv, { fetchImpl = fetch, env = null } = {}) {
+    const requestedKeys = String(platformsCsv || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (requestedKeys.length === 0) {
+      return LiveCatalogService.searchMulti("Game of Thrones", { fetchImpl, env });
+    }
+
+    const matchedPlatforms = LiveCatalogService.US_STREAMING_PLATFORMS.filter((p) =>
+      requestedKeys.some((rk) => rk.toLowerCase() === p.key.toLowerCase())
+    );
+    const providerIdsPipe = matchedPlatforms.flatMap((p) => p.providerIds).join("|");
+    const platformLabel = matchedPlatforms.map((p) => p.key).join(" / ") || requestedKeys.join(" / ");
+    const results = [];
+
+    if (providerIdsPipe) {
+      const tvReq = LiveCatalogService._buildTmdbRequest(
+        `/discover/tv?watch_region=US&with_watch_monetization_types=flatrate&with_watch_providers=${encodeURIComponent(providerIdsPipe)}&sort_by=popularity.desc&language=en-US&page=1`,
+        env
+      );
+      const movReq = LiveCatalogService._buildTmdbRequest(
+        `/discover/movie?watch_region=US&with_watch_monetization_types=flatrate&with_watch_providers=${encodeURIComponent(providerIdsPipe)}&sort_by=popularity.desc&language=en-US&page=1`,
+        env
+      );
+
+      try {
+        const [tvRes, movRes] = await Promise.allSettled([
+          tvReq ? fetchImpl(tvReq.url, { headers: tvReq.headers }) : Promise.resolve(null),
+          movReq ? fetchImpl(movReq.url, { headers: movReq.headers }) : Promise.resolve(null),
+        ]);
+
+        if (tvRes.status === "fulfilled" && tvRes.value && tvRes.value.ok) {
+          const tvData = await tvRes.value.json();
+          for (const item of (tvData?.results || []).slice(0, 12)) {
+            if (!item?.id) continue;
+            const firstAir = String(item.first_air_date || "");
+            const year = firstAir ? parseInt(firstAir.slice(0, 4), 10) || 2024 : 2024;
+            results.push({
+              id: `tmdb_tv_${item.id}`,
+              tvmazeId: 0,
+              tmdbId: item.id,
+              mediaType: "show",
+              title: item.name || item.original_name || "Untitled Show",
+              year,
+              network: platformLabel,
+              status: "Running",
+              runtimeMins: 45,
+              genres: ["TV Series"],
+              rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 8.0,
+              posterUrl: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : "",
+              overview: stripHtml(item.overview || ""),
+            });
+          }
+        }
+
+        if (movRes.status === "fulfilled" && movRes.value && movRes.value.ok) {
+          const movData = await movRes.value.json();
+          for (const item of (movData?.results || []).slice(0, 12)) {
+            if (!item?.id) continue;
+            const rel = String(item.release_date || "");
+            const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
+            results.push({
+              id: `movie_${item.id}`,
+              tmdbId: item.id,
+              mediaType: "movie",
+              title: item.title || item.original_title || "Untitled Movie",
+              year,
+              director: platformLabel,
+              runtimeMins: 120,
+              genres: ["Movie"],
+              streamingService: platformLabel,
+              rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 7.8,
+              posterUrl: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : "",
+              overview: stripHtml(item.overview || ""),
+            });
+          }
+        }
+      } catch (_) {}
+    }
+
+    return { results };
+  }
+
+  /**
    * Fetches full TV show details + complete episode list + cast from TMDB (`/3/tv/:id`) or TVMaze (`/shows/:id?embed[]=episodes&embed[]=cast`).
    */
   static async fetchFullShowFromTvMaze(tvmazeId, { fetchImpl = fetch, env = null } = {}) {
@@ -400,7 +538,7 @@ export class LiveCatalogService {
     if (rawStr.startsWith("tmdb_tv_")) {
       const tmdbId = Number(rawStr.replace(/^tmdb_tv_/, ""));
       const tmdbReq = LiveCatalogService._buildTmdbRequest(
-        `/tv/${tmdbId}?append_to_response=credits&language=en-US`,
+        `/tv/${tmdbId}?append_to_response=credits,watch/providers&language=en-US`,
         env
       );
       if (tmdbId && tmdbReq) {
@@ -410,7 +548,9 @@ export class LiveCatalogService {
             const show = await resp.json();
             const firstAir = String(show.first_air_date || "");
             const year = firstAir ? parseInt(firstAir.slice(0, 4), 10) || 2024 : 2024;
-            const network = show.networks?.[0]?.name || "Streaming";
+            const rawNet = show.networks?.[0]?.name || "";
+            const usProviders = show["watch/providers"]?.results?.US;
+            const network = LiveCatalogService.normalizeUsProvidersFromTmdb(usProviders, rawNet);
             const posterUrl = show.poster_path ? `https://image.tmdb.org/t/p/w500${show.poster_path}` : "";
             const castList = (show.credits?.cast || [])
               .slice(0, 8)
@@ -476,7 +616,8 @@ export class LiveCatalogService {
       const show = await resp.json();
       const premiered = String(show.premiered || "");
       const year = premiered ? parseInt(premiered.slice(0, 4), 10) || 2024 : 2024;
-      const network = show.network?.name || show.webChannel?.name || "Streaming";
+      const rawNetwork = show.webChannel?.name || show.network?.name || "Streaming";
+      const network = LiveCatalogService.normalizeUsProvidersFromTmdb(null, rawNetwork);
       const posterUrl = (show.image?.medium || show.image?.original || "").replace(/^http:\/\//i, "https://");
       const castList = (show._embedded?.cast || [])
         .slice(0, 8)
