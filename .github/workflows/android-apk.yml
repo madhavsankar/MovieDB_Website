@@ -45,15 +45,18 @@ jobs:
           if [ -n "$GOOGLE_SERVICES_JSON" ]; then
             printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json
           fi
-          if [ -n "$ANDROID_DEBUG_KEYSTORE_BASE64" ]; then
-            mkdir -p ~/.android
-            echo "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > ~/.android/debug.keystore
-          fi
           if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ]; then
             echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/release-keystore.jks
             export KEYSTORE_FILE="release-keystore.jks"
             export KEY_ALIAS="${KEY_ALIAS:-upload}"
             export KEY_PASSWORD="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+            GRADLE_TASK="assembleRelease"
+          elif [ -n "$ANDROID_DEBUG_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > app/release-keystore.jks
+            export KEYSTORE_FILE="release-keystore.jks"
+            export KEYSTORE_PASSWORD="android"
+            export KEY_ALIAS="androiddebugkey"
+            export KEY_PASSWORD="android"
             GRADLE_TASK="assembleRelease"
           else
             GRADLE_TASK="assembleDebug"

@@ -362,7 +362,7 @@ fun TvTimeMainScreen(
                     FirestoreSyncService.pullFromFirestoreIfNeeded(dao, clean)
                 }
             } catch (e: ApiException) {
-                if (result.resultCode != Activity.RESULT_CANCELED) {
+                if (e.statusCode != 12501) {
                     errorText = "Google Sign-In failed (code ${e.statusCode}). Make sure your SHA-1 fingerprint is registered in Firebase."
                 }
             }
