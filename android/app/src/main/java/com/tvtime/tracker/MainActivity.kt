@@ -1,8 +1,11 @@
 package com.tvtime.tracker
 
 import android.content.Context
+import android.content.Intent
+import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
@@ -29,10 +32,14 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var database: TvTimeDatabase
     private var activeUserId by mutableStateOf(FirestoreSyncService.DEFAULT_USER_ID)
+    private var sharedSearchQuery by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+        )
         try {
             FirebaseApp.initializeApp(this)
             FirebaseAnalytics.getInstance(this)
@@ -55,6 +62,10 @@ class MainActivity : ComponentActivity() {
             FirestoreSyncService.DEFAULT_USER_ID
         }
 
+        if (savedInstanceState == null) {
+            handleIncomingShareIntent(intent)
+        }
+
         lifecycleScope.launch(Dispatchers.IO) {
             if (FirestoreSyncService.isUserAllowed(activeUserId)) {
                 FirestoreSyncService.pullFromFirestoreIfNeeded(database.dao(), activeUserId)
@@ -66,12 +77,36 @@ class MainActivity : ComponentActivity() {
                 TvTimeMainScreen(
                     dao = database.dao(),
                     initialUserId = activeUserId,
+                    sharedSearchQuery = sharedSearchQuery,
+                    onConsumeSharedQuery = { sharedSearchQuery = null },
                     onSwitchUser = { nextUser ->
                         val clean = FirestoreSyncService.sanitizeUserId(nextUser)
                         activeUserId = clean
                         prefs.edit().putString("active_user_id", clean).apply()
                     }
                 )
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingShareIntent(intent)
+    }
+
+    private fun handleIncomingShareIntent(intent: Intent?) {
+        if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
+            val rawText = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
+            if (rawText.isNotEmpty()) {
+                val cleaned = rawText
+                    .lineSequence()
+                    .firstOrNull { !it.startsWith("http://") && !it.startsWith("https://") }
+                    ?.trim()
+                    ?: rawText.substringBefore("http").trim()
+                if (cleaned.isNotEmpty()) {
+                    sharedSearchQuery = cleaned.take(80)
+                }
             }
         }
     }

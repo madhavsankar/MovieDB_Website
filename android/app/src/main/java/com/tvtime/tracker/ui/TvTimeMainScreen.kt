@@ -14,8 +14,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
@@ -24,6 +28,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,7 +41,9 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -67,36 +74,39 @@ import kotlinx.coroutines.launch
 fun TvTimeMainScreen(
     dao: TvTimeDao,
     initialUserId: String,
+    sharedSearchQuery: String? = null,
+    onConsumeSharedQuery: () -> Unit = {},
     onSwitchUser: (String) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var currentUserId by remember { mutableStateOf(initialUserId) }
-    var activeBottomTab by remember { mutableStateOf("home") } // "home" | "search" | "swipe"
-    var tabBackStack by remember { mutableStateOf(listOf<String>()) }
+    var currentUserId by rememberSaveable { mutableStateOf(initialUserId) }
+    var activeBottomTab by rememberSaveable { mutableStateOf("home") } // "home" | "search" | "swipe"
+    var tabBackStack by rememberSaveable { mutableStateOf(listOf<String>()) }
 
     // Home Tab State
-    var homeTopSegment by remember { mutableStateOf("shows") } // "shows" | "movies" | "upcoming"
-    var mediaSubFilter by remember { mutableStateOf("in_progress") } // "in_progress" | "interested" | "completed" | "stopped"
+    var homeTopSegment by rememberSaveable { mutableStateOf("shows") } // "shows" | "movies" | "upcoming"
+    var mediaSubFilter by rememberSaveable { mutableStateOf("in_progress") } // "in_progress" | "interested" | "completed" | "stopped"
 
-    // Home & Search US Streaming Platform Filter State (Multi-select)
-    var selectedUsPlatforms by remember { mutableStateOf(emptySet<String>()) }
+    // Home & Search US Streaming Platform Filter State (Multi-select, persisted across rotation)
+    var selectedUsPlatformsList by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val selectedUsPlatforms = remember(selectedUsPlatformsList) { selectedUsPlatformsList.toSet() }
 
     // Search Tab State
-    var searchQuery by remember { mutableStateOf("") }
-    var searchSort by remember { mutableStateOf("top") } // "top" | "newest" | "oldest"
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var searchSort by rememberSaveable { mutableStateOf("top") } // "top" | "newest" | "oldest"
     var searchResults by remember { mutableStateOf<List<SearchResultItem>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
 
     // Swipe Recommendations Tab State
-    var swipeMediaFilter by remember { mutableStateOf("all") } // "all" | "tv" | "movie"
+    var swipeMediaFilter by rememberSaveable { mutableStateOf("all") } // "all" | "tv" | "movie"
 
     // Modals & Bottom Sheets
-    var showHamburgerSheet by remember { mutableStateOf(false) }
+    var showHamburgerSheet by rememberSaveable { mutableStateOf(false) }
     var selectedShowForDetail by remember { mutableStateOf<ShowEntity?>(null) }
     var selectedMovieForDetail by remember { mutableStateOf<MovieEntity?>(null) }
-    var showImportDialog by remember { mutableStateOf(false) }
+    var showImportDialog by rememberSaveable { mutableStateOf(false) }
     var showAccountSwitcherDialog by remember(currentUserId) {
         mutableStateOf(!FirestoreSyncService.isUserAllowed(currentUserId))
     }
@@ -105,6 +115,14 @@ fun TvTimeMainScreen(
         if (nextTab != activeBottomTab) {
             tabBackStack = (tabBackStack + activeBottomTab).takeLast(12)
             activeBottomTab = nextTab
+        }
+    }
+
+    LaunchedEffect(sharedSearchQuery) {
+        if (!sharedSearchQuery.isNullOrBlank()) {
+            searchQuery = sharedSearchQuery
+            switchTab("search")
+            onConsumeSharedQuery()
         }
     }
 
@@ -222,12 +240,12 @@ fun TvTimeMainScreen(
     }
 
     val toggleUsPlatform: (String) -> Unit = { platform ->
-        selectedUsPlatforms = if (platform == "clear") {
-            emptySet()
-        } else if (selectedUsPlatforms.contains(platform)) {
-            selectedUsPlatforms - platform
+        selectedUsPlatformsList = if (platform == "clear") {
+            emptyList()
+        } else if (selectedUsPlatformsList.contains(platform)) {
+            selectedUsPlatformsList - platform
         } else {
-            selectedUsPlatforms + platform
+            selectedUsPlatformsList + platform
         }
     }
 
@@ -724,7 +742,11 @@ fun TvTimeMainScreen(
                         .navigationBarsPadding(),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .verticalScroll(rememberScrollState())
+                    ) {
                         // Top Brand & Account Header
                         Row(
                             modifier = Modifier
@@ -1477,42 +1499,59 @@ private fun HomeTabScreen(
             val completed = partitioned.filter { it.second == "completed" }.map { it.first }
             val stopped = partitioned.filter { it.second == "stopped" }.map { it.first }
 
-            when (mediaFilter) {
-                "completed" -> {
-                    items(completed, key = { it.id }) { show ->
-                        TvShowWatchCard(
-                            show = show,
-                            onCardClick = { onOpenShow(show) },
-                            onEyeClick = { onMarkNextEpisode(show) }
-                        )
+            val activeShowsList = when (mediaFilter) {
+                "completed" -> completed
+                "interested" -> notStarted
+                "stopped" -> stopped
+                else -> startedInProgress
+            }
+
+            if (activeShowsList.isEmpty()) {
+                item(key = "empty_shows_state") {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = TvTimePalette.SurfaceCard,
+                        border = BorderStroke(1.dp, TvTimePalette.Border),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "📺 No series match this filter",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = if (selectedUsPlatforms.isNotEmpty()) {
+                                    "Try clearing your Streaming filter or switching status tabs."
+                                } else {
+                                    "Search for a TV show or swipe through For You to add series."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TvTimePalette.TextSecondary,
+                                textAlign = TextAlign.Center
+                            )
+                            if (selectedUsPlatforms.isNotEmpty()) {
+                                TextButton(onClick = { onToggleUsPlatform("clear") }) {
+                                    Text("✕ Clear Streaming Filter", color = TvTimePalette.Yellow, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
                     }
                 }
-                "interested" -> {
-                    items(notStarted, key = { it.id }) { show ->
-                        TvShowWatchCard(
-                            show = show,
-                            onCardClick = { onOpenShow(show) },
-                            onEyeClick = { onMarkNextEpisode(show) }
-                        )
-                    }
-                }
-                "stopped" -> {
-                    items(stopped, key = { it.id }) { show ->
-                        TvShowWatchCard(
-                            show = show,
-                            onCardClick = { onOpenShow(show) },
-                            onEyeClick = { onMarkNextEpisode(show) }
-                        )
-                    }
-                }
-                else -> {
-                    items(startedInProgress, key = { it.id }) { show ->
-                        TvShowWatchCard(
-                            show = show,
-                            onCardClick = { onOpenShow(show) },
-                            onEyeClick = { onMarkNextEpisode(show) }
-                        )
-                    }
+            } else {
+                items(activeShowsList, key = { it.id }) { show ->
+                    TvShowWatchCard(
+                        show = show,
+                        onCardClick = { onOpenShow(show) },
+                        onEyeClick = { onMarkNextEpisode(show) }
+                    )
                 }
             }
         } else if (topSegment == "movies") {
@@ -1521,12 +1560,53 @@ private fun HomeTabScreen(
             } else {
                 platformFilteredMovies.filter { !it.watched }
             }
-            items(filteredMovies, key = { it.id }) { movie ->
-                TvMovieWatchCard(
-                    movie = movie,
-                    onCardClick = { onOpenMovie(movie) },
-                    onToggleWatched = { onToggleMovieWatched(movie) }
-                )
+            if (filteredMovies.isEmpty()) {
+                item(key = "empty_movies_state") {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = TvTimePalette.SurfaceCard,
+                        border = BorderStroke(1.dp, TvTimePalette.Border),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "🎬 No movies match this filter",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = if (selectedUsPlatforms.isNotEmpty()) {
+                                    "Try clearing your Streaming filter or switching between Watchlist and Watched."
+                                } else {
+                                    "Search for a movie or swipe through For You to add movies."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TvTimePalette.TextSecondary,
+                                textAlign = TextAlign.Center
+                            )
+                            if (selectedUsPlatforms.isNotEmpty()) {
+                                TextButton(onClick = { onToggleUsPlatform("clear") }) {
+                                    Text("✕ Clear Streaming Filter", color = TvTimePalette.Yellow, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                items(filteredMovies, key = { it.id }) { movie ->
+                    TvMovieWatchCard(
+                        movie = movie,
+                        onCardClick = { onOpenMovie(movie) },
+                        onToggleWatched = { onToggleMovieWatched(movie) }
+                    )
+                }
             }
         } else {
             // Upcoming Segment
@@ -1629,6 +1709,7 @@ private fun SearchTabScreen(
     existingExternalIds: Set<String>,
     onAddOrOpenResult: (SearchResultItem) -> Unit
 ) {
+    val focusManager = LocalFocusManager.current
     val sortedResults = remember(results, sortKey) {
         when (sortKey) {
             "newest" -> results.sortedByDescending { it.year }
@@ -1674,6 +1755,8 @@ private fun SearchTabScreen(
                             )
                         },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
                         colors = TextFieldDefaults.colors(
                             focusedContainerColor = Color.Transparent,
                             unfocusedContainerColor = Color.Transparent,
