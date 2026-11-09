@@ -113,24 +113,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         id="hamburger-menu-btn"
         onclick="app.openHamburgerMenu()"
         class="tv-pill-bar px-3.5 py-2 rounded-full flex items-center gap-2 text-zinc-200 hover:text-yellow-400 transition border border-zinc-800/80"
-        title="Open Personal Stats, Export &amp; Account Menu"
+        title="Open Menu"
       >
         <svg class="w-5 h-5 tv-yellow-text" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
         </svg>
         <span class="text-xs font-extrabold tracking-tight text-white">TV Time</span>
       </button>
-
-      <div class="flex items-center gap-2">
-        <button
-          onclick="app.openHamburgerMenu()"
-          class="tv-pill-bar px-3 py-1.5 rounded-full flex items-center gap-2 text-xs font-bold text-zinc-300 hover:text-yellow-400 transition border border-zinc-800/80"
-        >
-          <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-          <span id="top-user-chip">@member</span>
-          <span class="text-zinc-500">· Stats &amp; Export</span>
-        </button>
-      </div>
     </header>
 
     <!-- ========================================================= -->
@@ -259,115 +248,298 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       <div id="swipe-deck-container" class="relative min-h-[470px] flex flex-col items-center justify-center"></div>
     </section>
 
+    <!-- ========================================================= -->
+    <!-- FULL PAGE: STATISTICS & RECENTLY WATCHED (📊)             -->
+    <!-- ========================================================= -->
+    <section id="tab-stats" class="hidden space-y-5">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <button
+            onclick="app.switchTab('home')"
+            class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
+            title="Back to Home"
+          >
+            ←
+          </button>
+          <div>
+            <h2 class="text-lg font-extrabold text-white">📊 Statistics</h2>
+            <p class="text-xs text-zinc-400">Your watch hours &amp; recently watched history</p>
+          </div>
+        </div>
+        <button onclick="app.loadState(true)" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold text-yellow-400 hover:text-white transition">
+          ↻ Sync
+        </button>
+      </div>
+
+      <!-- Top Profile Card -->
+      <div class="tv-card rounded-3xl p-4 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3.5">
+          <div class="relative">
+            <div
+              id="profile-avatar"
+              onclick="app.switchTab('settings')"
+              class="w-14 h-14 rounded-full bg-gradient-to-tr from-yellow-400 via-amber-500 to-orange-500 p-0.5 cursor-pointer"
+            >
+              <div class="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center text-lg font-extrabold text-yellow-400" id="profile-avatar-initials">
+                TV
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="flex items-center gap-1.5">
+              <h2 id="profile-display-name" class="text-base font-extrabold text-white">Profile</h2>
+              <button onclick="app.switchTab('settings')" class="text-zinc-400 hover:text-white text-xs">✎</button>
+            </div>
+            <p id="profile-handle" class="text-xs text-zinc-400">@member</p>
+          </div>
+        </div>
+        <button onclick="app.switchTab('import')" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold text-white hover:text-yellow-400 transition border border-zinc-800">
+          ⇅ Import / Export
+        </button>
+      </div>
+
+      <!-- WATCH STATS Card -->
+      <div class="tv-card rounded-3xl p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">WATCH STATS</div>
+          <div id="stat-counts-badge" class="text-xs font-extrabold tv-yellow-text">0 Completed Series · 0 Watched Movies</div>
+        </div>
+        <div>
+          <div id="stat-total-time" class="text-4xl font-black tv-yellow-text tracking-tight">0.0 hrs</div>
+          <div id="stat-total-sub" class="text-xs text-zinc-400 mt-0.5">Total Watch Hours (0d 0h)</div>
+        </div>
+        <div class="h-px bg-zinc-800"></div>
+        <div class="grid grid-cols-2 gap-4 pt-1">
+          <div>
+            <div id="stat-series-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
+            <div class="text-[11px] font-bold tv-yellow-text">Series Watch Hours</div>
+            <div id="stat-series-sub" class="text-xs text-zinc-400 mt-0.5">0 completed series · 0 completed episodes</div>
+          </div>
+          <div class="text-right">
+            <div id="stat-movies-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
+            <div class="text-[11px] font-bold tv-yellow-text">Movie Watch Hours</div>
+            <div id="stat-movies-sub" class="text-xs text-zinc-400 mt-0.5">0 watched movies</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recently watched Series Carousel -->
+      <div class="space-y-2.5">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-extrabold text-white">Recently watched <span id="label-recent-series-count" class="font-normal text-zinc-400">Series</span></h3>
+          <button onclick="app.switchTab('home'); app.setHomeSegment('shows'); app.setMediaFilter('in_progress');" class="text-xs font-semibold tv-yellow-text">See all</button>
+        </div>
+        <div id="carousel-recent-series" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
+      </div>
+
+      <!-- Recently watched Movies Carousel -->
+      <div class="space-y-2.5">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-extrabold text-white">Recently watched <span id="label-recent-movies-count" class="font-normal text-zinc-400">Movies</span></h3>
+          <button onclick="app.switchTab('home'); app.setHomeSegment('movies'); app.setMediaFilter('completed');" class="text-xs font-semibold tv-yellow-text">See all</button>
+        </div>
+        <div id="carousel-recent-movies" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
+      </div>
+    </section>
+
+    <!-- ========================================================= -->
+    <!-- FULL PAGE: IMPORT / EXPORT CSV & JSON (⇅)                 -->
+    <!-- ========================================================= -->
+    <section id="tab-import" class="hidden space-y-5">
+      <div class="flex items-center gap-2.5">
+        <button
+          onclick="app.switchTab('home')"
+          class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
+          title="Back to Home"
+        >
+          ←
+        </button>
+        <div>
+          <h2 class="text-lg font-extrabold text-white">⇅ Import / Export CSV &amp; JSON</h2>
+          <p class="text-xs text-zinc-400">Backup or restore your entire TV Time library</p>
+        </div>
+      </div>
+
+      <div class="tv-card rounded-3xl p-6 space-y-5">
+        <div class="flex items-center gap-3.5">
+          <div class="w-12 h-12 rounded-2xl bg-zinc-800/90 flex items-center justify-center tv-yellow-text text-xl font-bold shrink-0">
+            ⇅
+          </div>
+          <div>
+            <h3 class="text-base font-extrabold text-white">Library Backup &amp; Restore</h3>
+            <p class="text-xs text-zinc-400 mt-0.5">
+              Export your shows, movies, episode progress, and recommendations history as CSV or JSON.
+            </p>
+          </div>
+        </div>
+
+        <div class="space-y-2.5 text-xs text-zinc-300 border-t border-zinc-800 pt-4">
+          <div class="flex items-start gap-2.5">
+            <span class="w-5 h-5 rounded-full bg-zinc-800 tv-yellow-text font-bold flex items-center justify-center shrink-0">1</span>
+            <span>Export CSV (<code>.csv</code>) to view or edit your watch history in Excel or Google Sheets.</span>
+          </div>
+          <div class="flex items-start gap-2.5">
+            <span class="w-5 h-5 rounded-full bg-zinc-800 tv-yellow-text font-bold flex items-center justify-center shrink-0">2</span>
+            <span>Export JSON (<code>.json</code>) for full lossless backup and cross-device restore.</span>
+          </div>
+          <div class="flex items-start gap-2.5">
+            <span class="w-5 h-5 rounded-full bg-zinc-800 tv-yellow-text font-bold flex items-center justify-center shrink-0">3</span>
+            <span>Import a JSON backup file to restore or merge your shows and movies.</span>
+          </div>
+        </div>
+
+        <div class="space-y-3 pt-2">
+          <button onclick="app.exportBackupCsv()" class="w-full py-3.5 rounded-2xl tv-yellow-bg text-sm font-extrabold flex items-center justify-center gap-2">
+            📊 Export Spreadsheet (.csv)
+          </button>
+          <button onclick="app.exportBackupJson()" class="w-full py-3.5 rounded-2xl tv-pill-bar border border-zinc-700 text-sm font-bold text-white hover:text-yellow-400 transition flex items-center justify-center gap-2">
+            📤 Export Full Library Backup (.json)
+          </button>
+          <button onclick="document.getElementById('tvtime-import-file').click()" class="w-full py-3.5 rounded-2xl tv-pill-bar border border-zinc-700 text-sm font-bold tv-yellow-text hover:text-white transition flex items-center justify-center gap-2">
+            📥 Import Backup File (.json)
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================================= -->
+    <!-- FULL PAGE: SETTINGS & GOOGLE ACCOUNT (⚙️)                 -->
+    <!-- ========================================================= -->
+    <section id="tab-settings" class="hidden space-y-5">
+      <div class="flex items-center gap-2.5">
+        <button
+          onclick="app.switchTab('home')"
+          class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
+          title="Back to Home"
+        >
+          ←
+        </button>
+        <div>
+          <h2 class="text-lg font-extrabold text-white">⚙️ Settings</h2>
+          <p class="text-xs text-zinc-400">Google Account &amp; Cloud Firestore Sync</p>
+        </div>
+      </div>
+
+      <div class="tv-card rounded-3xl p-6 space-y-5">
+        <div class="space-y-1.5">
+          <div class="text-xs font-bold uppercase tracking-wider text-zinc-400">Signed-In Google Account</div>
+          <div id="settings-email-display" class="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3 text-sm font-bold text-white">
+            Not signed in
+          </div>
+          <p class="text-xs text-zinc-400 pt-1">
+            Synced automatically with Firebase Cloud Firestore (<code>tvtime_state/user_state_{userId}</code>). Only allowlisted household Google accounts are permitted.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 gap-3 pt-2 border-t border-zinc-800">
+          <button onclick="app.loadState(true)" class="w-full py-3 rounded-2xl tv-yellow-bg text-sm font-extrabold">
+            ☁️ Backup &amp; Sync Now
+          </button>
+          <button onclick="app.signOutGoogle()" class="w-full py-3 rounded-2xl bg-rose-500/20 text-rose-300 border border-rose-500/40 text-sm font-extrabold hover:bg-rose-500/30 transition">
+            🔐 Sign Out / Switch Google Account
+          </button>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <!-- ========================================================= -->
-  <!-- HAMBURGER MENU DRAWER: PERSONAL STATS, EXPORT & ACCOUNT   -->
+  <!-- PLACESTRACKER-STYLE LEFT NAVIGATION DRAWER (☰)            -->
   <!-- ========================================================= -->
   <div id="hamburger-backdrop" onclick="app.closeHamburgerMenu()" class="hidden fixed inset-0 bg-black/75 backdrop-blur-sm z-40"></div>
   <aside
     id="hamburger-drawer"
-    class="hidden fixed inset-y-0 left-0 w-full max-w-md bg-[#111115] border-r border-zinc-800 z-50 flex flex-col overflow-y-auto p-5 space-y-6 shadow-2xl"
+    class="hidden fixed inset-y-0 left-0 w-72 bg-[#0b101b] border-r border-slate-800/80 z-50 flex flex-col justify-between overflow-y-auto shadow-2xl"
   >
-    <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
-      <div class="flex items-center gap-2">
-        <span class="text-lg">☰</span>
-        <span class="text-sm font-extrabold text-white uppercase tracking-wider">Personal Stats &amp; Menu</span>
-      </div>
-      <button onclick="app.closeHamburgerMenu()" class="w-8 h-8 rounded-full bg-zinc-800 text-zinc-300 hover:text-white text-sm font-bold">✕</button>
-    </div>
-
-    <!-- Top Profile Header: Avatar, Name + Edit, @handle, Export & Sync Buttons -->
-    <div class="flex items-center justify-between gap-3">
-      <div class="flex items-center gap-3.5">
-        <div class="relative">
-          <div
-            id="profile-avatar"
-            onclick="app.closeHamburgerMenu(); app.openAccountModal();"
-            class="w-14 h-14 rounded-full bg-gradient-to-tr from-yellow-400 via-amber-500 to-orange-500 p-0.5 cursor-pointer"
-          >
-            <div class="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center text-lg font-extrabold text-yellow-400" id="profile-avatar-initials">
-              TV
-            </div>
+    <div>
+      <!-- Top Brand & Account Header -->
+      <div class="px-5 py-4 bg-[#101c24] border-b border-slate-800/80 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="w-11 h-11 rounded-full bg-emerald-950/80 border border-emerald-500/40 flex items-center justify-center text-lg shrink-0">
+            📺
           </div>
-          <button
-            onclick="app.closeHamburgerMenu(); app.openAccountModal();"
-            class="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full tv-yellow-bg flex items-center justify-center text-[11px] font-bold shadow"
-            title="Google Account &amp; Sync"
-          >
-            🔐
-          </button>
-        </div>
-        <div>
-          <div class="flex items-center gap-1.5">
-            <h2 id="profile-display-name" class="text-base font-extrabold text-white">Profile</h2>
-            <button onclick="app.closeHamburgerMenu(); app.openAccountModal();" class="text-zinc-400 hover:text-white text-xs">✎</button>
+          <div class="min-w-0">
+            <div class="text-sm font-black tracking-widest uppercase text-emerald-400">TV TIME</div>
+            <div id="drawer-user-email" class="text-xs text-slate-300 truncate">member</div>
           </div>
-          <p id="profile-handle" class="text-xs text-zinc-400">@member</p>
         </div>
-      </div>
-
-      <div class="flex items-center gap-2">
-        <button onclick="app.closeHamburgerMenu(); app.openImportModal();" class="tv-pill-bar px-3 py-2 rounded-full text-xs font-semibold text-white hover:text-yellow-400 transition">
-          📤 Export
-        </button>
-        <button onclick="app.loadState(true)" class="tv-pill-bar px-3 py-2 rounded-full text-xs font-semibold text-yellow-400 hover:text-white transition">
-          ↻ Sync
+        <button
+          onclick="app.closeHamburgerMenu()"
+          class="w-9 h-9 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center text-sm font-bold shrink-0"
+        >
+          ✕
         </button>
       </div>
+
+      <!-- Section: HOME -->
+      <div class="px-5 py-4 border-b border-slate-800/80 space-y-1">
+        <div class="text-[11px] font-bold uppercase tracking-widest text-slate-400 pb-2">HOME</div>
+        <button
+          onclick="app.closeHamburgerMenu(); app.switchTab('home');"
+          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
+        >
+          <span class="text-lg">🏠</span>
+          <span>Home</span>
+        </button>
+        <button
+          onclick="app.closeHamburgerMenu(); app.switchTab('search');"
+          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
+        >
+          <span class="text-lg">🔍</span>
+          <span>Search &amp; Discover</span>
+        </button>
+        <button
+          onclick="app.closeHamburgerMenu(); app.switchTab('swipe');"
+          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
+        >
+          <span class="text-lg">🔥</span>
+          <span>For You</span>
+        </button>
+      </div>
+
+      <!-- Section: MY STATISTICS -->
+      <div class="px-5 py-4 border-b border-slate-800/80 space-y-1">
+        <div class="text-[11px] font-bold uppercase tracking-widest text-slate-400 pb-2">MY STATISTICS</div>
+        <button
+          onclick="app.closeHamburgerMenu(); app.switchTab('stats');"
+          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
+        >
+          <span class="text-lg">📊</span>
+          <span>Statistics</span>
+        </button>
+      </div>
+
+      <!-- Section: TOOLS & SETTINGS -->
+      <div class="px-5 py-4 space-y-1">
+        <div class="text-[11px] font-bold uppercase tracking-widest text-slate-400 pb-2">TOOLS &amp; SETTINGS</div>
+        <button
+          onclick="app.closeHamburgerMenu(); app.switchTab('import');"
+          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
+        >
+          <span class="text-lg">⇅</span>
+          <span>Import / Export CSV</span>
+        </button>
+        <button
+          onclick="app.closeHamburgerMenu(); app.loadState(true);"
+          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
+        >
+          <span class="text-lg">☁️</span>
+          <span>Backup &amp; Sync Now</span>
+        </button>
+        <button
+          onclick="app.closeHamburgerMenu(); app.switchTab('settings');"
+          class="w-full py-2.5 px-2 rounded-xl flex items-center gap-3.5 text-left text-sm font-semibold text-slate-100 hover:bg-slate-800/60 transition"
+        >
+          <span class="text-lg">⚙️</span>
+          <span>Settings</span>
+        </button>
+      </div>
     </div>
 
-    <!-- WATCH STATS Card (Total Watch Hours, Series Watch Hours, Movie Watch Hours, Number of Series & Movies) -->
-    <div class="tv-card rounded-3xl p-5 space-y-4">
-      <div class="flex items-center justify-between">
-        <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">WATCH STATS</div>
-        <div id="stat-counts-badge" class="text-xs font-extrabold tv-yellow-text">0 Series · 0 Movies</div>
-      </div>
-      <div>
-        <div id="stat-total-time" class="text-4xl font-black tv-yellow-text tracking-tight">0.0 hrs</div>
-        <div id="stat-total-sub" class="text-xs text-zinc-400 mt-0.5">Total Watch Hours (0d 0h)</div>
-      </div>
-      <div class="h-px bg-zinc-800"></div>
-      <div class="grid grid-cols-2 gap-4 pt-1">
-        <div>
-          <div id="stat-series-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
-          <div class="text-[11px] font-bold tv-yellow-text">Series Watch Hours</div>
-          <div id="stat-series-sub" class="text-xs text-zinc-400 mt-0.5">0 Series · 0 eps watched</div>
-        </div>
-        <div class="text-right">
-          <div id="stat-movies-time" class="text-lg font-extrabold text-white">0.0 hrs</div>
-          <div class="text-[11px] font-bold tv-yellow-text">Movie Watch Hours</div>
-          <div id="stat-movies-sub" class="text-xs text-zinc-400 mt-0.5">0 Movies (0 watched)</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Recently watched Series Carousel -->
-    <div class="space-y-2.5">
-      <div class="flex items-center justify-between">
-        <h3 class="text-sm font-extrabold text-white">Recently watched <span id="label-recent-series-count" class="font-normal text-zinc-400">Series</span></h3>
-        <button onclick="app.closeHamburgerMenu(); app.switchTab('home'); app.setHomeSegment('shows'); app.setMediaFilter('in_progress');" class="text-xs font-semibold tv-yellow-text">See all</button>
-      </div>
-      <div id="carousel-recent-series" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
-    </div>
-
-    <!-- Recently watched Movies Carousel -->
-    <div class="space-y-2.5">
-      <div class="flex items-center justify-between">
-        <h3 class="text-sm font-extrabold text-white">Recently watched <span id="label-recent-movies-count" class="font-normal text-zinc-400">Movies</span></h3>
-        <button onclick="app.closeHamburgerMenu(); app.switchTab('home'); app.setHomeSegment('movies'); app.setMediaFilter('completed');" class="text-xs font-semibold tv-yellow-text">See all</button>
-      </div>
-      <div id="carousel-recent-movies" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
-    </div>
-
-    <!-- Quick Hamburger Menu Action Buttons -->
-    <div class="grid grid-cols-2 gap-2.5 pt-2 border-t border-zinc-800">
-      <button onclick="app.closeHamburgerMenu(); app.openImportModal();" class="py-2.5 px-3 rounded-2xl bg-zinc-800/90 hover:bg-zinc-700 text-xs font-extrabold text-white flex items-center justify-center gap-1.5">
-        📤 Export / Import JSON
-      </button>
-      <button onclick="app.closeHamburgerMenu(); app.openAccountModal();" class="py-2.5 px-3 rounded-2xl bg-zinc-800/90 hover:bg-zinc-700 text-xs font-extrabold text-yellow-400 flex items-center justify-center gap-1.5">
-        🔐 Switch Account
-      </button>
+    <!-- Drawer Footer -->
+    <div class="px-5 py-3.5 border-t border-slate-800/80 text-xs font-medium text-slate-500">
+      TV Time
     </div>
   </aside>
 
@@ -828,23 +1000,22 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       switchTab(tab) {
-        if (tab === "profile") {
-          this.openHamburgerMenu();
-          return;
-        }
-        this.activeTab = tab;
-        ["home", "search", "swipe"].forEach((t) => {
+        const resolvedTab = tab === "profile" ? "stats" : tab;
+        this.activeTab = resolvedTab;
+        ["home", "search", "swipe", "stats", "import", "settings"].forEach((t) => {
           const sec = document.getElementById("tab-" + t);
+          if (sec) sec.classList.toggle("hidden", t !== resolvedTab);
+        });
+        ["home", "search", "swipe"].forEach((t) => {
           const btn = document.getElementById("nav-btn-" + t);
-          if (sec) sec.classList.toggle("hidden", t !== tab);
           if (btn) {
             btn.className =
-              t === tab
+              t === resolvedTab
                 ? "flex flex-col items-center justify-center gap-0.5 tv-yellow-text"
                 : "flex flex-col items-center justify-center gap-0.5 text-zinc-400 hover:text-white";
           }
         });
-        if (tab === "swipe" && this.getFilteredRecommendations().length === 0) {
+        if (resolvedTab === "swipe" && this.getFilteredRecommendations().length === 0) {
           this.loadRecommendations(false);
         }
         this.render();
@@ -2106,14 +2277,17 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const movies = Array.isArray(this.state.movies) ? this.state.movies : [];
 
         const cleanUser = String(this.userId || "member");
+        const emailLabel = String(this.userEmail || "@" + cleanUser);
         const nameEl = document.getElementById("profile-display-name");
         const handleEl = document.getElementById("profile-handle");
         const initEl = document.getElementById("profile-avatar-initials");
-        const topChipEl = document.getElementById("top-user-chip");
+        const drawerEmailEl = document.getElementById("drawer-user-email");
+        const settingsEmailEl = document.getElementById("settings-email-display");
         if (nameEl) nameEl.textContent = cleanUser.charAt(0).toUpperCase() + cleanUser.slice(1);
-        if (handleEl) handleEl.textContent = "@" + cleanUser;
+        if (handleEl) handleEl.textContent = emailLabel;
         if (initEl) initEl.textContent = cleanUser.slice(0, 2).toUpperCase();
-        if (topChipEl) topChipEl.textContent = "@" + cleanUser;
+        if (drawerEmailEl) drawerEmailEl.textContent = emailLabel;
+        if (settingsEmailEl) settingsEmailEl.textContent = emailLabel;
 
         let epCount = 0;
         let showMins = 0;

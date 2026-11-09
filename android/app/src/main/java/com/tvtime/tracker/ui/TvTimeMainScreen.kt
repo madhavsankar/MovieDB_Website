@@ -147,46 +147,29 @@ fun TvTimeMainScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = TvTimePalette.Yellow,
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = "TV",
-                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.ExtraBold),
-                                    color = TvTimePalette.OnYellow
-                                )
-                            }
-                        }
-                        Text(
-                            text = "TV Time",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
-                            color = Color.White
-                        )
-                    }
-
                     Surface(
                         onClick = { showHamburgerSheet = true },
-                        shape = CircleShape,
+                        shape = RoundedCornerShape(50),
                         color = TvTimePalette.SurfacePill,
-                        border = BorderStroke(1.dp, TvTimePalette.Border),
-                        modifier = Modifier.size(38.dp)
+                        border = BorderStroke(1.dp, TvTimePalette.Border)
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Menu,
-                                contentDescription = "Menu, Stats & Export",
-                                tint = Color.White,
+                                contentDescription = "Open Menu",
+                                tint = TvTimePalette.Yellow,
                                 modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "TV Time",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold),
+                                color = Color.White
                             )
                         }
                     }
@@ -479,50 +462,265 @@ fun TvTimeMainScreen(
                         }
                     )
                 }
+
+                "stats" -> {
+                    ProfileTabScreen(
+                        currentUserId = currentUserId,
+                        shows = shows,
+                        movies = movies,
+                        onOpenShow = { selectedShowForDetail = it },
+                        onOpenMovie = { selectedMovieForDetail = it },
+                        onOpenImport = { activeBottomTab = "import" },
+                        onOpenAccountSwitch = { showAccountSwitcherDialog = true },
+                        onSyncNow = {
+                            scope.launch {
+                                FirestoreSyncService.pullFromFirestoreIfNeeded(dao, currentUserId)
+                                val ok = FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                Toast.makeText(
+                                    context,
+                                    if (ok) "Synced with Cloud Firestore" else "Saved locally",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    )
+                }
+
+                "import" -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text(
+                            text = "⇅ Import / Export CSV & JSON",
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Backup or restore your entire TV Time library across devices.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TvTimePalette.TextSecondary
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(24.dp),
+                            color = TvTimePalette.SurfaceCard,
+                            border = BorderStroke(1.dp, TvTimePalette.Border),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(20.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Button(
+                                    onClick = { showImportDialog = true },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = TvTimePalette.Yellow,
+                                        contentColor = TvTimePalette.OnYellow
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Open Export / Import Options (.csv & .json)", fontWeight = FontWeight.ExtraBold)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
-    // Hamburger Menu Drawer / Sheet (Stats, Recently Watched, Export, Sync, Account Switch)
+    // PlacesTracker-Style Left Navigation Drawer Overlay
     if (showHamburgerSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showHamburgerSheet = false },
-            containerColor = Color(0xFF141418),
-            contentColor = Color.White,
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ) {
-            ProfileTabScreen(
-                currentUserId = currentUserId,
-                shows = shows,
-                movies = movies,
-                onOpenShow = {
-                    showHamburgerSheet = false
-                    selectedShowForDetail = it
-                },
-                onOpenMovie = {
-                    showHamburgerSheet = false
-                    selectedMovieForDetail = it
-                },
-                onOpenImport = {
-                    showHamburgerSheet = false
-                    showImportDialog = true
-                },
-                onOpenAccountSwitch = {
-                    showHamburgerSheet = false
-                    showAccountSwitcherDialog = true
-                },
-                onSyncNow = {
-                    scope.launch {
-                        FirestoreSyncService.pullFromFirestoreIfNeeded(dao, currentUserId)
-                        val ok = FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                        Toast.makeText(
-                            context,
-                            if (ok) "Synced with Cloud Firestore" else "Saved locally",
-                            Toast.LENGTH_SHORT
-                        ).show()
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Backdrop Scrim
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .clickable { showHamburgerSheet = false }
+            )
+
+            // Left Navigation Drawer Panel
+            Surface(
+                color = Color(0xFF0B101B),
+                border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(290.dp)
+                    .align(Alignment.CenterStart)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        // Top Brand & Account Header
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFF101C24))
+                                .padding(horizontal = 18.dp, vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFF064E3B),
+                                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.4f)),
+                                    modifier = Modifier.size(44.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text("📺", fontSize = 18.sp)
+                                    }
+                                }
+                                Column {
+                                    Text(
+                                        text = "TV TIME",
+                                        style = MaterialTheme.typography.labelLarge.copy(
+                                            fontWeight = FontWeight.Black,
+                                            letterSpacing = 1.5.sp
+                                        ),
+                                        color = Color(0xFF34D399)
+                                    )
+                                    Text(
+                                        text = currentUserId,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFFCBD5E1),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                onClick = { showHamburgerSheet = false },
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF1E293B),
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("✕", color = Color.White, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(color = Color(0xFF1E293B))
+
+                        // HOME Section
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp, vertical = 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "HOME",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.2.sp
+                                ),
+                                color = Color(0xFF94A3B8),
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                            LeftDrawerItemRow(icon = "🏠", label = "Home") {
+                                showHamburgerSheet = false
+                                activeBottomTab = "home"
+                            }
+                            LeftDrawerItemRow(icon = "🔍", label = "Search & Discover") {
+                                showHamburgerSheet = false
+                                activeBottomTab = "search"
+                            }
+                            LeftDrawerItemRow(icon = "🔥", label = "For You") {
+                                showHamburgerSheet = false
+                                activeBottomTab = "swipe"
+                            }
+                        }
+
+                        HorizontalDivider(color = Color(0xFF1E293B))
+
+                        // MY STATISTICS Section
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp, vertical = 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "MY STATISTICS",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.2.sp
+                                ),
+                                color = Color(0xFF94A3B8),
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                            LeftDrawerItemRow(icon = "📊", label = "Statistics") {
+                                showHamburgerSheet = false
+                                activeBottomTab = "stats"
+                            }
+                        }
+
+                        HorizontalDivider(color = Color(0xFF1E293B))
+
+                        // TOOLS & SETTINGS Section
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp, vertical = 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "TOOLS & SETTINGS",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.2.sp
+                                ),
+                                color = Color(0xFF94A3B8),
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                            LeftDrawerItemRow(icon = "⇅", label = "Import / Export CSV") {
+                                showHamburgerSheet = false
+                                activeBottomTab = "import"
+                                showImportDialog = true
+                            }
+                            LeftDrawerItemRow(icon = "☁️", label = "Backup & Sync Now") {
+                                showHamburgerSheet = false
+                                scope.launch {
+                                    FirestoreSyncService.pullFromFirestoreIfNeeded(dao, currentUserId)
+                                    val ok = FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                    Toast.makeText(
+                                        context,
+                                        if (ok) "Synced with Cloud Firestore" else "Saved locally",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                            LeftDrawerItemRow(icon = "⚙️", label = "Settings") {
+                                showHamburgerSheet = false
+                                showAccountSwitcherDialog = true
+                            }
+                        }
+                    }
+
+                    // Footer
+                    Column {
+                        HorizontalDivider(color = Color(0xFF1E293B))
+                        Text(
+                            text = "TV Time",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF64748B),
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)
+                        )
                     }
                 }
-            )
+            }
         }
     }
 
@@ -725,6 +923,35 @@ fun TvTimeMainScreen(
     }
 }
 
+
+@Composable
+private fun LeftDrawerItemRow(
+    icon: String,
+    label: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = Color.Transparent,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(text = icon, fontSize = 18.sp)
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = Color(0xFFF1F5F9)
+            )
+        }
+    }
+}
 
 @Composable
 private fun TvFilterDropdown(
