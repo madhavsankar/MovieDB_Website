@@ -448,9 +448,11 @@ fun TvMovieWatchCard(
 @Composable
 fun TvSearchResultCard(
     item: SearchResultItem,
-    isAdded: Boolean,
+    isInWatchlist: Boolean,
+    isCompleted: Boolean,
     onCardClick: () -> Unit,
-    onActionClick: () -> Unit
+    onWatchlistClick: () -> Unit,
+    onCompletedClick: () -> Unit
 ) {
     Surface(
         onClick = onCardClick,
@@ -464,7 +466,7 @@ fun TvSearchResultCard(
                 .fillMaxWidth()
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             NetworkPosterImage(url = item.posterUrl, title = item.title)
 
@@ -527,11 +529,54 @@ fun TvSearchResultCard(
                 }
             }
 
-            TvYellowEyeButton(
-                onClick = onActionClick,
-                isChecked = isAdded,
-                isPlus = !isAdded
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // + Watchlist quick-action button
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(if (isInWatchlist) TvTimePalette.Yellow else Color(0xFF232329))
+                        .border(
+                            width = 1.5.dp,
+                            color = if (isInWatchlist) TvTimePalette.Yellow else Color(0xFF3F3F46),
+                            shape = CircleShape
+                        )
+                        .clickable(onClick = onWatchlistClick),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = if (isInWatchlist) "In Watchlist" else "Add to Watchlist",
+                        tint = if (isInWatchlist) Color(0xFF09090B) else TvTimePalette.Yellow,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                // ✓ Completed quick-action button
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(if (isCompleted) TvTimePalette.GreenProgress else Color(0xFF232329))
+                        .border(
+                            width = 1.5.dp,
+                            color = if (isCompleted) TvTimePalette.GreenProgress else Color(0xFF3F3F46),
+                            shape = CircleShape
+                        )
+                        .clickable(onClick = onCompletedClick),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = if (isCompleted) "Completed" else "Mark Completed",
+                        tint = if (isCompleted) Color.White else TvTimePalette.TextSecondary,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+            }
         }
     }
 }

@@ -305,4 +305,28 @@ class TvTimeProgressCalculatorTest {
         assertEquals(initialShows.size, dao.getShowsForUser(userId).size)
         assertEquals(initialMovies.size, dao.getMoviesForUser(userId).size)
     }
+
+    @Test
+    fun `findNextUpcomingEpisode strictly excludes past episodes and returns soonest future episode`() {
+        val pastOnly = listOf(
+            EpisodeModel("S01E01", 1, 1, "Old Ep 1", "2020-01-01"),
+            EpisodeModel("S01E02", 1, 2, "Old Ep 2", "2023-05-15")
+        )
+        assertNull(TvTimeProgressCalculator.findNextUpcomingEpisode(pastOnly, "2026-11-09"))
+
+        val mixed = listOf(
+            EpisodeModel("S01E01", 1, 1, "Past Ep", "2025-10-01"),
+            EpisodeModel("S01E03", 1, 3, "Later Future Ep", "2026-11-20"),
+            EpisodeModel("S01E02", 1, 2, "Soonest Future Ep", "2026-11-12")
+        )
+        val result = TvTimeProgressCalculator.findNextUpcomingEpisode(mixed, "2026-11-09")
+        assertNotNull(result)
+        assertEquals("S01E02", result!!.first.code)
+        assertEquals(3L, result.second)
+        assertEquals("In 3 days", TvTimeProgressCalculator.formatRelativeCountdownBucket(result.second))
+        assertEquals("Today", TvTimeProgressCalculator.formatRelativeCountdownBucket(0L))
+        assertEquals("Tomorrow", TvTimeProgressCalculator.formatRelativeCountdownBucket(1L))
+        assertEquals("Next week", TvTimeProgressCalculator.formatRelativeCountdownBucket(9L))
+        assertEquals("In 3 weeks", TvTimeProgressCalculator.formatRelativeCountdownBucket(21L))
+    }
 }

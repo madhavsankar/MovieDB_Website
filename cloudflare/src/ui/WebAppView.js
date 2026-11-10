@@ -1252,6 +1252,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               '<option value="stopped">Stopped</option>';
             statusSelect.value = this.mediaFilter;
           }
+        } else if (seg === "upcoming") {
+          this.refreshUpcomingEpisodesIfNeeded();
         }
         this.setMediaFilter(this.mediaFilter);
       }
@@ -1704,26 +1706,107 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.renderUpcomingList(listEl);
       }
 
+      formatRelativeCountdownBucket(daysUntil) {
+        if (daysUntil <= 0) return "Today";
+        if (daysUntil === 1) return "Tomorrow";
+        if (daysUntil < 7) return "In " + daysUntil + " days";
+        if (daysUntil < 14) return "Next week";
+        if (daysUntil < 30) return "In " + Math.floor(daysUntil / 7) + " weeks";
+        if (daysUntil < 60) return "Next month";
+        return "In " + Math.max(2, Math.floor(daysUntil / 30)) + " months";
+      }
+
+      findNextUpcomingEpisode(show, todayIso) {
+        const refIso = todayIso || new Date().toISOString().slice(0, 10);
+        const refParts = String(refIso).split("-").map(Number);
+        if (refParts.length !== 3 || refParts.some((n) => Number.isNaN(n))) return null;
+        const refUtcMs = Date.UTC(refParts[0], refParts[1] - 1, refParts[2]);
+        const episodes = Array.isArray(show?.episodes) ? show.episodes : [];
+        let best = null;
+        for (const ep of episodes) {
+          const rawDate = String(ep?.airDate || "").trim();
+          if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(rawDate)) continue;
+          if (rawDate < refIso) continue;
+          const parts = rawDate.split("-").map(Number);
+          const epUtcMs = Date.UTC(parts[0], parts[1] - 1, parts[2]);
+          const daysUntil = Math.round((epUtcMs - refUtcMs) / 86400000);
+          if (daysUntil < 0) continue;
+          if (
+            !best ||
+            daysUntil < best.daysUntil ||
+            (daysUntil === best.daysUntil &&
+              (Number(ep.season) < Number(best.ep.season) ||
+                (Number(ep.season) === Number(best.ep.season) && Number(ep.number) < Number(best.ep.number))))
+          ) {
+            best = {
+              ep,
+              daysUntil,
+              bucket: this.formatRelativeCountdownBucket(daysUntil),
+            };
+          }
+        }
+        return best;
+      }
+
+      async refreshUpcomingEpisodesIfNeeded() {
+        if (this._refreshingUpcoming) return;
+        this._refreshingUpcoming = true;
+        try {
+          const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
+          let updatedAny = false;
+          for (const s of shows) {
+            if (s.userStatus === "stopped") continue;
+            const isEnded = String(s.status || "").toLowerCase() === "ended";
+            const eps = Array.isArray(s.episodes) ? s.episodes : [];
+            if (isEnded && eps.length > 1) continue;
+            const lookupKey = s.tvmazeId || s.id;
+            if (!lookupKey) continue;
+            try {
+              const res = await fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey));
+              if (res.ok) {
+                const full = await res.json();
+                if (full && Array.isArray(full.episodes) && full.episodes.length > eps.length) {
+                  s.episodes = full.episodes;
+                  if (full.status) s.status = full.status;
+                  updatedAny = true;
+                }
+              }
+            } catch (_) {}
+          }
+          if (updatedAny) {
+            await this.persistState();
+          }
+        } finally {
+          this._refreshingUpcoming = false;
+        }
+      }
+
       renderUpcomingList(listEl) {
         const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
+        const todayIso = new Date().toISOString().slice(0, 10);
         const upcomingItems = [];
 
         for (const s of shows) {
           if (s.userStatus === "stopped") continue;
-          const prog = this.computeShowProgress(s);
-          const ep = prog.nextEp || (s.episodes || [])[(s.episodes || []).length - 1];
-          if (!ep) continue;
+          const nextUp = this.findNextUpcomingEpisode(s, todayIso);
+          if (!nextUp) continue;
           upcomingItems.push({
             show: s,
-            ep,
-            dateBadge: ep.airDate || "Upcoming",
-            bucket: ep.number % 2 === 0 ? "5 days" : "1 week",
+            ep: nextUp.ep,
+            daysUntil: nextUp.daysUntil,
+            dateBadge: nextUp.ep.airDate || "Upcoming",
+            bucket: nextUp.bucket,
           });
         }
 
+        upcomingItems.sort((a, b) => a.daysUntil - b.daysUntil || String(a.show.title || "").localeCompare(String(b.show.title || "")));
+
         if (upcomingItems.length === 0) {
           listEl.innerHTML =
-            '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No upcoming releases found.</div>';
+            '<div class="tv-card rounded-2xl p-8 text-center space-y-1.5">' +
+            '<div class="text-sm font-bold text-white">No upcoming episodes scheduled</div>' +
+            '<div class="text-xs text-zinc-400">None of your tracked shows have future air dates announced yet.</div>' +
+            "</div>";
           return;
         }
 
@@ -1741,7 +1824,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               '<div class="h-px bg-zinc-800 flex-1"></div>' +
               "</div>";
           }
-          const codeFormatted = item.ep.code.replace(/^S([0-9]+)E([0-9]+)$/, "S$1·E$2");
+          const codeFormatted = String(item.ep.code || "").replace(/^S([0-9]+)E([0-9]+)$/, "S$1·E$2");
           html +=
             '<div onclick="app.openItemById(&quot;' +
             escapeHtml(item.show.id) +
@@ -1936,35 +2019,61 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           countEl.textContent = items.length + " results";
         }
 
-        const existingShowIds = new Set((this.state.shows || []).map((s) => s.id));
-        const existingMovieIds = new Set((this.state.movies || []).map((m) => m.id));
+        const showById = new Map((this.state.shows || []).map((s) => [s.id, s]));
+        const movieById = new Map((this.state.movies || []).map((m) => [m.id, m]));
 
         listEl.innerHTML =
           items
             .map((item) => {
-              const isInLib = existingShowIds.has(item.id) || existingMovieIds.has(item.id);
+              const existingShow = showById.get(item.id);
+              const existingMovie = movieById.get(item.id);
+              const showStatus = existingShow ? this.getEffectiveShowStatus(existingShow) : "";
+              const isInWatchlist =
+                (existingShow && showStatus === "interested") ||
+                (existingMovie && !existingMovie.watched);
+              const isCompleted =
+                (existingShow && showStatus === "completed") ||
+                (existingMovie && Boolean(existingMovie.watched));
+
               const badgeClass = item.mediaType === "movie" ? "text-sky-400" : "tv-yellow-text";
               const platInfo = item.network || item.streamingService || "";
               const badgeLabel =
                 (item.mediaType === "movie" ? "Movie" : "TV Show") +
                 (platInfo ? " · " + platInfo : "");
               const subtitle =
-                item.overview || item.director || item.network || "Tap + to add to your TV Time tracker";
+                item.overview || item.director || item.network || "Tap + for Watchlist or ✓ to mark Completed";
               const poster =
                 item.posterUrl ||
                 "https://via.placeholder.com/200x300/1c1c22/facc15?text=" + encodeURIComponent(item.title || "Item");
 
-              const rightBtn = isInLib
-                ? '<button onclick="event.stopPropagation(); app.openItemById(&quot;' +
-                  escapeHtml(item.id) +
-                  '&quot;)" class="tv-check-btn">' +
-                  CHECK_SVG +
-                  "</button>"
-                : '<button title="Add to Watch List" onclick="event.stopPropagation(); app.addSearchResult(&quot;' +
-                  escapeHtml(item.id) +
-                  '&quot;)" class="tv-eye-btn">' +
-                  PLUS_SVG +
-                  "</button>";
+              const watchlistBtnClass = isInWatchlist
+                ? "w-10 h-10 rounded-full tv-yellow-bg flex items-center justify-center shrink-0 transition active:scale-95"
+                : "w-10 h-10 rounded-full bg-[#232329] border border-zinc-700 tv-yellow-text flex items-center justify-center shrink-0 transition hover:border-yellow-400/60 active:scale-95";
+              const completedBtnClass = isCompleted
+                ? "w-10 h-10 rounded-full bg-emerald-500 border border-emerald-500 text-white flex items-center justify-center shrink-0 transition active:scale-95"
+                : "w-10 h-10 rounded-full bg-[#232329] border border-zinc-700 text-zinc-400 flex items-center justify-center shrink-0 transition hover:border-emerald-500/60 hover:text-white active:scale-95";
+
+              const rightBtns =
+                '<div class="flex items-center gap-2 shrink-0">' +
+                '<button title="' +
+                (isInWatchlist ? "In Watchlist (Tap to remove)" : "Add to Watchlist") +
+                '" onclick="event.stopPropagation(); app.quickToggleSearchWatchlist(&quot;' +
+                escapeHtml(item.id) +
+                '&quot;)" class="' +
+                watchlistBtnClass +
+                '">' +
+                PLUS_SVG +
+                "</button>" +
+                '<button title="' +
+                (isCompleted ? "Completed (Tap to move to Watchlist)" : "Mark as Completed") +
+                '" onclick="event.stopPropagation(); app.quickMarkSearchCompleted(&quot;' +
+                escapeHtml(item.id) +
+                '&quot;)" class="' +
+                completedBtnClass +
+                '">' +
+                CHECK_SVG +
+                "</button>" +
+                "</div>";
 
               return (
                 '<div onclick="app.addOrOpenSearchResult(&quot;' +
@@ -1996,12 +2105,63 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 "</span>" +
                 "</div>" +
                 "</div>" +
-                rightBtn +
+                rightBtns +
                 "</div>"
               );
             })
             .join("") ||
           '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No results found. Try searching another title!</div>';
+      }
+
+      async quickToggleSearchWatchlist(itemId) {
+        const existingShow = (this.state.shows || []).find((s) => s.id === itemId);
+        if (existingShow) {
+          const eff = this.getEffectiveShowStatus(existingShow);
+          if (eff === "interested") {
+            await this.removeLibraryItem("show", itemId);
+          } else {
+            await this.setShowStatus(itemId, "interested");
+          }
+          return;
+        }
+        const existingMovie = (this.state.movies || []).find((m) => m.id === itemId);
+        if (existingMovie) {
+          if (!existingMovie.watched) {
+            await this.removeLibraryItem("movie", itemId);
+          } else {
+            await this.setMovieStatus(itemId, false);
+          }
+          return;
+        }
+        await this.addSearchResult(itemId);
+      }
+
+      async quickMarkSearchCompleted(itemId) {
+        const existingShow = (this.state.shows || []).find((s) => s.id === itemId);
+        if (existingShow) {
+          const eff = this.getEffectiveShowStatus(existingShow);
+          if (eff === "completed") {
+            await this.setShowStatus(itemId, "interested");
+          } else {
+            await this.setShowStatus(itemId, "completed");
+          }
+          return;
+        }
+        const existingMovie = (this.state.movies || []).find((m) => m.id === itemId);
+        if (existingMovie) {
+          await this.setMovieStatus(itemId, !existingMovie.watched);
+          return;
+        }
+        await this.addSearchResult(itemId);
+        const addedShow = (this.state.shows || []).find((s) => s.id === itemId);
+        if (addedShow) {
+          await this.setShowStatus(itemId, "completed");
+          return;
+        }
+        const addedMovie = (this.state.movies || []).find((m) => m.id === itemId);
+        if (addedMovie) {
+          await this.setMovieStatus(itemId, true);
+        }
       }
 
       async addSearchResult(itemId) {

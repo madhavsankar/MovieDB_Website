@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -170,6 +171,44 @@ fun TvTimeMainScreen(
     var refreshTrigger by remember { mutableIntStateOf(0) }
     var isRefreshing by remember { mutableStateOf(false) }
     var pullOffsetPx by remember { mutableFloatStateOf(0f) }
+
+    // When switching to Upcoming, refresh episode lists for running/stub series so newly announced future air dates appear
+    LaunchedEffect(homeTopSegment, shows.size, refreshTrigger) {
+        if (homeTopSegment == "upcoming") {
+            val candidates = shows.filter {
+                it.userStatus != "stopped" && !it.status.equals("Ended", ignoreCase = true)
+            }
+            var updatedAny = false
+            for (s in candidates) {
+                val currentEps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
+                val hasUpcoming = TvTimeProgressCalculator.findNextUpcomingEpisode(currentEps) != null
+                if (!hasUpcoming || currentEps.size <= 1) {
+                    val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+                        tvmazeId = s.tvmazeId,
+                        tmdbId = s.tmdbId,
+                        title = s.title,
+                        externalId = s.externalId
+                    )
+                    if (fetchedEps.size > currentEps.size ||
+                        TvTimeProgressCalculator.findNextUpcomingEpisode(fetchedEps) != null
+                    ) {
+                        dao.updateShow(
+                            s.copy(
+                                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(fetchedEps),
+                                castCsv = if (s.castCsv.isBlank() && fetchedCast.isNotEmpty()) {
+                                    fetchedCast.joinToString(", ")
+                                } else s.castCsv
+                            )
+                        )
+                        updatedAny = true
+                    }
+                }
+            }
+            if (updatedAny && FirestoreSyncService.isUserAllowed(currentUserId)) {
+                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+            }
+        }
+    }
 
     val triggerPullRefresh: () -> Unit = {
         if (!isRefreshing) {
@@ -412,6 +451,27 @@ fun TvTimeMainScreen(
                 }
 
                 "search" -> {
+                    val watchlistExternalIds = remember(shows, movies) {
+                        val showWatchlist = shows.filter { s ->
+                            val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
+                            val watched = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
+                            val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
+                            TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus) == "interested"
+                        }.map { it.externalId }
+                        val movieWatchlist = movies.filter { !it.watched }.map { it.externalId }
+                        (showWatchlist + movieWatchlist).toSet()
+                    }
+                    val completedExternalIds = remember(shows, movies) {
+                        val showCompleted = shows.filter { s ->
+                            val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
+                            val watched = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
+                            val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
+                            TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus) == "completed"
+                        }.map { it.externalId }
+                        val movieCompleted = movies.filter { it.watched }.map { it.externalId }
+                        (showCompleted + movieCompleted).toSet()
+                    }
+
                     SearchTabScreen(
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
@@ -421,7 +481,8 @@ fun TvTimeMainScreen(
                         onToggleUsPlatform = toggleUsPlatform,
                         results = searchResults,
                         isSearching = isSearching,
-                        existingExternalIds = (shows.map { it.externalId } + movies.map { it.externalId }).toSet(),
+                        watchlistExternalIds = watchlistExternalIds,
+                        completedExternalIds = completedExternalIds,
                         onAddOrOpenResult = { item ->
                             scope.launch {
                                 when (item.mediaType) {
@@ -486,6 +547,174 @@ fun TvTimeMainScreen(
                                             FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
                                             selectedShowForDetail = newShow.copy(id = newId)
                                         }
+                                    }
+                                }
+                            }
+                        },
+                        onQuickWatchlistToggle = { item ->
+                            scope.launch {
+                                when (item.mediaType) {
+                                    "movie" -> {
+                                        val existingMovie = movies.firstOrNull { it.externalId == item.externalId }
+                                        if (existingMovie != null) {
+                                            if (!existingMovie.watched) {
+                                                dao.deleteMovie(existingMovie.id)
+                                            } else {
+                                                dao.updateMovie(existingMovie.copy(watched = false, watchedAt = ""))
+                                            }
+                                        } else {
+                                            val newMovie = MovieEntity(
+                                                userId = currentUserId,
+                                                externalId = item.externalId,
+                                                tmdbId = item.tmdbId,
+                                                title = item.title,
+                                                year = item.year,
+                                                runtimeMins = item.runtimeMins,
+                                                genresCsv = item.genresCsv,
+                                                director = item.networkOrDirector,
+                                                streamingService = item.networkOrDirector,
+                                                rating = item.rating,
+                                                posterUrl = item.posterUrl,
+                                                overview = item.overview,
+                                                watched = false
+                                            )
+                                            dao.insertMovie(newMovie)
+                                        }
+                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                    }
+                                    else -> {
+                                        val existing = shows.firstOrNull { it.externalId == item.externalId }
+                                        if (existing != null) {
+                                            val eps = TvTimeProgressCalculator.parseEpisodeList(existing.episodesJson)
+                                            val watched = TvTimeProgressCalculator.parseWatchedSet(existing.watchedCodesCsv)
+                                            val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
+                                            val eff = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, existing.userStatus)
+                                            if (eff == "interested") {
+                                                dao.deleteShow(existing.id)
+                                            } else {
+                                                dao.updateShow(existing.copy(userStatus = "interested", watchedCodesCsv = ""))
+                                            }
+                                        } else {
+                                            val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+                                                tvmazeId = item.tvmazeId,
+                                                tmdbId = item.tmdbId,
+                                                title = item.title,
+                                                externalId = item.externalId
+                                            )
+                                            val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else listOf(
+                                                EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
+                                            )
+                                            val newShow = ShowEntity(
+                                                userId = currentUserId,
+                                                externalId = item.externalId,
+                                                tvmazeId = item.tvmazeId,
+                                                tmdbId = item.tmdbId,
+                                                title = item.title,
+                                                year = item.year,
+                                                network = item.networkOrDirector,
+                                                status = item.status,
+                                                runtimeMins = item.runtimeMins,
+                                                genresCsv = item.genresCsv,
+                                                castCsv = fetchedCast.joinToString(", "),
+                                                rating = item.rating,
+                                                posterUrl = item.posterUrl,
+                                                overview = item.overview,
+                                                userStatus = "interested",
+                                                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                                            )
+                                            dao.insertShow(newShow)
+                                        }
+                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                    }
+                                }
+                            }
+                        },
+                        onQuickCompletedToggle = { item ->
+                            scope.launch {
+                                when (item.mediaType) {
+                                    "movie" -> {
+                                        val existingMovie = movies.firstOrNull { it.externalId == item.externalId }
+                                        val todayIso = java.time.LocalDate.now().toString()
+                                        if (existingMovie != null) {
+                                            val nextWatched = !existingMovie.watched
+                                            dao.updateMovie(
+                                                existingMovie.copy(
+                                                    watched = nextWatched,
+                                                    watchedAt = if (nextWatched) todayIso else ""
+                                                )
+                                            )
+                                        } else {
+                                            val newMovie = MovieEntity(
+                                                userId = currentUserId,
+                                                externalId = item.externalId,
+                                                tmdbId = item.tmdbId,
+                                                title = item.title,
+                                                year = item.year,
+                                                runtimeMins = item.runtimeMins,
+                                                genresCsv = item.genresCsv,
+                                                director = item.networkOrDirector,
+                                                streamingService = item.networkOrDirector,
+                                                rating = item.rating,
+                                                posterUrl = item.posterUrl,
+                                                overview = item.overview,
+                                                watched = true,
+                                                watchedAt = todayIso
+                                            )
+                                            dao.insertMovie(newMovie)
+                                        }
+                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                    }
+                                    else -> {
+                                        val existing = shows.firstOrNull { it.externalId == item.externalId }
+                                        if (existing != null) {
+                                            val eps = TvTimeProgressCalculator.parseEpisodeList(existing.episodesJson)
+                                            val watched = TvTimeProgressCalculator.parseWatchedSet(existing.watchedCodesCsv)
+                                            val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
+                                            val eff = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, existing.userStatus)
+                                            if (eff == "completed") {
+                                                dao.updateShow(existing.copy(userStatus = "interested", watchedCodesCsv = ""))
+                                            } else {
+                                                val allCodes = eps.map { it.code }.toSet()
+                                                dao.updateShow(
+                                                    existing.copy(
+                                                        userStatus = "completed",
+                                                        watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(allCodes)
+                                                    )
+                                                )
+                                            }
+                                        } else {
+                                            val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+                                                tvmazeId = item.tvmazeId,
+                                                tmdbId = item.tmdbId,
+                                                title = item.title,
+                                                externalId = item.externalId
+                                            )
+                                            val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else listOf(
+                                                EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
+                                            )
+                                            val allCodes = finalEps.map { it.code }.toSet()
+                                            val newShow = ShowEntity(
+                                                userId = currentUserId,
+                                                externalId = item.externalId,
+                                                tvmazeId = item.tvmazeId,
+                                                tmdbId = item.tmdbId,
+                                                title = item.title,
+                                                year = item.year,
+                                                network = item.networkOrDirector,
+                                                status = item.status,
+                                                runtimeMins = item.runtimeMins,
+                                                genresCsv = item.genresCsv,
+                                                castCsv = fetchedCast.joinToString(", "),
+                                                rating = item.rating,
+                                                posterUrl = item.posterUrl,
+                                                overview = item.overview,
+                                                userStatus = "completed",
+                                                watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(allCodes),
+                                                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                                            )
+                                            dao.insertShow(newShow)
+                                        }
+                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
                                     }
                                 }
                             }
@@ -1609,83 +1838,138 @@ private fun HomeTabScreen(
                 }
             }
         } else {
-            // Upcoming Segment
-            val activeShows = shows.filter { it.userStatus != "stopped" }
-            items(activeShows, key = { "up_${it.id}" }) { show ->
-                val eps = TvTimeProgressCalculator.parseEpisodeList(show.episodesJson)
-                val w = TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv)
-                val prog = TvTimeProgressCalculator.computeShowProgress(eps, w)
-                val nextEp = prog.nextEpisode ?: eps.lastOrNull()
+            // Upcoming Segment: Strictly future episodes (airDate >= today), sorted chronologically
+            val upcomingEntries = platformFilteredShows
+                .filter { it.userStatus != "stopped" }
+                .mapNotNull { show ->
+                    val eps = TvTimeProgressCalculator.parseEpisodeList(show.episodesJson)
+                    val found = TvTimeProgressCalculator.findNextUpcomingEpisode(eps) ?: return@mapNotNull null
+                    val (nextEp, daysUntil) = found
+                    val bucket = TvTimeProgressCalculator.formatRelativeCountdownBucket(daysUntil)
+                    Triple(show, nextEp to daysUntil, bucket)
+                }
+                .sortedWith(
+                    compareBy<Triple<ShowEntity, Pair<EpisodeModel, Long>, String>> { it.second.second }
+                        .thenBy { it.second.first.airDate }
+                        .thenBy { it.first.title }
+                )
 
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        HorizontalDivider(modifier = Modifier.weight(1f), color = TvTimePalette.Border)
-                        Text(
-                            text = if (show.id % 2L == 0L) "5 days" else "1 week",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TvTimePalette.TextSecondary
-                        )
-                        HorizontalDivider(modifier = Modifier.weight(1f), color = TvTimePalette.Border)
-                    }
-
+            if (upcomingEntries.isEmpty()) {
+                item(key = "empty_upcoming_state") {
                     Surface(
-                        onClick = { onOpenShow(show) },
                         shape = RoundedCornerShape(20.dp),
                         color = TvTimePalette.SurfaceCard,
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)),
+                        border = BorderStroke(1.dp, TvTimePalette.Border),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            NetworkPosterImage(url = show.posterUrl, title = show.title)
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            Text(
+                                text = "📅 No upcoming episodes scheduled",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = "None of your tracked series have announced future air dates right now. New episodes will appear here automatically once their release dates are announced.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TvTimePalette.TextSecondary,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            } else {
+                itemsIndexed(upcomingEntries, key = { _, triple -> "up_${triple.first.id}" }) { index, triple ->
+                    val show = triple.first
+                    val nextEp = triple.second.first
+                    val bucket = triple.third
+                    val prevBucket = upcomingEntries.getOrNull(index - 1)?.third
+                    val showBucketHeader = index == 0 || bucket != prevBucket
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (showBucketHeader) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.Top
-                                ) {
-                                    Text(
-                                        text = show.title,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = Color.White,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = Color(0xFF27272F)
-                                    ) {
-                                        Text(
-                                            text = nextEp?.airDate?.ifBlank { "Upcoming" } ?: "Upcoming",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = TvTimePalette.TextSecondary,
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                        )
-                                    }
-                                }
+                                HorizontalDivider(modifier = Modifier.weight(1f), color = TvTimePalette.Border)
                                 Text(
-                                    text = "TV Show · ${show.network}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = TvTimePalette.Yellow
-                                )
-                                Text(
-                                    text = "${nextEp?.formattedDotCode ?: "S01·E01"} — ${nextEp?.title ?: "Next Episode"}",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                    text = bucket,
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = TvTimePalette.TextSecondary
                                 )
+                                HorizontalDivider(modifier = Modifier.weight(1f), color = TvTimePalette.Border)
+                            }
+                        }
+
+                        Surface(
+                            onClick = { onOpenShow(show) },
+                            shape = RoundedCornerShape(20.dp),
+                            color = TvTimePalette.SurfaceCard,
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                NetworkPosterImage(url = show.posterUrl, title = show.title)
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.Top
+                                    ) {
+                                        Text(
+                                            text = show.title,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = Color.White,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = Color(0xFF27272F)
+                                        ) {
+                                            Text(
+                                                text = nextEp.airDate,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = TvTimePalette.TextSecondary,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = "TV Show · ${show.network}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = TvTimePalette.Yellow,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "${nextEp.formattedDotCode} — ${nextEp.title}",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                        color = TvTimePalette.TextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     }
@@ -1706,8 +1990,11 @@ private fun SearchTabScreen(
     onToggleUsPlatform: (String) -> Unit,
     results: List<SearchResultItem>,
     isSearching: Boolean,
-    existingExternalIds: Set<String>,
-    onAddOrOpenResult: (SearchResultItem) -> Unit
+    watchlistExternalIds: Set<String>,
+    completedExternalIds: Set<String>,
+    onAddOrOpenResult: (SearchResultItem) -> Unit,
+    onQuickWatchlistToggle: (SearchResultItem) -> Unit,
+    onQuickCompletedToggle: (SearchResultItem) -> Unit
 ) {
     val focusManager = LocalFocusManager.current
     val sortedResults = remember(results, sortKey) {
@@ -1814,12 +2101,15 @@ private fun SearchTabScreen(
 
         // 3. Result Cards
         items(sortedResults, key = { it.externalId }) { item ->
-            val isAdded = existingExternalIds.contains(item.externalId)
+            val isInWatchlist = watchlistExternalIds.contains(item.externalId)
+            val isCompleted = completedExternalIds.contains(item.externalId)
             TvSearchResultCard(
                 item = item,
-                isAdded = isAdded,
+                isInWatchlist = isInWatchlist,
+                isCompleted = isCompleted,
                 onCardClick = { onAddOrOpenResult(item) },
-                onActionClick = { onAddOrOpenResult(item) }
+                onWatchlistClick = { onQuickWatchlistToggle(item) },
+                onCompletedClick = { onQuickCompletedToggle(item) }
             )
         }
     }

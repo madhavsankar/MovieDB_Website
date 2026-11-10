@@ -637,7 +637,7 @@ object LiveMediaCatalogService {
                     }
 
                     val episodes = mutableListOf<EpisodeModel>()
-                    for (sNum in seasonNums.take(12)) {
+                    for (sNum in seasonNums.takeLast(12)) {
                         try {
                             val sConn = openTmdb("/tv/$resolvedTmdbId/season/$sNum?language=en-US")
                             if (sConn.responseCode in 200..299) {
@@ -665,6 +665,30 @@ object LiveMediaCatalogService {
                                 }
                             }
                         } catch (_: Exception) {}
+                    }
+                    val nextToAir = tvJson.optJSONObject("next_episode_to_air")
+                    if (nextToAir != null) {
+                        val nextS = nextToAir.optInt("season_number", 1).coerceAtLeast(1)
+                        val nextE = nextToAir.optInt("episode_number", 1).coerceAtLeast(1)
+                        val nextCode = EpisodeModel.formatCode(nextS, nextE)
+                        if (episodes.none { it.code.equals(nextCode, ignoreCase = true) }) {
+                            val stillPath = nextToAir.optString("still_path", "")
+                            val thumb = if (stillPath.isNotBlank() && stillPath != "null") {
+                                "https://image.tmdb.org/t/p/w300$stillPath"
+                            } else ""
+                            episodes.add(
+                                EpisodeModel(
+                                    code = nextCode,
+                                    season = nextS,
+                                    number = nextE,
+                                    title = nextToAir.optString("name", "Episode $nextE"),
+                                    airDate = nextToAir.optString("air_date", ""),
+                                    runtimeMins = nextToAir.optInt("runtime", defaultRuntime).coerceAtLeast(15),
+                                    imageUrl = thumb,
+                                    overview = stripHtml(nextToAir.optString("overview", ""))
+                                )
+                            )
+                        }
                     }
                     if (episodes.isNotEmpty()) {
                         return@withContext episodes to castNames

@@ -257,6 +257,30 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
             dummy.setMovieStatus("m1", false);
             const moviesRemainingAfterWatchlistToggle = dummy.state.movies.length;
 
+            // 5. Upcoming episodes strictly exclude past airDates and pick soonest future episode
+            const pastShow = {
+              id: "s_past",
+              title: "Past Show",
+              episodes: [{ code: "S01E01", season: 1, number: 1, title: "Old", airDate: "2021-05-01" }]
+            };
+            const futureShow = {
+              id: "s_future",
+              title: "Future Show",
+              episodes: [
+                { code: "S01E01", season: 1, number: 1, title: "Past Ep", airDate: "2024-01-01" },
+                { code: "S01E03", season: 1, number: 3, title: "Later Ep", airDate: "2026-11-25" },
+                { code: "S01E02", season: 1, number: 2, title: "Soon Ep", airDate: "2026-11-12" }
+              ]
+            };
+            const pastUpcoming = dummy.findNextUpcomingEpisode(pastShow, "2026-11-09");
+            const futureUpcoming = dummy.findNextUpcomingEpisode(futureShow, "2026-11-09");
+
+            // 6. Search quick-actions (+ Watchlist and ✓ Completed)
+            dummy.searchResults = [
+              { id: "m_search_1", mediaType: "movie", title: "Search Movie", year: 2025, rating: 8.1 }
+            ];
+            dummy.quickMarkSearchCompleted("m_search_1");
+
             const out = JSON.stringify({
               statusInitial,
               watchlistCallsRemove,
@@ -270,7 +294,10 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
               labelEmpty,
               labelSingle,
               labelMulti,
-              moviesRemainingAfterWatchlistToggle
+              moviesRemainingAfterWatchlistToggle,
+              pastUpcomingIsNull: pastUpcoming === null,
+              futureUpcomingCode: futureUpcoming ? futureUpcoming.ep.code : "",
+              futureUpcomingBucket: futureUpcoming ? futureUpcoming.bucket : ""
             });
             if (typeof console !== 'undefined' && console.log) console.log(out);
             else if (typeof print !== 'undefined') print(out);
@@ -290,6 +317,9 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertTrue(out["labelSingle"])
         self.assertTrue(out["labelMulti"])
         self.assertEqual(out["moviesRemainingAfterWatchlistToggle"], 0)
+        self.assertTrue(out["pastUpcomingIsNull"])
+        self.assertEqual(out["futureUpcomingCode"], "S01E02")
+        self.assertEqual(out["futureUpcomingBucket"], "In 3 days")
 
     def test_android_architecture_and_best_practices_evals(self):
         """Verifies Android best practices across MainActivity.kt, TvTimeMainScreen.kt, and TvTimeDialogs.kt."""

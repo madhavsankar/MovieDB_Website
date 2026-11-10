@@ -735,7 +735,7 @@ export class LiveCatalogService {
             const seasonNums = (show.seasons || [])
               .map((s) => Number(s.season_number))
               .filter((n) => n >= 1)
-              .slice(0, 8);
+              .slice(-12);
             const seasonReqs = seasonNums.map((sNum) => {
               const sReq = LiveCatalogService._buildTmdbRequest(`/tv/${tmdbId}/season/${sNum}?language=en-US`, env);
               return sReq ? fetchImpl(sReq.url, { headers: sReq.headers }) : Promise.resolve(null);
@@ -757,6 +757,27 @@ export class LiveCatalogService {
                     runtimeMins: Number(ep.runtime) || defaultRuntime,
                     imageUrl: ep.still_path ? `https://image.tmdb.org/t/p/w300${ep.still_path}` : "",
                     overview: stripHtml(ep.overview),
+                  });
+                }
+              }
+            }
+            const nextAir = show.next_episode_to_air;
+            if (nextAir && typeof nextAir === "object") {
+              const nextS = Number(nextAir.season_number) || 0;
+              const nextE = Number(nextAir.episode_number) || 0;
+              const nextDate = String(nextAir.air_date || "").trim();
+              if (nextS >= 1 && nextE >= 1 && nextDate) {
+                const nextCode = formatEpisodeCode(nextS, nextE);
+                if (!episodes.some((e) => e.code === nextCode)) {
+                  episodes.push({
+                    code: nextCode,
+                    season: nextS,
+                    number: nextE,
+                    title: nextAir.name || `Episode ${nextE}`,
+                    airDate: nextDate,
+                    runtimeMins: Number(nextAir.runtime) || defaultRuntime,
+                    imageUrl: nextAir.still_path ? `https://image.tmdb.org/t/p/w300${nextAir.still_path}` : "",
+                    overview: stripHtml(nextAir.overview),
                   });
                 }
               }

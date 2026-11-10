@@ -2,6 +2,8 @@ package com.tvtime.tracker.domain
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 
 data class EpisodeModel(
     val code: String,
@@ -196,6 +198,50 @@ object TvTimeProgressCalculator {
     ): String {
         val progress = computeShowProgress(episodes, watchedCodes)
         return deriveEffectiveShowStatus(progress, rawUserStatus)
+    }
+
+    fun formatRelativeCountdownBucket(daysUntil: Long): String {
+        return when {
+            daysUntil <= 0L -> "Today"
+            daysUntil == 1L -> "Tomorrow"
+            daysUntil in 2L..6L -> "In $daysUntil days"
+            daysUntil in 7L..13L -> "Next week"
+            daysUntil in 14L..29L -> "In ${daysUntil / 7L} weeks"
+            daysUntil in 30L..59L -> "In 1 month"
+            else -> "In ${daysUntil / 30L} months"
+        }
+    }
+
+    fun findNextUpcomingEpisode(
+        episodes: List<EpisodeModel>,
+        todayIso: String = LocalDate.now().toString()
+    ): Pair<EpisodeModel, Long>? {
+        val today = try {
+            LocalDate.parse(todayIso.trim().take(10))
+        } catch (_: Exception) {
+            LocalDate.now()
+        }
+
+        val futureCandidates = mutableListOf<Pair<EpisodeModel, Long>>()
+        for (ep in episodes) {
+            val rawDate = ep.airDate.trim().take(10)
+            if (rawDate.length < 10) continue
+            val epDate = try {
+                LocalDate.parse(rawDate)
+            } catch (_: Exception) {
+                null
+            } ?: continue
+            val daysUntil = ChronoUnit.DAYS.between(today, epDate)
+            if (daysUntil >= 0L) {
+                futureCandidates.add(ep.copy(airDate = rawDate) to daysUntil)
+            }
+        }
+
+        return futureCandidates.minWithOrNull(
+            compareBy<Pair<EpisodeModel, Long>> { it.second }
+                .thenBy { it.first.season }
+                .thenBy { it.first.number }
+        )
     }
 }
 
