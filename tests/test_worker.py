@@ -191,28 +191,46 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
             };
 
             let popStateHandler = null;
-            globalThis.window = {
-              location: { search: "" },
-              history: {
-                replaceState: () => {},
-                pushState: () => {}
+            Object.defineProperty(globalThis, "window", {
+              value: {
+                location: { search: "" },
+                history: {
+                  replaceState: () => {},
+                  pushState: () => {}
+                },
+                addEventListener: (evt, fn) => {
+                  if (evt === "popstate") popStateHandler = fn;
+                }
               },
-              addEventListener: (evt, fn) => {
-                if (evt === "popstate") popStateHandler = fn;
-              }
-            };
-            globalThis.document = {
-              getElementById: getEl,
-              addEventListener: () => {},
-              scrollingElement: { scrollTop: 0 },
-              documentElement: { scrollTop: 0 }
-            };
-            globalThis.localStorage = {
-              getItem: () => null,
-              setItem: () => {},
-              removeItem: () => {}
-            };
-            globalThis.fetch = async () => ({ ok: true, json: async () => ({ results: [] }) });
+              writable: true,
+              configurable: true
+            });
+            Object.defineProperty(globalThis, "document", {
+              value: {
+                cookie: "",
+                getElementById: getEl,
+                querySelectorAll: () => [],
+                addEventListener: () => {},
+                scrollingElement: { scrollTop: 0 },
+                documentElement: { scrollTop: 0 }
+              },
+              writable: true,
+              configurable: true
+            });
+            Object.defineProperty(globalThis, "localStorage", {
+              value: {
+                getItem: () => null,
+                setItem: () => {},
+                removeItem: () => {}
+              },
+              writable: true,
+              configurable: true
+            });
+            Object.defineProperty(globalThis, "fetch", {
+              value: async () => ({ ok: true, json: async () => ({ results: [] }) }),
+              writable: true,
+              configurable: true
+            });
 
             (new Function(clientJs))();
             const proto = globalThis.TvTimeClientClass.prototype;
