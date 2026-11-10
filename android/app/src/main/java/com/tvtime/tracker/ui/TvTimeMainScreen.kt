@@ -162,8 +162,10 @@ fun TvTimeMainScreen(
         }
     }
 
-    val shows by dao.observeShowsForUser(currentUserId).collectAsState(initial = emptyList())
-    val movies by dao.observeMoviesForUser(currentUserId).collectAsState(initial = emptyList())
+    val rawShows by dao.observeShowsForUser(currentUserId).collectAsState(initial = emptyList())
+    val rawMovies by dao.observeMoviesForUser(currentUserId).collectAsState(initial = emptyList())
+    val shows = remember(rawShows) { FirestoreSyncService.deduplicateShows(rawShows) }
+    val movies = remember(rawMovies) { FirestoreSyncService.deduplicateMovies(rawMovies) }
     val actors by dao.observeActorsForUser(currentUserId).collectAsState(initial = emptyList())
     val decidedIds = remember(actors) {
         actors.filter { it.role == "decided_rec" }.map { it.externalId }.toSet()
@@ -742,9 +744,19 @@ fun TvTimeMainScreen(
                                 // 2. If watchlist or completed, add to DB
                                 if (action == "watchlist" || action == "completed") {
                                     val isCompleted = action == "completed"
+                                    val cleanStreamingLabel = item.networkOrDirector.takeUnless {
+                                        it.startsWith("Because", ignoreCase = true) ||
+                                            it.startsWith("Popular", ignoreCase = true) ||
+                                            it.startsWith("Recommended", ignoreCase = true)
+                                    } ?: "Streaming"
                                     if (item.mediaType.equals("movie", ignoreCase = true) || item.externalId.startsWith("movie_")) {
                                         val existingMovie = movies.firstOrNull { it.externalId == item.externalId }
                                         if (existingMovie == null) {
+                                            val enriched = LiveMediaCatalogService.fetchMovieDetails(
+                                                tmdbId = item.tmdbId,
+                                                title = item.title,
+                                                externalId = item.externalId
+                                            )
                                             dao.insertMovie(
                                                 MovieEntity(
                                                     userId = currentUserId,
@@ -752,10 +764,11 @@ fun TvTimeMainScreen(
                                                     tmdbId = item.tmdbId,
                                                     title = item.title,
                                                     year = item.year,
-                                                    runtimeMins = item.runtimeMins,
-                                                    genresCsv = item.genresCsv,
-                                                    director = "",
-                                                    streamingService = item.networkOrDirector,
+                                                    runtimeMins = enriched?.runtimeMins ?: item.runtimeMins,
+                                                    genresCsv = enriched?.genresCsv?.ifBlank { item.genresCsv } ?: item.genresCsv,
+                                                    castCsv = enriched?.castCsv ?: "",
+                                                    director = enriched?.director ?: "",
+                                                    streamingService = enriched?.streamingService ?: cleanStreamingLabel,
                                                     rating = item.rating,
                                                     posterUrl = item.posterUrl,
                                                     overview = item.overview,
@@ -788,7 +801,7 @@ fun TvTimeMainScreen(
                                                     tmdbId = item.tmdbId,
                                                     title = item.title,
                                                     year = item.year,
-                                                    network = item.networkOrDirector,
+                                                    network = cleanStreamingLabel,
                                                     status = item.status,
                                                     runtimeMins = item.runtimeMins,
                                                     genresCsv = item.genresCsv,
@@ -2420,15 +2433,20 @@ private fun SwipeRecommendationsTabScreen(
                                     .padding(18.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                if (topItem.status.startsWith("Because")) {
-                                    Text(
-                                        text = "✨ ${topItem.status}",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
-                                        color = Color(0xFF4ADE80),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
+                                val recommendationReason = listOf(topItem.networkOrDirector, topItem.status)
+                                    .firstOrNull {
+                                        it.startsWith("Because", ignoreCase = true) ||
+                                            it.startsWith("Popular", ignoreCase = true) ||
+                                            it.startsWith("Recommended", ignoreCase = true)
+                                    }
+                                    ?: "Recommended for you"
+                                Text(
+                                    text = "✨ $recommendationReason",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                    color = Color(0xFF4ADE80),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                                 Text(
                                     text = topItem.title,
                                     style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),

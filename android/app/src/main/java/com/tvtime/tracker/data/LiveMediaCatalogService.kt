@@ -785,7 +785,10 @@ object LiveMediaCatalogService {
             s == "digital / streaming" ||
             s == "tmdb feature film" ||
             s == "popular & acclaimed movie" ||
-            s == "feature film"
+            s == "popular & acclaimed series" ||
+            s == "feature film" ||
+            s.startsWith("because ") ||
+            s.startsWith("recommended ")
     }
 
     private fun normalizeUsProvidersFromTmdbJson(usObj: JSONObject?, fallback: String = ""): String {

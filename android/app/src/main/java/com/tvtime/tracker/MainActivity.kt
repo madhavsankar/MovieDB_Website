@@ -66,12 +66,6 @@ class MainActivity : ComponentActivity() {
             handleIncomingShareIntent(intent)
         }
 
-        lifecycleScope.launch(Dispatchers.IO) {
-            if (FirestoreSyncService.isUserAllowed(activeUserId)) {
-                FirestoreSyncService.pullFromFirestoreIfNeeded(database.dao(), activeUserId)
-            }
-        }
-
         setContent {
             TvTimeTheme {
                 TvTimeMainScreen(

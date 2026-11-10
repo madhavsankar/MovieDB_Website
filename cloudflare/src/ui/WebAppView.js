@@ -1145,6 +1145,87 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         window.location.reload();
       }
 
+      deduplicateState() {
+        if (!this.state) return;
+        const statusRank = { completed: 4, in_progress: 3, watching: 3, stopped: 2, interested: 1 };
+        if (Array.isArray(this.state.shows)) {
+          const byKey = new Map();
+          for (const s of this.state.shows) {
+            if (!s || typeof s !== "object") continue;
+            const titleKey = String(s.title || "").trim().toLowerCase();
+            const idKey = String(s.id || "").trim();
+            const key = titleKey ? "title:" + titleKey : idKey || "idx:" + byKey.size;
+            if (!byKey.has(key)) {
+              byKey.set(key, {
+                ...s,
+                watchedEpisodes: Array.from(new Set(Array.isArray(s.watchedEpisodes) ? s.watchedEpisodes : [])).sort(),
+                episodes: Array.isArray(s.episodes) ? s.episodes : [],
+              });
+            } else {
+              const existing = byKey.get(key);
+              const mergedWatched = Array.from(
+                new Set([
+                  ...(Array.isArray(existing.watchedEpisodes) ? existing.watchedEpisodes : []),
+                  ...(Array.isArray(s.watchedEpisodes) ? s.watchedEpisodes : []),
+                ])
+              ).sort();
+              const existingEps = Array.isArray(existing.episodes) ? existing.episodes : [];
+              const newEps = Array.isArray(s.episodes) ? s.episodes : [];
+              const bestEps = newEps.length > existingEps.length ? newEps : existingEps;
+              const bestStatus =
+                (statusRank[s.userStatus] || 0) > (statusRank[existing.userStatus] || 0)
+                  ? s.userStatus
+                  : existing.userStatus;
+              byKey.set(key, {
+                ...existing,
+                ...s,
+                id: existing.id || s.id,
+                tvmazeId: existing.tvmazeId || s.tvmazeId || 0,
+                tmdbId: existing.tmdbId || s.tmdbId || 0,
+                network:
+                  existing.network && existing.network !== "Streaming"
+                    ? existing.network
+                    : s.network || existing.network,
+                cast: Array.isArray(existing.cast) && existing.cast.length > 0 ? existing.cast : s.cast || [],
+                watchedEpisodes: mergedWatched,
+                episodes: bestEps,
+                userStatus: bestStatus,
+              });
+            }
+          }
+          this.state.shows = Array.from(byKey.values());
+        }
+        if (Array.isArray(this.state.movies)) {
+          const byKey = new Map();
+          for (const m of this.state.movies) {
+            if (!m || typeof m !== "object") continue;
+            const titleKey = String(m.title || "").trim().toLowerCase();
+            const idKey = String(m.id || "").trim();
+            const key = titleKey ? "title:" + titleKey + ":" + (m.year || "") : idKey || "idx:" + byKey.size;
+            if (!byKey.has(key)) {
+              byKey.set(key, { ...m, watched: Boolean(m.watched) });
+            } else {
+              const existing = byKey.get(key);
+              byKey.set(key, {
+                ...existing,
+                ...m,
+                id: existing.id || m.id,
+                tmdbId: existing.tmdbId || m.tmdbId || 0,
+                watched: Boolean(existing.watched || m.watched),
+                watchedAt: existing.watchedAt || m.watchedAt || "",
+                streamingService:
+                  existing.streamingService && existing.streamingService !== "Streaming"
+                    ? existing.streamingService
+                    : m.streamingService || existing.streamingService,
+                cast: Array.isArray(existing.cast) && existing.cast.length > 0 ? existing.cast : m.cast || [],
+                director: existing.director || m.director || "",
+              });
+            }
+          }
+          this.state.movies = Array.from(byKey.values());
+        }
+      }
+
       loadLocalCache() {
         try {
           const raw = localStorage.getItem("tvtime_state_cache_" + this.userId);
@@ -1152,12 +1233,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             const parsed = JSON.parse(raw);
             if (parsed && Array.isArray(parsed.shows)) {
               this.state = parsed;
+              this.deduplicateState();
             }
           }
         } catch (_) {}
       }
 
       saveLocalCache() {
+        this.deduplicateState();
         try {
           localStorage.setItem("tvtime_state_cache_" + this.userId, JSON.stringify(this.state));
         } catch (_) {}
@@ -1196,6 +1279,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             const data = await res.json();
             if (!Array.isArray(data.decidedIds)) data.decidedIds = [];
             this.state = data;
+            this.deduplicateState();
             if (data.sessionToken || data.email) {
               const email = data.email ? String(data.email).trim().toLowerCase() : this.userEmail;
               const uid = String(data.userId || (email ? email.split("@")[0] : this.userId));
