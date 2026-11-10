@@ -2487,7 +2487,7 @@ private fun SwipeRecommendationsTabScreen(
                                     .padding(bottom = 24.dp)
                             ) {
                                 Text(
-                                    text = "+ WATCHLIST",
+                                    text = "WATCHLIST",
                                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
                                     color = TvTimePalette.Yellow,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
@@ -2554,7 +2554,7 @@ private fun SwipeRecommendationsTabScreen(
                         }
                     }
                     Text(
-                        text = "+ Watchlist",
+                        text = "Watchlist",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = TvTimePalette.Yellow
                     )

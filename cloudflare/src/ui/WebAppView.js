@@ -3042,7 +3042,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           // Stamp overlays for drag visual feedback
           '<div id="swipe-stamp-completed" class="opacity-0 pointer-events-none absolute top-6 left-5 z-20 px-3.5 py-1 rounded-xl border-2 border-emerald-400 bg-emerald-950/80 text-emerald-300 font-black text-sm tracking-wider -rotate-12">✓ COMPLETED</div>' +
           '<div id="swipe-stamp-ignore" class="opacity-0 pointer-events-none absolute top-6 right-5 z-20 px-3.5 py-1 rounded-xl border-2 border-rose-400 bg-rose-950/80 text-rose-300 font-black text-sm tracking-wider rotate-12">✕ IGNORE</div>' +
-          '<div id="swipe-stamp-watchlist" class="opacity-0 pointer-events-none absolute bottom-32 inset-x-0 mx-auto w-max z-20 px-4 py-1 rounded-xl border-2 border-yellow-400 bg-zinc-950/90 tv-yellow-text font-black text-sm tracking-wider">🔖 + WATCHLIST</div>' +
+          '<div id="swipe-stamp-watchlist" class="opacity-0 pointer-events-none absolute bottom-32 inset-x-0 mx-auto w-max z-20 px-4 py-1 rounded-xl border-2 border-yellow-400 bg-zinc-950/90 tv-yellow-text font-black text-sm tracking-wider">🔖 WATCHLIST</div>' +
           // Poster with gradient
           '<div class="relative h-64 w-full bg-zinc-900 shrink-0 overflow-hidden">' +
           '<img src="' +
@@ -3091,7 +3091,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           "</button>" +
           '<button onclick="app.decideSwipeCard(&quot;watchlist&quot;)" class="flex flex-col items-center gap-1 group">' +
           '<div class="w-14 h-14 rounded-full bg-zinc-900 border-2 border-yellow-400/70 tv-yellow-text group-hover:bg-yellow-400 group-hover:text-black flex items-center justify-center text-lg font-black shadow-lg transition">🔖</div>' +
-          '<span class="text-[11px] font-bold text-zinc-400 group-hover:text-yellow-400">+ Watchlist</span>' +
+          '<span class="text-[11px] font-bold text-zinc-400 group-hover:text-yellow-400">Watchlist</span>' +
           "</button>" +
           '<button onclick="app.decideSwipeCard(&quot;completed&quot;)" class="flex flex-col items-center gap-1 group">' +
           '<div class="w-14 h-14 rounded-full bg-zinc-900 border-2 border-emerald-500/70 text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white flex items-center justify-center text-xl font-black shadow-lg transition">' +
