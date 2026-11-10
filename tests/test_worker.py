@@ -300,6 +300,13 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
             ];
             dummy.quickMarkSearchCompleted("m_search_1");
 
+            // 7. 10-Year Session Token persistence & validation
+            const tenYearExp = Math.floor(Date.now() / 1000) + 315360000;
+            const fakeTenYearPayload = btoa(JSON.stringify({ email: "user@example.com", exp: tenYearExp }));
+            const fakeTenYearToken = "tvtime_session." + fakeTenYearPayload + ".fakesig";
+            dummy.persistAuthSession(fakeTenYearToken, "user@example.com", "user");
+            const tenYearValid = dummy.isGoogleTokenValid();
+
             const out = JSON.stringify({
               statusInitial,
               watchlistCallsRemove,
@@ -316,7 +323,8 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
               moviesRemainingAfterWatchlistToggle,
               pastUpcomingIsNull: pastUpcoming === null,
               futureUpcomingCode: futureUpcoming ? futureUpcoming.ep.code : "",
-              futureUpcomingBucket: futureUpcoming ? futureUpcoming.bucket : ""
+              futureUpcomingBucket: futureUpcoming ? futureUpcoming.bucket : "",
+              tenYearValid
             });
             if (typeof console !== 'undefined' && console.log) console.log(out);
             else if (typeof print !== 'undefined') print(out);
@@ -339,6 +347,7 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertTrue(out["pastUpcomingIsNull"])
         self.assertEqual(out["futureUpcomingCode"], "S01E02")
         self.assertEqual(out["futureUpcomingBucket"], "In 3 days")
+        self.assertTrue(out["tenYearValid"])
 
     def test_android_architecture_and_best_practices_evals(self):
         """Verifies Android best practices across MainActivity.kt, TvTimeMainScreen.kt, and TvTimeDialogs.kt."""

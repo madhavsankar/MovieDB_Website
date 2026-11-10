@@ -732,10 +732,27 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
     class TvTimeClient {
       constructor() {
-        this.googleIdToken = localStorage.getItem("tvtime_google_id_token") || "";
-        this.userEmail = localStorage.getItem("tvtime_user_email") || "";
-        const rawStored = (this.userEmail || localStorage.getItem("tvtime_user_id") || "").trim();
+        this.googleIdToken =
+          localStorage.getItem("tvtime_google_id_token") ||
+          this.readAuthCookie("tvtime_session") ||
+          this.readAuthCookie("tvtime_auth_token") ||
+          "";
+        const tokenPayload = this.decodeJwtPayload(this.googleIdToken);
+        this.userEmail =
+          localStorage.getItem("tvtime_user_email") ||
+          this.readAuthCookie("tvtime_user_email") ||
+          (tokenPayload && tokenPayload.email ? String(tokenPayload.email).trim().toLowerCase() : "") ||
+          "";
+        const rawStored = (
+          this.userEmail ||
+          localStorage.getItem("tvtime_user_id") ||
+          this.readAuthCookie("tvtime_user_id") ||
+          ""
+        ).trim();
         this.userId = rawStored && rawStored !== "default" ? rawStored.split("@")[0] : "default";
+        if (this.googleIdToken || this.userEmail) {
+          this.persistAuthSession(this.googleIdToken, this.userEmail, this.userId);
+        }
         this.activeTab = "home"; // "home" | "search" | "profile"
         this.homeSegment = "shows"; // "shows" | "movies" | "upcoming"
         this.mediaFilter = "in_progress"; // "all" | "in_progress" | "completed"
@@ -907,6 +924,90 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
       }
 
+      readAuthCookie(name) {
+        try {
+          const parts = String(document.cookie || "").split(";");
+          for (let i = 0; i < parts.length; i++) {
+            const item = parts[i].trim();
+            if (item.startsWith(name + "=")) {
+              return decodeURIComponent(item.slice(name.length + 1));
+            }
+          }
+        } catch (_) {}
+        return "";
+      }
+
+      persistAuthSession(token, email, userId) {
+        const tenYearsSeconds = 315360000;
+        if (token) {
+          this.googleIdToken = token;
+          try {
+            localStorage.setItem("tvtime_google_id_token", token);
+          } catch (_) {}
+          try {
+            document.cookie =
+              "tvtime_auth_token=" +
+              encodeURIComponent(token) +
+              "; path=/; max-age=" +
+              tenYearsSeconds +
+              "; SameSite=Lax";
+            if (String(token).startsWith("tvtime_session.")) {
+              document.cookie =
+                "tvtime_session=" +
+                encodeURIComponent(token) +
+                "; path=/; max-age=" +
+                tenYearsSeconds +
+                "; SameSite=Lax";
+            }
+          } catch (_) {}
+        }
+        if (email) {
+          this.userEmail = String(email).trim().toLowerCase();
+          this.userId = String(userId || this.userEmail.split("@")[0]);
+          try {
+            localStorage.setItem("tvtime_user_email", this.userEmail);
+            localStorage.setItem("tvtime_user_id", this.userId);
+          } catch (_) {}
+          try {
+            document.cookie =
+              "tvtime_user_email=" +
+              encodeURIComponent(this.userEmail) +
+              "; path=/; max-age=" +
+              tenYearsSeconds +
+              "; SameSite=Lax";
+            document.cookie =
+              "tvtime_user_id=" +
+              encodeURIComponent(this.userId) +
+              "; path=/; max-age=" +
+              tenYearsSeconds +
+              "; SameSite=Lax";
+          } catch (_) {}
+        }
+      }
+
+      clearAuthSession(clearIdentity = false) {
+        this.googleIdToken = "";
+        try {
+          localStorage.removeItem("tvtime_google_id_token");
+        } catch (_) {}
+        try {
+          document.cookie = "tvtime_auth_token=; path=/; max-age=0; SameSite=Lax";
+          document.cookie = "tvtime_session=; path=/; max-age=0; SameSite=Lax";
+        } catch (_) {}
+        if (clearIdentity) {
+          this.userEmail = "";
+          this.userId = "default";
+          try {
+            localStorage.removeItem("tvtime_user_email");
+            localStorage.removeItem("tvtime_user_id");
+          } catch (_) {}
+          try {
+            document.cookie = "tvtime_user_email=; path=/; max-age=0; SameSite=Lax";
+            document.cookie = "tvtime_user_id=; path=/; max-age=0; SameSite=Lax";
+          } catch (_) {}
+        }
+      }
+
       decodeJwtPayload(token) {
         try {
           const parts = String(token || "").split(".");
@@ -921,8 +1022,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       isGoogleTokenValid() {
         if (!this.googleIdToken) return false;
         const payload = this.decodeJwtPayload(this.googleIdToken);
-        if (!payload || !payload.email || !payload.exp) return false;
-        return payload.exp * 1000 > Date.now() + 30000;
+        if (!payload || !payload.email) return false;
+        if (String(this.googleIdToken).startsWith("tvtime_session.")) {
+          return Number(payload.exp || 0) * 1000 > Date.now();
+        }
+        return true;
       }
 
       async initAuthAndLoad() {
@@ -937,8 +1041,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           if (payload && payload.email) {
             this.userEmail = String(payload.email).trim().toLowerCase();
             this.userId = this.userEmail.split("@")[0];
-            localStorage.setItem("tvtime_user_email", this.userEmail);
-            localStorage.setItem("tvtime_user_id", this.userId);
+            this.persistAuthSession(this.googleIdToken, this.userEmail, this.userId);
           }
           return Promise.resolve(this.userId);
         }
@@ -1004,12 +1107,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                     }
                     return;
                   }
-                  this.googleIdToken = token;
-                  this.userEmail = String(payload.email).trim().toLowerCase();
-                  this.userId = this.userEmail.split("@")[0];
-                  localStorage.setItem("tvtime_google_id_token", this.googleIdToken);
-                  localStorage.setItem("tvtime_user_email", this.userEmail);
-                  localStorage.setItem("tvtime_user_id", this.userId);
+                  const email = String(payload.email).trim().toLowerCase();
+                  const uid = email.split("@")[0];
+                  this.persistAuthSession(token, email, uid);
                   modal.remove();
                   resolve(this.userId);
                 },
@@ -1036,12 +1136,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       signOutGoogle() {
-        this.googleIdToken = "";
-        this.userEmail = "";
-        this.userId = "default";
-        localStorage.removeItem("tvtime_google_id_token");
-        localStorage.removeItem("tvtime_user_email");
-        localStorage.removeItem("tvtime_user_id");
+        this.clearAuthSession(true);
         try {
           if (window.google && window.google.accounts && window.google.accounts.id) {
             window.google.accounts.id.disableAutoSelect();
@@ -1086,8 +1181,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           });
           if (res.status === 401 || res.status === 403) {
             const errBody = await res.json().catch(() => ({}));
-            this.googleIdToken = "";
-            localStorage.removeItem("tvtime_google_id_token");
+            this.clearAuthSession(false);
             try {
               if (window.google && window.google.accounts && window.google.accounts.id) {
                 window.google.accounts.id.disableAutoSelect();
@@ -1102,11 +1196,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             const data = await res.json();
             if (!Array.isArray(data.decidedIds)) data.decidedIds = [];
             this.state = data;
-            if (data.email) {
-              this.userEmail = String(data.email).trim().toLowerCase();
-              this.userId = String(data.userId || this.userEmail.split("@")[0]);
-              localStorage.setItem("tvtime_user_email", this.userEmail);
-              localStorage.setItem("tvtime_user_id", this.userId);
+            if (data.sessionToken || data.email) {
+              const email = data.email ? String(data.email).trim().toLowerCase() : this.userEmail;
+              const uid = String(data.userId || (email ? email.split("@")[0] : this.userId));
+              this.persistAuthSession(data.sessionToken || this.googleIdToken, email, uid);
             }
             this.saveLocalCache();
             this.render();
@@ -1121,7 +1214,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.saveLocalCache();
         this.render();
         try {
-          await fetch("/api/state", {
+          const res = await fetch("/api/state", {
             method: "POST",
             headers: this.getHeaders(),
             body: JSON.stringify({
@@ -1134,6 +1227,16 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               followingUsers: this.state.followingUsers,
             }),
           });
+          if (res.ok) {
+            const data = await res.json().catch(() => ({}));
+            if (data && data.sessionToken) {
+              this.persistAuthSession(
+                data.sessionToken,
+                data.email || this.userEmail,
+                data.userId || this.userId
+              );
+            }
+          }
         } catch (_) {}
       }
 
