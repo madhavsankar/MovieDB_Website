@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.PopupProperties
 import kotlin.math.roundToInt
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
@@ -1402,7 +1403,7 @@ private fun TvFilterDropdown(
 
     Box(modifier = modifier) {
         Surface(
-            onClick = { expanded = true },
+            onClick = { expanded = !expanded },
             shape = RoundedCornerShape(50),
             color = TvTimePalette.SurfacePill,
             border = BorderStroke(1.dp, TvTimePalette.Border)
@@ -1433,6 +1434,11 @@ private fun TvFilterDropdown(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
+            properties = PopupProperties(
+                focusable = true,
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true
+            ),
             modifier = Modifier.background(Color(0xFF18181D))
         ) {
             options.forEach { (key, label) ->
@@ -1490,7 +1496,7 @@ private fun UsStreamingPlatformFilterBar(
     ) {
         Box(modifier = Modifier.weight(1f, fill = false)) {
             Surface(
-                onClick = { expanded = true },
+                onClick = { expanded = !expanded },
                 shape = RoundedCornerShape(50),
                 color = TvTimePalette.SurfacePill,
                 border = BorderStroke(
@@ -1511,6 +1517,11 @@ private fun UsStreamingPlatformFilterBar(
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
+                properties = PopupProperties(
+                    focusable = true,
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = true
+                ),
                 modifier = Modifier.background(Color(0xFF18181D))
             ) {
                 if (hasSelection) {
@@ -1554,7 +1565,10 @@ private fun UsStreamingPlatformFilterBar(
                                 }
                             }
                         },
-                        onClick = { onTogglePlatform(platform) }
+                        onClick = {
+                            onTogglePlatform(platform)
+                            expanded = false
+                        }
                     )
                 }
             }

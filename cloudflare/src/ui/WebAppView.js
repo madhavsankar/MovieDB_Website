@@ -780,11 +780,28 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.loadRecommendations(false);
         this.initPullToRefresh();
         this.initBackNavigation();
+        this.initOutsideDropdownDismiss();
 
         document.addEventListener("visibilitychange", () => {
           if (!document.hidden && this.googleIdToken) {
             this.loadState(false);
           }
+        });
+      }
+
+      initOutsideDropdownDismiss() {
+        const closeOpenDropdowns = (e) => {
+          const openMenus = document.querySelectorAll("details.tv-platform-dropdown[open]");
+          openMenus.forEach((detailsEl) => {
+            if (!e || !e.target || !detailsEl.contains(e.target)) {
+              detailsEl.removeAttribute("open");
+            }
+          });
+        };
+        document.addEventListener("click", closeOpenDropdowns);
+        document.addEventListener("touchstart", closeOpenDropdowns, { passive: true });
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape") closeOpenDropdowns(null);
         });
       }
 
@@ -1380,7 +1397,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           .join("");
 
         const buildDropdown = (alignRight) =>
-          '<details class="relative group">' +
+          '<details class="tv-platform-dropdown relative group">' +
           '<summary class="list-none tv-pill-bar px-3.5 py-2 rounded-full text-xs font-bold cursor-pointer flex items-center gap-1.5 border ' +
           (hasFilter ? "border-yellow-400 tv-yellow-text" : "border-zinc-800 text-zinc-200") +
           '">' +
