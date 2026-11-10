@@ -235,6 +235,12 @@ export class LiveCatalogService {
       for (const b of buckets) {
         if (b?.provider_name) pushClean(b.provider_name);
       }
+      if (names.length === 0) {
+        const rentBuy = [...(usWatchObj.rent || []), ...(usWatchObj.buy || [])];
+        for (const b of rentBuy.slice(0, 4)) {
+          if (b?.provider_name) pushClean(b.provider_name);
+        }
+      }
     }
     if (fallbackText) {
       for (const part of String(fallbackText).split(/[,/]/)) {
@@ -710,6 +716,47 @@ export class LiveCatalogService {
    */
   static async fetchFullShowFromTvMaze(tvmazeId, { fetchImpl = fetch, env = null } = {}) {
     const rawStr = String(tvmazeId || "").trim();
+    if (rawStr.startsWith("movie_")) {
+      const tmdbId = Number(rawStr.replace(/^movie_/, "").replace(/\D/g, ""));
+      const tmdbReq = LiveCatalogService._buildTmdbRequest(
+        `/movie/${tmdbId}?append_to_response=credits,watch/providers&language=en-US`,
+        env
+      );
+      if (tmdbId && tmdbReq) {
+        try {
+          const resp = await fetchImpl(tmdbReq.url, { headers: tmdbReq.headers });
+          if (resp.ok) {
+            const mov = await resp.json();
+            const rel = String(mov.release_date || "");
+            const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
+            const usProviders = mov["watch/providers"]?.results?.US;
+            const streamingService = LiveCatalogService.normalizeUsProvidersFromTmdb(usProviders, "");
+            const posterUrl = mov.poster_path ? `https://image.tmdb.org/t/p/w500${mov.poster_path}` : "";
+            const castList = (mov.credits?.cast || [])
+              .slice(0, 8)
+              .map((c) => c?.name)
+              .filter(Boolean);
+            const directorEntry = (mov.credits?.crew || []).find((c) => c?.job === "Director");
+            return {
+              id: `movie_${mov.id}`,
+              tmdbId: mov.id,
+              mediaType: "movie",
+              title: mov.title || mov.original_title || "Untitled Movie",
+              year,
+              director: directorEntry?.name || "",
+              streamingService,
+              runtimeMins: Number(mov.runtime) || 120,
+              genres: (mov.genres || []).map((g) => g?.name).filter(Boolean),
+              cast: castList,
+              rating: mov.vote_average ? Math.round(Number(mov.vote_average) * 10) / 10 : 7.8,
+              posterUrl,
+              overview: stripHtml(mov.overview),
+            };
+          }
+        } catch (_) {}
+      }
+      return null;
+    }
     if (rawStr.startsWith("tmdb_tv_")) {
       const tmdbId = Number(rawStr.replace(/^tmdb_tv_/, ""));
       const tmdbReq = LiveCatalogService._buildTmdbRequest(

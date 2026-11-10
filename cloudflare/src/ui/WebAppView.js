@@ -2147,25 +2147,79 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
       }
 
+      isGenericStreamingLabel(val) {
+        const s = String(val || "").trim().toLowerCase();
+        return (
+          !s ||
+          s === "streaming" ||
+          s === "theaters / streaming" ||
+          s === "digital / streaming" ||
+          s === "tmdb feature film" ||
+          s === "popular & acclaimed movie" ||
+          s === "feature film"
+        );
+      }
+
+      enrichMovieStreamingIfNeeded(movie) {
+        if (!movie) return;
+        const lookupId = movie.tmdbId ? "movie_" + movie.tmdbId : String(movie.id || "");
+        if (!lookupId.startsWith("movie_")) return;
+        if (!this.isGenericStreamingLabel(movie.streamingService) && Array.isArray(movie.cast) && movie.cast.length > 0) {
+          return;
+        }
+        fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupId))
+          .then((r) => (r.ok ? r.json() : null))
+          .then((full) => {
+            if (!full) return;
+            let changed = false;
+            if (full.streamingService && !this.isGenericStreamingLabel(full.streamingService)) {
+              movie.streamingService = full.streamingService;
+              changed = true;
+            }
+            if (full.runtimeMins && Number(full.runtimeMins) > 0) {
+              movie.runtimeMins = Number(full.runtimeMins);
+              changed = true;
+            }
+            if (full.director && !movie.director) {
+              movie.director = full.director;
+              changed = true;
+            }
+            if (Array.isArray(full.cast) && full.cast.length > 0) {
+              movie.cast = full.cast;
+              changed = true;
+            }
+            if (Array.isArray(full.genres) && full.genres.length > 0) {
+              movie.genres = full.genres;
+              changed = true;
+            }
+            if (changed) {
+              this.persistState();
+              if (this.detailItem && this.detailItem.id === movie.id) {
+                this.renderDetailSheet();
+              }
+            }
+          })
+          .catch(() => {});
+      }
+
       async addSearchResult(itemId) {
         const item = (this.searchResults || []).find((r) => r.id === itemId);
         if (!item) return;
 
         if (item.mediaType === "movie") {
           if (!(this.state.movies || []).some((m) => m.id === item.id)) {
-            this.state.movies = [
-              {
-                ...item,
-                watched: false,
-                watchedAt: "",
-                userRating: 0,
-                reaction: "",
-                rewatchCount: 0,
-                isFavorite: false,
-              },
-              ...(this.state.movies || []),
-            ];
+            const newMovie = {
+              ...item,
+              watched: false,
+              watchedAt: "",
+              userRating: 0,
+              reaction: "",
+              rewatchCount: 0,
+              isFavorite: false,
+            };
+            this.state.movies = [newMovie, ...(this.state.movies || [])];
             await this.persistState();
+            this.enrichMovieStreamingIfNeeded(newMovie);
           }
           return;
         }
@@ -2213,6 +2267,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             this.detailItem = movieFirst;
             this.detailType = "movie";
             this.detailTab = "info";
+            this.enrichMovieStreamingIfNeeded(movieFirst);
             this.showDetailSheetModal();
             return;
           }
@@ -2223,6 +2278,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             this.detailItem = show;
             this.detailType = "movie";
             this.detailTab = "info";
+            this.enrichMovieStreamingIfNeeded(show);
             this.showDetailSheetModal();
             return;
           }
@@ -2242,21 +2298,29 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             }
           };
           applyInitialSeasons(show);
-          // Lazily enrich episodes from TMDB or TVMaze if only stub episodes exist
+          // Lazily enrich episodes & streaming network from TMDB or TVMaze if needed
           const lookupKey = show.tvmazeId || show.id;
-          if (lookupKey && (!show.episodes || show.episodes.length <= 1)) {
+          if (lookupKey && (!show.episodes || show.episodes.length <= 1 || this.isGenericStreamingLabel(show.network))) {
             fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey))
               .then((r) => (r.ok ? r.json() : null))
               .then((full) => {
-                if (full && Array.isArray(full.episodes) && full.episodes.length > 0) {
-                  show.episodes = full.episodes;
-                  if (show.userStatus === "completed") {
-                    show.watchedEpisodes = full.episodes.map((e) => e.code).sort();
+                if (full) {
+                  if (Array.isArray(full.episodes) && full.episodes.length > 0) {
+                    show.episodes = full.episodes;
+                    if (show.userStatus === "completed") {
+                      show.watchedEpisodes = full.episodes.map((e) => e.code).sort();
+                    }
+                  }
+                  if (full.network && !this.isGenericStreamingLabel(full.network)) {
+                    show.network = full.network;
                   }
                   if (full.cast?.length) show.cast = full.cast;
                   show.userStatus = this.getEffectiveShowStatus(show);
                   applyInitialSeasons(show);
                   this.persistState();
+                  if (this.detailItem && this.detailItem.id === show.id) {
+                    this.renderDetailSheet();
+                  }
                 }
               })
               .catch(() => {});
@@ -2269,6 +2333,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           this.detailItem = movie;
           this.detailType = "movie";
           this.detailTab = "info";
+          this.enrichMovieStreamingIfNeeded(movie);
           this.showDetailSheetModal();
         }
       }
@@ -2503,8 +2568,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             : this.renderShowStatusHeaderHtml(item);
 
         if (this.detailTab === "info") {
-          const streamLabel = item.network || item.streamingService || "";
+          const rawStream = item.network || item.streamingService || "";
+          const streamLabel = !this.isGenericStreamingLabel(rawStream) ? rawStream : (rawStream || "Check streaming availability");
           const mediaTypeLabel = this.detailType === "movie" ? "Movie" : "TV Series";
+          const castText = Array.isArray(item.cast) && item.cast.length > 0 ? item.cast.join(", ") : "";
+          const dirText =
+            item.director && !this.isGenericStreamingLabel(item.director) && item.director !== rawStream
+              ? item.director
+              : "";
           bodyEl.innerHTML =
             statusHeader +
             '<div class="flex gap-4 items-start">' +
@@ -2521,18 +2592,18 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             mediaTypeLabel +
             " · " +
             (Number(item.runtimeMins) || (this.detailType === "movie" ? 120 : 45)) +
-            "m" +
-            (streamLabel ? " · " + escapeHtml(streamLabel) : "") +
+            "m</p>" +
+            '<p class="text-xs font-bold tv-yellow-text">Streaming: ' +
+            escapeHtml(streamLabel) +
             "</p>" +
-            '<div class="flex items-center gap-2 pt-1 flex-wrap">' +
-            '<button onclick="app.toggleFavoriteItem(&quot;' +
-            escapeHtml(item.id) +
-            '&quot;)" class="px-3 py-1.5 rounded-full text-xs font-bold ' +
-            (item.isFavorite ? "tv-yellow-bg" : "bg-zinc-800 text-zinc-200") +
-            '">' +
-            (item.isFavorite ? "★ Favorited" : "☆ Favorite") +
-            "</button>" +
-            "</div>" +
+            (dirText
+              ? '<p class="text-xs text-zinc-300"><span class="text-zinc-400">Director:</span> ' +
+                escapeHtml(dirText) +
+                "</p>"
+              : "") +
+            (castText
+              ? '<p class="text-xs text-zinc-400">' + escapeHtml(castText) + "</p>"
+              : "") +
             "</div>" +
             "</div>" +
             '<p class="text-xs text-zinc-300 leading-relaxed">' +

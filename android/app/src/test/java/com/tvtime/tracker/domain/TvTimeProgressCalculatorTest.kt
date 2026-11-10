@@ -253,11 +253,35 @@ class TvTimeProgressCalculatorTest {
         val userId = FirestoreSyncService.sanitizeUserId("TestUser@gmail.com")
         assertEquals("testuser", userId)
 
+        // Verify default state is empty (no starter shows/movies auto-seeded)
         FirestoreSyncService.ensureUserSeeded(dao, userId)
+        assertTrue(dao.getShowsForUser(userId).isEmpty())
+        assertTrue(dao.getMoviesForUser(userId).isEmpty())
+
+        // Insert a user show and movie to test backup round-trip
+        dao.insertShow(
+            ShowEntity(
+                userId = userId,
+                externalId = "tvmaze_44933",
+                tvmazeId = 44933,
+                title = "Severance",
+                userStatus = "in_progress",
+                watchedCodesCsv = "S01E01"
+            )
+        )
+        dao.insertMovie(
+            MovieEntity(
+                userId = userId,
+                externalId = "movie_693134",
+                tmdbId = 693134,
+                title = "Dune: Part Two",
+                watched = true
+            )
+        )
         val initialShows = dao.getShowsForUser(userId)
         val initialMovies = dao.getMoviesForUser(userId)
-        assertTrue(initialShows.isNotEmpty())
-        assertTrue(initialMovies.isNotEmpty())
+        assertEquals(1, initialShows.size)
+        assertEquals(1, initialMovies.size)
 
         // Add a new Watchlist show and verify toggle-remove deletes it
         val watchlistShowId = dao.insertShow(

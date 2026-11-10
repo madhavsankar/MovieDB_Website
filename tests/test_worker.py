@@ -42,10 +42,28 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
             const code = formatEpisodeCode(2, 4);
             const repo = new FirestoreRepository({ FIREBASE_PROJECT_ID: 'demo-firebase-project' });
             const defState = repo.defaultState('demo_user');
-            const stats = LiveCatalogService.computeStats(defState);
+            const populatedState = {
+              ...defState,
+              shows: [
+                {
+                  id: 'tvmaze_44933',
+                  title: 'Severance',
+                  runtimeMins: 50,
+                  watchedEpisodes: ['S01E01', 'S01E02'],
+                  episodes: [
+                    { code: 'S01E01', season: 1, number: 1, runtimeMins: 57 },
+                    { code: 'S01E02', season: 1, number: 2, runtimeMins: 47 }
+                  ]
+                }
+              ],
+              movies: [
+                { id: 'movie_693134', title: 'Dune: Part Two', runtimeMins: 166, watched: true }
+              ]
+            };
+            const stats = LiveCatalogService.computeStats(populatedState);
             const docUrl = repo.docUrlForUser('demo_user');
             const normalizedUs = LiveCatalogService.normalizeUsProvidersFromTmdb({ flatrate: [{ provider_id: 8, provider_name: 'Netflix' }, { provider_id: 9, provider_name: 'Amazon Prime Video' }] }, '');
-            const out = JSON.stringify({ code, stats, docUrl, showsCount: defState.shows.length, normalizedUs, platformsCount: LiveCatalogService.US_STREAMING_PLATFORMS.length });
+            const out = JSON.stringify({ code, stats, docUrl, defaultShowsCount: defState.shows.length, defaultMoviesCount: defState.movies.length, normalizedUs, platformsCount: LiveCatalogService.US_STREAMING_PLATFORMS.length });
             if (typeof console !== 'undefined' && console.log) console.log(out);
             else if (typeof print !== 'undefined') print(out);
             """
@@ -54,14 +72,15 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         out = self._run_js(harness)
         self.assertEqual(out["code"], "S02E04")
         self.assertIn("tvtime_state/user_state_demo_user", out["docUrl"])
-        self.assertEqual(out["showsCount"], 3)
+        self.assertEqual(out["defaultShowsCount"], 0)
+        self.assertEqual(out["defaultMoviesCount"], 0)
         self.assertEqual(out["normalizedUs"], "Netflix / Prime Video")
         self.assertEqual(out["platformsCount"], 8)
         self.assertGreater(out["stats"]["totalEpisodesWatched"], 0)
         self.assertGreater(out["stats"]["totalMoviesWatched"], 0)
         self.assertGreater(out["stats"]["totalHours"], 0)
-        self.assertEqual(out["stats"]["totalSeriesCount"], 3)
-        self.assertEqual(out["stats"]["totalMoviesCount"], 3)
+        self.assertEqual(out["stats"]["totalSeriesCount"], 1)
+        self.assertEqual(out["stats"]["totalMoviesCount"], 1)
 
     def test_web_app_view_client_js_syntax(self):
         view_path = os.path.join(ROOT_DIR, "cloudflare", "src", "ui", "WebAppView.js")
@@ -362,14 +381,25 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         import server
 
         st = server.default_user_state("demo_user")
+        self.assertEqual(st["userId"], "demo_user")
+        self.assertEqual(len(st["shows"]), 0)
+        self.assertEqual(len(st["movies"]), 0)
+        st["shows"] = [
+            {
+                "id": "tvmaze_44933",
+                "tvmazeId": 44933,
+                "title": "Severance",
+                "runtimeMins": 50,
+                "watchedEpisodes": ["S01E01"],
+                "episodes": [{"code": "S01E01", "runtimeMins": 57}],
+            }
+        ]
+        st["movies"] = [{"id": "movie_1", "title": "Dune", "runtimeMins": 166, "watched": True}]
         stats = server.compute_stats(st)
         html = server.load_web_app_html()
         self.assertTrue(html.startswith("<!DOCTYPE html>"))
         self.assertNotIn("export const WEB_APP_HTML", html)
-        self.assertEqual(st["userId"], "demo_user")
-        self.assertEqual(len(st["shows"]), 3)
-        self.assertEqual(st["shows"][0]["tvmazeId"], 44933)
-        self.assertGreater(stats["totalMins"], 1000)
+        self.assertGreater(stats["totalMins"], 200)
 
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""

@@ -58,14 +58,7 @@ object FirestoreSyncService {
     }
 
     suspend fun ensureUserSeeded(dao: TvTimeDao, userId: String) = withContext(Dispatchers.IO) {
-        val cleanUser = sanitizeUserId(userId)
-        val existingShows = dao.getShowsForUser(cleanUser)
-        val existingMovies = dao.getMoviesForUser(cleanUser)
-        if (existingShows.isEmpty() && existingMovies.isEmpty()) {
-            LiveMediaCatalogService.buildStarterShows(cleanUser).forEach { dao.insertShow(it) }
-            LiveMediaCatalogService.buildStarterMovies(cleanUser).forEach { dao.insertMovie(it) }
-            LiveMediaCatalogService.buildStarterActors(cleanUser).forEach { dao.insertActor(it) }
-        }
+        // Default state for a new or unsigned-in user is intentionally empty (no starter shows/movies).
     }
 
     suspend fun pushLocalStateToFirestore(

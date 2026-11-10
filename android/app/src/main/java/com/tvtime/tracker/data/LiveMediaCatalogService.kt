@@ -769,171 +769,161 @@ object LiveMediaCatalogService {
         emptyList<EpisodeModel>() to emptyList<String>()
     }
 
-    fun buildStarterShows(userId: String): List<ShowEntity> {
-        val severanceEps = listOf(
-            EpisodeModel("S01E01", 1, 1, "Good News About Hell", "2022-02-18", 57),
-            EpisodeModel("S01E02", 1, 2, "Half Loop", "2022-02-18", 47),
-            EpisodeModel("S01E03", 1, 3, "In Perpetuity", "2022-02-25", 52),
-            EpisodeModel("S01E04", 1, 4, "The You You Are", "2022-03-04", 46),
-            EpisodeModel("S01E05", 1, 5, "The Grim Barbarity of Optics and Design", "2022-03-11", 43),
-            EpisodeModel("S01E06", 1, 6, "Hide and Seek", "2022-03-18", 47),
-            EpisodeModel("S01E07", 1, 7, "Defiant Jazz", "2022-03-25", 49),
-            EpisodeModel("S01E08", 1, 8, "What's for Dinner?", "2022-04-01", 48),
-            EpisodeModel("S01E09", 1, 9, "The We We Are", "2022-04-08", 40),
-            EpisodeModel("S02E01", 2, 1, "Hello, Ms. Cobel", "2025-01-17", 49),
-            EpisodeModel("S02E02", 2, 2, "Goodbye, Mrs. Selvig", "2025-01-24", 47),
-            EpisodeModel("S02E03", 2, 3, "Who Is Alive?", "2025-01-31", 53),
-            EpisodeModel("S02E04", 2, 4, "Woe's Hollow", "2025-02-07", 51),
-            EpisodeModel("S02E05", 2, 5, "Trojan's Horse", "2025-02-14", 48),
-            EpisodeModel("S02E06", 2, 6, "Attila", "2025-02-21", 50)
-        )
-        val bearEps = listOf(
-            EpisodeModel("S01E01", 1, 1, "System", "2022-06-23", 29),
-            EpisodeModel("S01E02", 1, 2, "Hands", "2022-06-23", 30),
-            EpisodeModel("S01E03", 1, 3, "Brigade", "2022-06-23", 25),
-            EpisodeModel("S01E04", 1, 4, "Dogs", "2022-06-23", 29),
-            EpisodeModel("S01E05", 1, 5, "Sheridan", "2022-06-23", 30),
-            EpisodeModel("S01E06", 1, 6, "Ceres", "2022-06-23", 35),
-            EpisodeModel("S01E07", 1, 7, "Review", "2022-06-23", 20),
-            EpisodeModel("S01E08", 1, 8, "Braciole", "2022-06-23", 47)
-        )
-        val siloEps = listOf(
-            EpisodeModel("S01E01", 1, 1, "Freedom Day", "2023-05-05", 59),
-            EpisodeModel("S01E02", 1, 2, "Holston's Pick", "2023-05-05", 48),
-            EpisodeModel("S01E03", 1, 3, "Machines", "2023-05-12", 62),
-            EpisodeModel("S01E04", 1, 4, "Truth", "2023-05-19", 46),
-            EpisodeModel("S01E05", 1, 5, "The Janitor's Boy", "2026-11-12", 51)
-        )
+    data class MovieDetailsEnrichment(
+        val streamingService: String,
+        val runtimeMins: Int,
+        val director: String,
+        val castCsv: String,
+        val genresCsv: String
+    )
 
-        return listOf(
-            ShowEntity(
-                userId = userId,
-                externalId = "tvmaze_44933",
-                tvmazeId = 44933,
-                tmdbId = 95396,
-                title = "Severance",
-                year = 2022,
-                network = "Apple TV+",
-                status = "Running",
-                runtimeMins = 50,
-                genresCsv = "Drama, Sci-Fi, Mystery",
-                castCsv = "Adam Scott, Britt Lower, John Turturro, Patricia Arquette",
-                rating = 8.7,
-                posterUrl = "https://static.tvmaze.com/uploads/images/medium_portrait/548/1371406.jpg",
-                overview = "Mark leads a team of office workers whose memories have been surgically divided between their work and personal lives.",
-                userStatus = "in_progress",
-                userRating = 5,
-                reaction = "",
-                isFavorite = true,
-                watchedCodesCsv = "S01E01,S01E02,S01E03,S01E04,S01E05,S01E06,S01E07,S01E08,S01E09,S02E01,S02E02,S02E03",
-                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(severanceEps)
-            ),
-            ShowEntity(
-                userId = userId,
-                externalId = "tvmaze_54198",
-                tvmazeId = 54198,
-                tmdbId = 136315,
-                title = "The Bear",
-                year = 2022,
-                network = "FX / Hulu",
-                status = "Running",
-                runtimeMins = 34,
-                genresCsv = "Drama, Comedy",
-                castCsv = "Jeremy Allen White, Ayo Edebiri, Ebon Moss-Bachrach",
-                rating = 8.6,
-                posterUrl = "https://static.tvmaze.com/uploads/images/medium_portrait/629/1574642.jpg",
-                overview = "A young chef from the fine dining world comes home to Chicago to run his family sandwich shop.",
-                userStatus = "in_progress",
-                userRating = 5,
-                reaction = "",
-                isFavorite = true,
-                watchedCodesCsv = "S01E01,S01E02,S01E03,S01E04",
-                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(bearEps)
-            ),
-            ShowEntity(
-                userId = userId,
-                externalId = "tvmaze_38052",
-                tvmazeId = 38052,
-                tmdbId = 125988,
-                title = "Silo",
-                year = 2023,
-                network = "Apple TV+",
-                status = "Running",
-                runtimeMins = 52,
-                genresCsv = "Drama, Sci-Fi, Thriller",
-                castCsv = "Rebecca Ferguson, Common, Tim Robbins",
-                rating = 8.1,
-                posterUrl = "https://static.tvmaze.com/uploads/images/medium_portrait/631/1577677.jpg",
-                overview = "In a ruined and toxic future, thousands live in a giant silo deep underground.",
-                userStatus = "interested",
-                userRating = 4,
-                reaction = "",
-                isFavorite = false,
-                watchedCodesCsv = "",
-                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(siloEps)
-            )
-        )
+    fun isGenericStreamingLabel(label: String): Boolean {
+        val s = label.trim().lowercase()
+        return s.isEmpty() ||
+            s == "streaming" ||
+            s == "theaters / streaming" ||
+            s == "digital / streaming" ||
+            s == "tmdb feature film" ||
+            s == "popular & acclaimed movie" ||
+            s == "feature film"
     }
 
-    fun buildStarterMovies(userId: String): List<MovieEntity> = listOf(
-        MovieEntity(
-            userId = userId,
-            externalId = "movie_693134",
-            tmdbId = 693134,
-            title = "Dune: Part Two",
-            year = 2024,
-            runtimeMins = 166,
-            genresCsv = "Sci-Fi, Adventure",
-            castCsv = "Timothée Chalamet, Zendaya, Rebecca Ferguson",
-            director = "Denis Villeneuve",
-            streamingService = "Max",
-            rating = 8.5,
-            posterUrl = "https://m.media-amazon.com/images/M/MV5BNTc0YmQxMjEtODI5MC00NjFiLTlkMWUtOGQ5NjFmYWUyZGJhXkEyXkFqcGc@._V1_.jpg",
-            overview = "Paul Atreides unites with Chani and the Fremen while on a warpath of revenge.",
-            watched = true,
-            watchedAt = "2026-09-12",
-            userRating = 5,
-            reaction = "",
-            rewatchCount = 0,
-            isFavorite = true
-        ),
-        MovieEntity(
-            userId = userId,
-            externalId = "movie_872585",
-            tmdbId = 872585,
-            title = "Oppenheimer",
-            year = 2023,
-            runtimeMins = 180,
-            genresCsv = "Biography, Drama, History",
-            castCsv = "Cillian Murphy, Emily Blunt, Matt Damon, Robert Downey Jr.",
-            director = "Christopher Nolan",
-            streamingService = "Peacock / Prime Video",
-            rating = 8.9,
-            posterUrl = "https://m.media-amazon.com/images/M/MV5BN2JkMDc5MGQtZjg3YS00NmFiLWIyZmQtZTJmNTM5MjVmYTQ4XkEyXkFqcGc@._V1_.jpg",
-            overview = "The story of J. Robert Oppenheimer's role in the development of the atomic bomb.",
-            watched = true,
-            watchedAt = "2026-08-04",
-            userRating = 5,
-            reaction = "",
-            isFavorite = true
-        ),
-        MovieEntity(
-            userId = userId,
-            externalId = "movie_1022789",
-            tmdbId = 1022789,
-            title = "Conclave",
-            year = 2024,
-            runtimeMins = 120,
-            genresCsv = "Drama, Thriller",
-            castCsv = "Ralph Fiennes, Stanley Tucci, John Lithgow",
-            director = "Edward Berger",
-            streamingService = "Peacock",
-            rating = 7.6,
-            posterUrl = "https://m.media-amazon.com/images/M/MV5BYjgxMDI5NmMtNTU3OS00ZDQxLTgxZmEtNzY1ZTBmMDY4NDRkXkEyXkFqcGc@._V1_.jpg",
-            overview = "Cardinal Lawrence is tasked with managing the covert election of a new Pope.",
-            watched = false
-        )
-    )
+    private fun normalizeUsProvidersFromTmdbJson(usObj: JSONObject?, fallback: String = ""): String {
+        val names = mutableListOf<String>()
+        val seen = mutableSetOf<String>()
+        fun pushClean(raw: String?) {
+            val s = (raw ?: "").trim()
+            if (s.isEmpty()) return
+            val lower = s.lowercase()
+            val canonical = when {
+                lower.contains("netflix") -> "Netflix"
+                lower.contains("prime video") || lower.contains("amazon") -> "Prime Video"
+                lower.contains("hulu") || lower == "fx" -> "Hulu"
+                lower == "max" || lower.contains("hbo") -> "Max"
+                lower.contains("disney") -> "Disney+"
+                lower.contains("apple tv") -> "Apple TV+"
+                lower.contains("paramount") || lower == "cbs" || lower.contains("showtime") -> "Paramount+"
+                lower.contains("peacock") || lower == "nbc" -> "Peacock"
+                else -> s
+            }
+            if (seen.add(canonical.lowercase())) {
+                names.add(canonical)
+            }
+        }
+        if (usObj != null) {
+            listOf("flatrate", "free", "ads").forEach { key ->
+                val arr = usObj.optJSONArray(key) ?: JSONArray()
+                for (i in 0 until arr.length()) {
+                    pushClean(arr.optJSONObject(i)?.optString("provider_name"))
+                }
+            }
+            if (names.isEmpty()) {
+                listOf("rent", "buy").forEach { key ->
+                    val arr = usObj.optJSONArray(key) ?: JSONArray()
+                    for (i in 0 until minOf(3, arr.length())) {
+                        pushClean(arr.optJSONObject(i)?.optString("provider_name"))
+                    }
+                }
+            }
+        }
+        if (fallback.isNotBlank() && !isGenericStreamingLabel(fallback)) {
+            fallback.split(",", "/").forEach { pushClean(it) }
+        }
+        return names.joinToString(" / ").ifBlank { fallback.takeIf { !isGenericStreamingLabel(it) } ?: "Streaming" }
+    }
+
+    suspend fun fetchMovieDetails(
+        tmdbId: Int,
+        title: String = "",
+        externalId: String = ""
+    ): MovieDetailsEnrichment? = withContext(Dispatchers.IO) {
+        val tmdbToken = BuildConfig.TMDB_READ_TOKEN.trim()
+        val tmdbKey = BuildConfig.TMDB_API_KEY.trim()
+        if (tmdbToken.isEmpty() && tmdbKey.isEmpty()) return@withContext null
+
+        fun buildTmdbUrl(path: String): String {
+            val sep = if (path.contains("?")) "&" else "?"
+            return if (tmdbToken.isNotEmpty()) {
+                "https://api.themoviedb.org/3$path"
+            } else {
+                "https://api.themoviedb.org/3$path${sep}api_key=$tmdbKey"
+            }
+        }
+        fun openTmdb(path: String): HttpURLConnection =
+            (URL(buildTmdbUrl(path)).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                setRequestProperty("Accept", "application/json")
+                if (tmdbToken.isNotEmpty()) {
+                    setRequestProperty("Authorization", "Bearer $tmdbToken")
+                }
+                connectTimeout = 6000
+                readTimeout = 6000
+            }
+
+        var resolvedId = when {
+            tmdbId > 0 -> tmdbId
+            externalId.startsWith("movie_") -> externalId.removePrefix("movie_").toIntOrNull() ?: 0
+            else -> 0
+        }
+        if (resolvedId <= 0 && title.isNotBlank()) {
+            try {
+                val enc = URLEncoder.encode(title.trim(), "UTF-8")
+                val searchConn = openTmdb("/search/movie?query=$enc&language=en-US&page=1")
+                if (searchConn.responseCode in 200..299) {
+                    val sJson = JSONObject(searchConn.inputStream.bufferedReader().use { it.readText() })
+                    resolvedId = sJson.optJSONArray("results")?.optJSONObject(0)?.optInt("id", 0) ?: 0
+                }
+            } catch (_: Exception) {}
+        }
+        if (resolvedId <= 0) return@withContext null
+
+        try {
+            val movConn = openTmdb("/movie/$resolvedId?append_to_response=credits,watch/providers&language=en-US")
+            if (movConn.responseCode in 200..299) {
+                val movJson = JSONObject(movConn.inputStream.bufferedReader().use { it.readText() })
+                val usObj = movJson.optJSONObject("watch/providers")?.optJSONObject("results")?.optJSONObject("US")
+                val streamingService = normalizeUsProvidersFromTmdbJson(usObj, "")
+                val runtimeMins = movJson.optInt("runtime", 120).takeIf { it > 0 } ?: 120
+
+                val castNames = mutableListOf<String>()
+                val castArr = movJson.optJSONObject("credits")?.optJSONArray("cast") ?: JSONArray()
+                for (i in 0 until minOf(8, castArr.length())) {
+                    val name = castArr.optJSONObject(i)?.optString("name", "") ?: ""
+                    if (name.isNotBlank()) castNames.add(name)
+                }
+
+                var directorName = ""
+                val crewArr = movJson.optJSONObject("credits")?.optJSONArray("crew") ?: JSONArray()
+                for (i in 0 until crewArr.length()) {
+                    val c = crewArr.optJSONObject(i) ?: continue
+                    if (c.optString("job").equals("Director", ignoreCase = true)) {
+                        directorName = c.optString("name", "")
+                        if (directorName.isNotBlank()) break
+                    }
+                }
+
+                val genresList = mutableListOf<String>()
+                val genresArr = movJson.optJSONArray("genres") ?: JSONArray()
+                for (i in 0 until genresArr.length()) {
+                    val gName = genresArr.optJSONObject(i)?.optString("name", "") ?: ""
+                    if (gName.isNotBlank()) genresList.add(gName)
+                }
+
+                return@withContext MovieDetailsEnrichment(
+                    streamingService = streamingService,
+                    runtimeMins = runtimeMins,
+                    director = directorName,
+                    castCsv = castNames.joinToString(", "),
+                    genresCsv = genresList.joinToString(", ")
+                )
+            }
+        } catch (_: Exception) {}
+        null
+    }
+
+    fun buildStarterShows(userId: String): List<ShowEntity> = emptyList()
+
+    fun buildStarterMovies(userId: String): List<MovieEntity> = emptyList()
 
     fun buildStarterActors(userId: String): List<ActorEntity> = emptyList()
 }

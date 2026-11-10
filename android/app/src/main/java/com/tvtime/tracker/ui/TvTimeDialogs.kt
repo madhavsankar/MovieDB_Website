@@ -415,31 +415,21 @@ fun ShowDetailBottomSheet(
                                 color = Color.White
                             )
                             Text(
-                                text = "${show.year} · ${show.network} · ${show.runtimeMins}m · ${show.status}",
+                                text = "${show.year} · TV Series · ${show.runtimeMins}m · ${show.status}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TvTimePalette.TextSecondary
+                            )
+                            Text(
+                                text = "Streaming: ${show.network.ifBlank { "Streaming" }}",
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                color = TvTimePalette.Yellow
                             )
                             if (castCsv.isNotBlank()) {
                                 Text(
                                     text = castCsv,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = TvTimePalette.Yellow
+                                    color = TvTimePalette.TextSecondary
                                 )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
-                                    onClick = {
-                                        isFavorite = !isFavorite
-                                        persistUpdatedShow(nextFavorite = isFavorite)
-                                    },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isFavorite) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
-                                        contentColor = if (isFavorite) TvTimePalette.OnYellow else Color.White
-                                    ),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                ) {
-                                    Text(if (isFavorite) "★ Favorited" else "☆ Favorite", fontSize = 12.sp)
-                                }
                             }
                         }
                     }
@@ -634,12 +624,59 @@ fun MovieDetailBottomSheet(
 ) {
     val scope = rememberCoroutineScope()
     var isWatched by remember(movie.id, movie.watched) { mutableStateOf(movie.watched) }
-    var isFavorite by remember(movie.id, movie.isFavorite) { mutableStateOf(movie.isFavorite) }
+    var streamingService by remember(movie.id, movie.streamingService) { mutableStateOf(movie.streamingService) }
+    var runtimeMins by remember(movie.id, movie.runtimeMins) { mutableIntStateOf(movie.runtimeMins) }
+    var director by remember(movie.id, movie.director) { mutableStateOf(movie.director) }
+    var castCsv by remember(movie.id, movie.castCsv) { mutableStateOf(movie.castCsv) }
 
-    fun persistMovie(nextWatched: Boolean = isWatched, nextFavorite: Boolean = isFavorite) {
+    LaunchedEffect(movie.id, movie.tmdbId, movie.title) {
+        if (LiveMediaCatalogService.isGenericStreamingLabel(streamingService) || castCsv.isBlank()) {
+            val enriched = LiveMediaCatalogService.fetchMovieDetails(
+                tmdbId = movie.tmdbId,
+                title = movie.title,
+                externalId = movie.externalId
+            )
+            if (enriched != null) {
+                var changed = false
+                if (!LiveMediaCatalogService.isGenericStreamingLabel(enriched.streamingService)) {
+                    streamingService = enriched.streamingService
+                    changed = true
+                }
+                if (enriched.runtimeMins > 0 && enriched.runtimeMins != runtimeMins) {
+                    runtimeMins = enriched.runtimeMins
+                    changed = true
+                }
+                if (enriched.director.isNotBlank() && director.isBlank()) {
+                    director = enriched.director
+                    changed = true
+                }
+                if (enriched.castCsv.isNotBlank() && castCsv.isBlank()) {
+                    castCsv = enriched.castCsv
+                    changed = true
+                }
+                if (changed) {
+                    dao.updateMovie(
+                        movie.copy(
+                            watched = isWatched,
+                            streamingService = streamingService,
+                            runtimeMins = runtimeMins,
+                            director = director,
+                            castCsv = castCsv
+                        )
+                    )
+                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                }
+            }
+        }
+    }
+
+    fun persistMovie(nextWatched: Boolean = isWatched) {
         val updated = movie.copy(
             watched = nextWatched,
-            isFavorite = nextFavorite,
+            streamingService = streamingService,
+            runtimeMins = runtimeMins,
+            director = director,
+            castCsv = castCsv,
             rewatchCount = 0,
             reaction = ""
         )
@@ -679,34 +716,37 @@ fun MovieDetailBottomSheet(
                         style = MaterialTheme.typography.headlineSmall,
                         color = Color.White
                     )
-                    val streamingPart = movie.streamingService.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""
                     Text(
-                        text = "${movie.year} · Movie · ${movie.runtimeMins}m$streamingPart",
+                        text = "${movie.year} · Movie · ${runtimeMins}m",
                         style = MaterialTheme.typography.bodySmall,
                         color = TvTimePalette.CyanMovie
                     )
-                    val cleanMovieDirector = movie.director.takeIf {
-                        it.isNotBlank() && !it.equals(movie.streamingService, ignoreCase = true)
+                    val cleanStreaming = streamingService.takeIf {
+                        !LiveMediaCatalogService.isGenericStreamingLabel(it)
+                    } ?: streamingService.ifBlank { "Streaming" }
+                    Text(
+                        text = "Streaming: $cleanStreaming",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = TvTimePalette.Yellow
+                    )
+                    val cleanMovieDirector = director.takeIf {
+                        it.isNotBlank() &&
+                            !LiveMediaCatalogService.isGenericStreamingLabel(it) &&
+                            !it.equals(streamingService, ignoreCase = true)
                     }.orEmpty()
-                    if (movie.castCsv.isNotBlank() || cleanMovieDirector.isNotBlank()) {
+                    if (cleanMovieDirector.isNotBlank()) {
                         Text(
-                            text = movie.castCsv.ifBlank { cleanMovieDirector },
+                            text = "Director: $cleanMovieDirector",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White
+                        )
+                    }
+                    if (castCsv.isNotBlank()) {
+                        Text(
+                            text = castCsv,
                             style = MaterialTheme.typography.bodySmall,
                             color = TvTimePalette.TextSecondary
                         )
-                    }
-                    Button(
-                        onClick = {
-                            isFavorite = !isFavorite
-                            persistMovie(nextFavorite = isFavorite)
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isFavorite) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
-                            contentColor = if (isFavorite) TvTimePalette.OnYellow else Color.White
-                        ),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text(if (isFavorite) "★ Favorited" else "☆ Favorite", fontSize = 12.sp)
                     }
                 }
             }
