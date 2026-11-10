@@ -3,6 +3,7 @@ package com.tvtime.tracker.ui
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,7 +22,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -110,6 +115,35 @@ fun NetworkPosterImage(
                 color = TvTimePalette.Yellow,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+fun WatchlistBookmarkIcon(
+    tint: Color = TvTimePalette.Yellow,
+    size: Dp = 18.dp,
+    filled: Boolean = true
+) {
+    Canvas(modifier = Modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val path = Path().apply {
+            moveTo(w * 0.22f, h * 0.12f)
+            lineTo(w * 0.78f, h * 0.12f)
+            lineTo(w * 0.78f, h * 0.88f)
+            lineTo(w * 0.50f, h * 0.68f)
+            lineTo(w * 0.22f, h * 0.88f)
+            close()
+        }
+        if (filled) {
+            drawPath(path = path, color = tint)
+        } else {
+            drawPath(
+                path = path,
+                color = tint,
+                style = Stroke(width = w * 0.11f, cap = StrokeCap.Round, join = StrokeJoin.Round)
             )
         }
     }
@@ -533,12 +567,12 @@ fun TvSearchResultCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // + Watchlist quick-action button
+                // + Watchlist quick-action button (shows + before adding, yellow Watchlist bookmark logo when in Watchlist)
                 Box(
                     modifier = Modifier
                         .size(38.dp)
                         .clip(CircleShape)
-                        .background(if (isInWatchlist) TvTimePalette.Yellow else Color(0xFF232329))
+                        .background(if (isInWatchlist) Color(0x2EFACC15) else Color(0xFF232329))
                         .border(
                             width = 1.5.dp,
                             color = if (isInWatchlist) TvTimePalette.Yellow else Color(0xFF3F3F46),
@@ -547,12 +581,20 @@ fun TvSearchResultCard(
                         .clickable(onClick = onWatchlistClick),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = if (isInWatchlist) "In Watchlist" else "Add to Watchlist",
-                        tint = if (isInWatchlist) Color(0xFF09090B) else TvTimePalette.Yellow,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    if (isInWatchlist) {
+                        WatchlistBookmarkIcon(
+                            tint = TvTimePalette.Yellow,
+                            size = 19.dp,
+                            filled = true
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add to Watchlist",
+                            tint = TvTimePalette.Yellow,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
 
                 // ✓ Completed quick-action button

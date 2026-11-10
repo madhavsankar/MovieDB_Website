@@ -179,19 +179,27 @@ fun ShowDetailBottomSheet(
                             "completed" -> "✓ Completed"
                             "in_progress" -> "▶ In Progress (${watchedSet.size}/${episodes.size} watched)"
                             "stopped" -> "⏹ Stopped (${watchedSet.size}/${episodes.size} watched)"
-                            else -> "🔖 Watchlist"
+                            else -> "Watchlist"
                         }
                         val statusBadgeColor = when (effectiveStatus) {
                             "completed" -> Color(0xFF4ADE80)
                             "in_progress" -> TvTimePalette.Yellow
                             "stopped" -> TvTimePalette.Error
-                            else -> Color(0xFF38BDF8)
+                            else -> TvTimePalette.Yellow
                         }
-                        Text(
-                            text = statusBadgeText,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = statusBadgeColor
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            if (effectiveStatus == "interested") {
+                                WatchlistBookmarkIcon(tint = TvTimePalette.Yellow, size = 13.dp, filled = true)
+                            }
+                            Text(
+                                text = statusBadgeText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = statusBadgeColor
+                            )
+                        }
                     }
                     TextButton(
                         onClick = {
@@ -319,21 +327,32 @@ fun ShowDetailBottomSheet(
                         modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = when {
-                                isInWatchlist -> "🔖 In Watchlist"
-                                canSetWatchlist -> "🔖 Add to Watchlist"
-                                else -> "🔖 Watchlist (Only for unwatched series)"
-                            },
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = when {
-                                isInWatchlist -> TvTimePalette.OnYellow
-                                canSetWatchlist -> Color.White
-                                else -> TvTimePalette.TextSecondary
-                            },
-                            maxLines = 1
-                        )
+                        val contentTint = when {
+                            isInWatchlist -> TvTimePalette.OnYellow
+                            canSetWatchlist -> TvTimePalette.Yellow
+                            else -> TvTimePalette.TextSecondary
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            WatchlistBookmarkIcon(tint = contentTint, size = 14.dp, filled = true)
+                            Text(
+                                text = when {
+                                    isInWatchlist -> "In Watchlist"
+                                    canSetWatchlist -> "Add to Watchlist"
+                                    else -> "Watchlist (Only for unwatched series)"
+                                },
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = when {
+                                    isInWatchlist -> TvTimePalette.OnYellow
+                                    canSetWatchlist -> Color.White
+                                    else -> TvTimePalette.TextSecondary
+                                },
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
             }
@@ -706,11 +725,19 @@ fun MovieDetailBottomSheet(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = if (isWatched) "✓ Watched" else "🔖 Watchlist",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
-                            color = if (isWatched) Color(0xFF4ADE80) else Color(0xFF38BDF8)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            if (!isWatched) {
+                                WatchlistBookmarkIcon(tint = TvTimePalette.Yellow, size = 13.dp, filled = true)
+                            }
+                            Text(
+                                text = if (isWatched) "✓ Watched" else "Watchlist",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                color = if (isWatched) Color(0xFF4ADE80) else TvTimePalette.Yellow
+                            )
+                        }
                         TextButton(
                             onClick = {
                                 scope.launch {
@@ -756,14 +783,24 @@ fun MovieDetailBottomSheet(
                                 modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(
-                                    text = "🔖 Watchlist",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (!isWatched) TvTimePalette.OnYellow else Color.White,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    WatchlistBookmarkIcon(
+                                        tint = if (!isWatched) TvTimePalette.OnYellow else TvTimePalette.Yellow,
+                                        size = 14.dp,
+                                        filled = true
+                                    )
+                                    Text(
+                                        text = "Watchlist",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (!isWatched) TvTimePalette.OnYellow else Color.White,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
 

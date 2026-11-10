@@ -719,6 +719,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
     const CHECK_SVG = '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.6" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
     const EYE_SVG = CHECK_SVG;
     const PLUS_SVG = '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14m-7-7h14"/></svg>';
+    const WATCHLIST_SVG = '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 011 1v17l-7-4-7 4V4a1 1 0 011-1z"/></svg>';
+    const WATCHLIST_INLINE_SVG = '<svg class="w-3.5 h-3.5 inline-block mr-1 -mt-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 011 1v17l-7-4-7 4V4a1 1 0 011-1z"/></svg>';
 
     function escapeHtml(s) {
       return String(s || "")
@@ -2047,7 +2049,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 "https://via.placeholder.com/200x300/1c1c22/facc15?text=" + encodeURIComponent(item.title || "Item");
 
               const watchlistBtnClass = isInWatchlist
-                ? "w-10 h-10 rounded-full tv-yellow-bg flex items-center justify-center shrink-0 transition active:scale-95"
+                ? "w-10 h-10 rounded-full bg-yellow-400/20 border-2 border-yellow-400 tv-yellow-text flex items-center justify-center shrink-0 transition active:scale-95"
                 : "w-10 h-10 rounded-full bg-[#232329] border border-zinc-700 tv-yellow-text flex items-center justify-center shrink-0 transition hover:border-yellow-400/60 active:scale-95";
               const completedBtnClass = isCompleted
                 ? "w-10 h-10 rounded-full bg-emerald-500 border border-emerald-500 text-white flex items-center justify-center shrink-0 transition active:scale-95"
@@ -2062,7 +2064,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 '&quot;)" class="' +
                 watchlistBtnClass +
                 '">' +
-                PLUS_SVG +
+                (isInWatchlist ? WATCHLIST_SVG : PLUS_SVG) +
                 "</button>" +
                 '<button title="' +
                 (isCompleted ? "Completed (Tap to move to Watchlist)" : "Mark as Completed") +
@@ -2360,7 +2362,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const canSetWatchlist = prog.watchedCount === 0;
         const isInWatchlist = eff === "interested" && prog.watchedCount === 0;
 
-        let badgeHtml = '<span class="text-xs font-extrabold text-sky-400">🔖 Watchlist</span>';
+        let badgeHtml = '<span class="text-xs font-extrabold tv-yellow-text">' + WATCHLIST_INLINE_SVG + "Watchlist</span>";
         if (eff === "completed") {
           badgeHtml = '<span class="text-xs font-extrabold text-emerald-400">✓ Completed</span>';
         } else if (eff === "in_progress") {
@@ -2416,10 +2418,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             : "bg-zinc-900 text-zinc-500 border-zinc-800 cursor-not-allowed") +
           '">' +
           (isInWatchlist
-            ? "🔖 In Watchlist"
+            ? WATCHLIST_INLINE_SVG + "In Watchlist"
             : canSetWatchlist
-            ? "🔖 Add to Watchlist"
-            : "🔖 Watchlist (Only for unwatched series)") +
+            ? WATCHLIST_INLINE_SVG + "Add to Watchlist"
+            : WATCHLIST_INLINE_SVG + "Watchlist (Only for unwatched series)") +
           "</button>";
 
         return (
@@ -2453,7 +2455,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           escapeHtml(movie.id) +
           '&quot;, false)" class="py-2.5 rounded-full text-xs font-extrabold transition ' +
           (!movie.watched ? "tv-yellow-bg" : "bg-zinc-800 text-zinc-300 hover:text-white") +
-          '">🔖 Watchlist</button>' +
+          '">' +
+          WATCHLIST_INLINE_SVG +
+          "Watchlist</button>" +
           '<button onclick="app.setMovieStatus(&quot;' +
           escapeHtml(movie.id) +
           '&quot;, true)" class="py-2.5 rounded-full text-xs font-extrabold transition ' +
@@ -3042,7 +3046,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           // Stamp overlays for drag visual feedback
           '<div id="swipe-stamp-completed" class="opacity-0 pointer-events-none absolute top-6 left-5 z-20 px-3.5 py-1 rounded-xl border-2 border-emerald-400 bg-emerald-950/80 text-emerald-300 font-black text-sm tracking-wider -rotate-12">✓ COMPLETED</div>' +
           '<div id="swipe-stamp-ignore" class="opacity-0 pointer-events-none absolute top-6 right-5 z-20 px-3.5 py-1 rounded-xl border-2 border-rose-400 bg-rose-950/80 text-rose-300 font-black text-sm tracking-wider rotate-12">✕ IGNORE</div>' +
-          '<div id="swipe-stamp-watchlist" class="opacity-0 pointer-events-none absolute bottom-32 inset-x-0 mx-auto w-max z-20 px-4 py-1 rounded-xl border-2 border-yellow-400 bg-zinc-950/90 tv-yellow-text font-black text-sm tracking-wider">🔖 WATCHLIST</div>' +
+          '<div id="swipe-stamp-watchlist" class="opacity-0 pointer-events-none absolute bottom-32 inset-x-0 mx-auto w-max z-20 px-4 py-1 rounded-xl border-2 border-yellow-400 bg-zinc-950/90 tv-yellow-text font-black text-sm tracking-wider">' +
+          WATCHLIST_INLINE_SVG +
+          "WATCHLIST</div>" +
           // Poster with gradient
           '<div class="relative h-64 w-full bg-zinc-900 shrink-0 overflow-hidden">' +
           '<img src="' +
@@ -3090,7 +3096,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           '<span class="text-[11px] font-bold text-zinc-400 group-hover:text-rose-400">Ignore</span>' +
           "</button>" +
           '<button onclick="app.decideSwipeCard(&quot;watchlist&quot;)" class="flex flex-col items-center gap-1 group">' +
-          '<div class="w-14 h-14 rounded-full bg-zinc-900 border-2 border-yellow-400/70 tv-yellow-text group-hover:bg-yellow-400 group-hover:text-black flex items-center justify-center text-lg font-black shadow-lg transition">🔖</div>' +
+          '<div class="w-14 h-14 rounded-full bg-zinc-900 border-2 border-yellow-400/70 tv-yellow-text group-hover:bg-yellow-400 group-hover:text-black flex items-center justify-center text-lg font-black shadow-lg transition">' +
+          WATCHLIST_SVG +
+          "</div>" +
           '<span class="text-[11px] font-bold text-zinc-400 group-hover:text-yellow-400">Watchlist</span>' +
           "</button>" +
           '<button onclick="app.decideSwipeCard(&quot;completed&quot;)" class="flex flex-col items-center gap-1 group">' +

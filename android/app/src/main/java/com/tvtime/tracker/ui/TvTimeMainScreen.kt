@@ -2534,7 +2534,7 @@ private fun SwipeRecommendationsTabScreen(
                     )
                 }
 
-                // + Watchlist
+                // Watchlist
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -2550,7 +2550,11 @@ private fun SwipeRecommendationsTabScreen(
                         modifier = Modifier.size(64.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Text("🔖", fontSize = 24.sp)
+                            WatchlistBookmarkIcon(
+                                tint = TvTimePalette.Yellow,
+                                size = 26.dp,
+                                filled = true
+                            )
                         }
                     }
                     Text(
