@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -11,9 +12,24 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
     def _run_js(self, harness: str) -> dict:
         node_bin = shutil.which("node")
         jsc_bin = "/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc"
-        cmd = [node_bin, "-e", harness] if node_bin else [jsc_bin, "-e", harness]
-        proc = subprocess.run(cmd, cwd=ROOT_DIR, capture_output=True, text=True, check=True)
-        return json.loads(proc.stdout.strip().splitlines()[-1])
+        preamble = """
+        if (typeof globalThis.btoa === 'undefined') {
+          globalThis.btoa = (s) => Buffer.from(String(s), 'binary').toString('base64');
+        }
+        if (typeof globalThis.atob === 'undefined') {
+          globalThis.atob = (s) => Buffer.from(String(s), 'base64').toString('binary');
+        }
+        """
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".cjs", delete=False, encoding="utf-8") as tf:
+            tf.write(preamble + "\n" + harness)
+            tmp_path = tf.name
+        try:
+            cmd = [node_bin, tmp_path] if node_bin else [jsc_bin, tmp_path]
+            proc = subprocess.run(cmd, cwd=ROOT_DIR, capture_output=True, text=True, check=True)
+            return json.loads(proc.stdout.strip().splitlines()[-1])
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
     def test_worker_js_catalog_and_stats_engine(self):
         repo_path = os.path.join(ROOT_DIR, "cloudflare", "src", "repositories", "FirestoreRepository.js")
