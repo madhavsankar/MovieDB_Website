@@ -268,7 +268,7 @@ fun TvShowWatchCard(
                 when (statusKey) {
                     "completed" -> {
                         Text(
-                            text = "TV Show · Watched",
+                            text = "TV Show",
                             style = MaterialTheme.typography.labelSmall,
                             color = TvTimePalette.Yellow,
                             maxLines = 1,
@@ -278,12 +278,6 @@ fun TvShowWatchCard(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Completed ·",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TvTimePalette.TextSecondary,
-                                maxLines = 1
-                            )
                             Text(
                                 text = "All ${progress.totalEpisodes} episodes watched",
                                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
@@ -295,7 +289,7 @@ fun TvShowWatchCard(
                     }
                     "stopped" -> {
                         Text(
-                            text = "TV Show · Stopped Watching",
+                            text = "TV Show · Stopped",
                             style = MaterialTheme.typography.labelSmall,
                             color = TvTimePalette.Error,
                             maxLines = 1,
@@ -312,7 +306,7 @@ fun TvShowWatchCard(
                     else -> {
                         if (statusKey == "interested" && !progress.hasStarted) {
                             Text(
-                                text = "TV Show · Watchlist",
+                                text = "TV Show",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = TvTimePalette.Yellow,
                                 maxLines = 1,
@@ -443,20 +437,31 @@ fun TvMovieWatchCard(
                 }
 
                 Text(
-                    text = "Movie · ${movie.runtimeMins}m · ${if (movie.watched) "Watched" else "Watchlist"}",
+                    text = "Movie · ${movie.runtimeMins}m",
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (movie.watched) TvTimePalette.Yellow else TvTimePalette.CyanMovie,
+                    color = TvTimePalette.CyanMovie,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
 
-                Text(
-                    text = movie.castCsv.ifBlank { movie.director.ifBlank { movie.streamingService } },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TvTimePalette.TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                val cleanDirector = movie.director.takeIf {
+                    it.isNotBlank() &&
+                        !it.equals(movie.streamingService, ignoreCase = true) &&
+                        !it.contains("Streaming", ignoreCase = true) &&
+                        !it.contains("TMDB", ignoreCase = true)
+                }.orEmpty()
+                val movieSubtitle = movie.castCsv.ifBlank {
+                    cleanDirector.ifBlank { movie.overview }
+                }
+                if (movieSubtitle.isNotBlank()) {
+                    Text(
+                        text = movieSubtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TvTimePalette.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -542,13 +547,15 @@ fun TvSearchResultCard(
                     color = badgeColor
                 )
 
-                Text(
-                    text = item.overview.ifBlank { item.networkOrDirector },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TvTimePalette.TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (item.overview.isNotBlank()) {
+                    Text(
+                        text = item.overview,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TvTimePalette.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

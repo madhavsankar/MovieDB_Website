@@ -1478,32 +1478,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           ? prog.nextEp.code.replace(/^S([0-9]+)E([0-9]+)$/, "S$1·E$2")
           : "Caught up";
 
-        let statusBadge = "Watchlist";
-        let statusClass = "text-sky-400";
-        if (effStatus === "completed") {
-          statusBadge = "Watched";
-          statusClass = "text-emerald-400";
-        } else if (effStatus === "in_progress") {
-          statusBadge = "In Progress";
-          statusClass = "tv-yellow-text";
-        } else if (effStatus === "stopped") {
-          statusBadge = "Stopped";
-          statusClass = "text-rose-400";
-        }
-
         let statusLineHtml = "";
         let actionBtnHtml = "";
-        const netLabel = show.network ? " · " + escapeHtml(show.network) : "";
         if (effStatus === "completed") {
           statusLineHtml =
-            '<div class="text-[11px] font-bold ' +
-            statusClass +
-            '">TV Show' +
-            netLabel +
-            " · " +
-            statusBadge +
-            "</div>" +
-            '<div class="text-xs text-zinc-400">Completed · <span class="font-bold tv-yellow-text">All ' +
+            '<div class="text-[11px] font-bold text-emerald-400">TV Show</div>' +
+            '<div class="text-xs text-zinc-400">All <span class="font-bold tv-yellow-text">' +
             prog.total +
             " episodes watched</span></div>";
           actionBtnHtml =
@@ -1514,13 +1494,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             "</button>";
         } else if (effStatus === "stopped") {
           statusLineHtml =
-            '<div class="text-[11px] font-bold ' +
-            statusClass +
-            '">TV Show' +
-            netLabel +
-            " · " +
-            statusBadge +
-            "</div>" +
+            '<div class="text-[11px] font-bold text-rose-400">TV Show · Stopped</div>' +
             '<div class="text-xs text-zinc-400">Stopped watching (' +
             prog.watchedCount +
             "/" +
@@ -1534,13 +1508,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             "</button>";
         } else {
           statusLineHtml =
-            '<div class="text-[11px] font-bold ' +
-            statusClass +
-            '">TV Show' +
-            netLabel +
-            " · " +
-            statusBadge +
-            "</div>" +
+            '<div class="text-[11px] font-bold tv-yellow-text">TV Show</div>' +
             '<div class="w-28 h-1.5 bg-zinc-800 rounded-full overflow-hidden my-1">' +
             '<div class="h-full bg-emerald-500 rounded-full" style="width: ' +
             (prog.watchedCount > 0 ? Math.max(8, prog.pct) : 0) +
@@ -1599,9 +1567,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const poster =
           movie.posterUrl ||
           "https://via.placeholder.com/200x300/1c1c22/38bdf8?text=" + encodeURIComponent(movie.title || "Movie");
-        const castLine = Array.isArray(movie.cast) && movie.cast.length
-          ? movie.cast.join(", ")
-          : movie.director || movie.streamingService || "Feature Film";
+        const castLine =
+          Array.isArray(movie.cast) && movie.cast.length
+            ? movie.cast.join(", ")
+            : movie.director && movie.director !== movie.streamingService
+            ? movie.director
+            : movie.overview || "";
 
         const rightBtn = movie.watched
           ? '<button title="Toggle watched" onclick="event.stopPropagation(); app.toggleMovieWatched(&quot;' +
@@ -1635,16 +1606,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           "</div>" +
           '<div class="text-xs font-bold truncate ' +
           (movie.watched ? "text-emerald-400" : "tv-yellow-text") +
-          '">Movie' +
-          (movie.streamingService ? " · " + escapeHtml(movie.streamingService) : "") +
-          " · " +
+          '">Movie · ' +
           (Number(movie.runtimeMins) || 120) +
-          "m · " +
-          (movie.watched ? "Watched" : "Watchlist") +
-          "</div>" +
-          '<div class="text-xs text-zinc-400 truncate">' +
-          escapeHtml(castLine) +
-          "</div>" +
+          "m</div>" +
+          (castLine
+            ? '<div class="text-xs text-zinc-400 truncate">' + escapeHtml(castLine) + "</div>"
+            : "") +
           '<div class="flex items-center gap-1 text-xs font-bold text-zinc-200 pt-0.5">' +
           '<span class="tv-yellow-text">★</span><span>' +
           Number(movie.rating || 8.0).toFixed(1) +
@@ -1860,9 +1827,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             escapeHtml(item.dateBadge) +
             "</span>" +
             "</div>" +
-            '<div class="text-xs font-bold tv-yellow-text">TV Show · ' +
-            escapeHtml(item.show.network || "Streaming") +
-            "</div>" +
+            '<div class="text-xs font-bold tv-yellow-text">TV Show</div>' +
             '<div class="text-xs font-semibold text-zinc-300">' +
             escapeHtml(codeFormatted) +
             " — " +
@@ -2055,12 +2020,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 (existingMovie && Boolean(existingMovie.watched));
 
               const badgeClass = item.mediaType === "movie" ? "text-sky-400" : "tv-yellow-text";
-              const platInfo = item.network || item.streamingService || "";
-              const badgeLabel =
-                (item.mediaType === "movie" ? "Movie" : "TV Show") +
-                (platInfo ? " · " + platInfo : "");
+              const badgeLabel = item.mediaType === "movie" ? "Movie" : "TV Show";
               const subtitle =
-                item.overview || item.director || item.network || "Tap + for Watchlist or ✓ to mark Completed";
+                item.overview ||
+                (item.director && item.director !== item.streamingService ? item.director : "") ||
+                "Tap + for Watchlist or ✓ to mark Completed";
               const poster =
                 item.posterUrl ||
                 "https://via.placeholder.com/200x300/1c1c22/facc15?text=" + encodeURIComponent(item.title || "Item");
@@ -2137,7 +2101,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (existingShow) {
           const eff = this.getEffectiveShowStatus(existingShow);
           if (eff === "interested") {
-            await this.removeLibraryItem("show", itemId);
+            await this.removeItemFromLibrary(itemId);
           } else {
             await this.setShowStatus(itemId, "interested");
           }
@@ -2146,7 +2110,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const existingMovie = (this.state.movies || []).find((m) => m.id === itemId);
         if (existingMovie) {
           if (!existingMovie.watched) {
-            await this.removeLibraryItem("movie", itemId);
+            await this.removeItemFromLibrary(itemId);
           } else {
             await this.setMovieStatus(itemId, false);
           }
@@ -2242,8 +2206,26 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       // SHOW / MOVIE DETAIL BOTTOM SHEET (Info | Episodes)
       // =========================================================
       async openItemById(id) {
+        const isMovieId = String(id || "").startsWith("movie_");
+        if (isMovieId) {
+          const movieFirst = (this.state.movies || []).find((m) => m.id === id);
+          if (movieFirst) {
+            this.detailItem = movieFirst;
+            this.detailType = "movie";
+            this.detailTab = "info";
+            this.showDetailSheetModal();
+            return;
+          }
+        }
         const show = (this.state.shows || []).find((s) => s.id === id);
         if (show) {
+          if (show.mediaType === "movie" || String(show.id || "").startsWith("movie_")) {
+            this.detailItem = show;
+            this.detailType = "movie";
+            this.detailTab = "info";
+            this.showDetailSheetModal();
+            return;
+          }
           this.detailItem = show;
           this.detailType = "show";
           this.detailTab = "episodes";
@@ -2488,15 +2470,18 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       renderDetailSheet() {
         const item = this.detailItem;
         const bodyEl = document.getElementById("detail-body");
+        const tabsBar = document.getElementById("detail-tabs-bar");
         const infoTabBtn = document.getElementById("detail-tab-info");
         const epsTabBtn = document.getElementById("detail-tab-episodes");
         if (!item || !bodyEl) return;
 
         if (this.detailType === "movie") {
+          if (tabsBar) tabsBar.classList.add("hidden");
           if (epsTabBtn) epsTabBtn.classList.add("hidden");
           this.detailTab = "info";
-        } else if (epsTabBtn) {
-          epsTabBtn.classList.remove("hidden");
+        } else {
+          if (tabsBar) tabsBar.classList.remove("hidden");
+          if (epsTabBtn) epsTabBtn.classList.remove("hidden");
         }
 
         if (infoTabBtn) {
@@ -2518,6 +2503,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             : this.renderShowStatusHeaderHtml(item);
 
         if (this.detailTab === "info") {
+          const streamLabel = item.network || item.streamingService || "";
+          const mediaTypeLabel = this.detailType === "movie" ? "Movie" : "TV Series";
           bodyEl.innerHTML =
             statusHeader +
             '<div class="flex gap-4 items-start">' +
@@ -2531,10 +2518,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             '<p class="text-xs font-semibold text-zinc-400">' +
             escapeHtml(item.year || 2024) +
             " · " +
-            escapeHtml(item.network || item.streamingService || "Streaming") +
+            mediaTypeLabel +
             " · " +
-            (Number(item.runtimeMins) || 45) +
-            "m</p>" +
+            (Number(item.runtimeMins) || (this.detailType === "movie" ? 120 : 45)) +
+            "m" +
+            (streamLabel ? " · " + escapeHtml(streamLabel) : "") +
+            "</p>" +
             '<div class="flex items-center gap-2 pt-1 flex-wrap">' +
             '<button onclick="app.toggleFavoriteItem(&quot;' +
             escapeHtml(item.id) +
@@ -2728,10 +2717,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               .map((s) => {
                 const prog = this.computeShowProgress(s);
                 const eff = this.getEffectiveShowStatus(s);
-                const badge =
-                  eff === "completed"
-                    ? "Watched (" + prog.watchedCount + "/" + prog.total + ")"
-                    : "In Progress (" + prog.watchedCount + "/" + prog.total + ")";
+                const badge = prog.watchedCount + "/" + prog.total + " eps";
                 return (
                   '<div onclick="app.openItemById(&quot;' +
                   escapeHtml(s.id) +
@@ -2769,7 +2755,6 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   '<div class="text-xs font-bold text-white truncate">' +
                   escapeHtml(m.title) +
                   "</div>" +
-                  '<div class="text-[11px] font-extrabold text-emerald-400">Watched</div>' +
                   "</div>"
               )
               .join("") || '<p class="text-xs text-zinc-400 py-2">No watched movies yet.</p>';

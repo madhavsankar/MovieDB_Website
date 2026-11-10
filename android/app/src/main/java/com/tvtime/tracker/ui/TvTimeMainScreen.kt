@@ -486,237 +486,232 @@ fun TvTimeMainScreen(
                         completedExternalIds = completedExternalIds,
                         onAddOrOpenResult = { item ->
                             scope.launch {
-                                when (item.mediaType) {
-                                    "movie" -> {
-                                        val existingMovie = movies.firstOrNull { it.externalId == item.externalId }
-                                        if (existingMovie != null) {
-                                            selectedMovieForDetail = existingMovie
-                                        } else {
-                                            val newMovie = MovieEntity(
-                                                userId = currentUserId,
-                                                externalId = item.externalId,
-                                                tmdbId = item.tmdbId,
-                                                title = item.title,
-                                                year = item.year,
-                                                runtimeMins = item.runtimeMins,
-                                                genresCsv = item.genresCsv,
-                                                director = item.networkOrDirector,
-                                                streamingService = item.networkOrDirector,
-                                                rating = item.rating,
-                                                posterUrl = item.posterUrl,
-                                                overview = item.overview,
-                                                watched = false
-                                            )
-                                            val newId = dao.insertMovie(newMovie)
-                                            FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                            selectedMovieForDetail = newMovie.copy(id = newId)
-                                        }
+                                val isMovieItem = item.mediaType.equals("movie", ignoreCase = true) ||
+                                    item.externalId.startsWith("movie_")
+                                if (isMovieItem) {
+                                    val existingMovie = movies.firstOrNull { it.externalId == item.externalId }
+                                    if (existingMovie != null) {
+                                        selectedMovieForDetail = existingMovie
+                                    } else {
+                                        val newMovie = MovieEntity(
+                                            userId = currentUserId,
+                                            externalId = item.externalId,
+                                            tmdbId = item.tmdbId,
+                                            title = item.title,
+                                            year = item.year,
+                                            runtimeMins = item.runtimeMins,
+                                            genresCsv = item.genresCsv,
+                                            director = "",
+                                            streamingService = item.networkOrDirector,
+                                            rating = item.rating,
+                                            posterUrl = item.posterUrl,
+                                            overview = item.overview,
+                                            watched = false
+                                        )
+                                        val newId = dao.insertMovie(newMovie)
+                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                        selectedMovieForDetail = newMovie.copy(id = newId)
                                     }
-                                    else -> {
-                                        val existing = shows.firstOrNull { it.externalId == item.externalId }
-                                        if (existing != null) {
-                                            selectedShowForDetail = existing
-                                        } else {
-                                            val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
-                                                tvmazeId = item.tvmazeId,
-                                                tmdbId = item.tmdbId,
-                                                title = item.title,
-                                                externalId = item.externalId
-                                            )
-                                            val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else listOf(
-                                                EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
-                                            )
-                                            val newShow = ShowEntity(
-                                                userId = currentUserId,
-                                                externalId = item.externalId,
-                                                tvmazeId = item.tvmazeId,
-                                                tmdbId = item.tmdbId,
-                                                title = item.title,
-                                                year = item.year,
-                                                network = item.networkOrDirector,
-                                                status = item.status,
-                                                runtimeMins = item.runtimeMins,
-                                                genresCsv = item.genresCsv,
-                                                castCsv = fetchedCast.joinToString(", "),
-                                                rating = item.rating,
-                                                posterUrl = item.posterUrl,
-                                                overview = item.overview,
-                                                userStatus = "interested",
-                                                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
-                                            )
-                                            val newId = dao.insertShow(newShow)
-                                            FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                            selectedShowForDetail = newShow.copy(id = newId)
-                                        }
+                                } else {
+                                    val existing = shows.firstOrNull { it.externalId == item.externalId }
+                                    if (existing != null) {
+                                        selectedShowForDetail = existing
+                                    } else {
+                                        val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+                                            tvmazeId = item.tvmazeId,
+                                            tmdbId = item.tmdbId,
+                                            title = item.title,
+                                            externalId = item.externalId
+                                        )
+                                        val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else listOf(
+                                            EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
+                                        )
+                                        val newShow = ShowEntity(
+                                            userId = currentUserId,
+                                            externalId = item.externalId,
+                                            tvmazeId = item.tvmazeId,
+                                            tmdbId = item.tmdbId,
+                                            title = item.title,
+                                            year = item.year,
+                                            network = item.networkOrDirector,
+                                            status = item.status,
+                                            runtimeMins = item.runtimeMins,
+                                            genresCsv = item.genresCsv,
+                                            castCsv = fetchedCast.joinToString(", "),
+                                            rating = item.rating,
+                                            posterUrl = item.posterUrl,
+                                            overview = item.overview,
+                                            userStatus = "interested",
+                                            episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                                        )
+                                        val newId = dao.insertShow(newShow)
+                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                        selectedShowForDetail = newShow.copy(id = newId)
                                     }
                                 }
                             }
                         },
                         onQuickWatchlistToggle = { item ->
                             scope.launch {
-                                when (item.mediaType) {
-                                    "movie" -> {
-                                        val existingMovie = movies.firstOrNull { it.externalId == item.externalId }
-                                        if (existingMovie != null) {
-                                            if (!existingMovie.watched) {
-                                                dao.deleteMovie(existingMovie.id)
-                                            } else {
-                                                dao.updateMovie(existingMovie.copy(watched = false, watchedAt = ""))
-                                            }
+                                val isMovieItem = item.mediaType.equals("movie", ignoreCase = true) || item.externalId.startsWith("movie_")
+                                if (isMovieItem) {
+                                    val existingMovie = movies.firstOrNull { it.externalId == item.externalId }
+                                    if (existingMovie != null) {
+                                        if (!existingMovie.watched) {
+                                            dao.deleteMovie(existingMovie.id)
                                         } else {
-                                            val newMovie = MovieEntity(
-                                                userId = currentUserId,
-                                                externalId = item.externalId,
-                                                tmdbId = item.tmdbId,
-                                                title = item.title,
-                                                year = item.year,
-                                                runtimeMins = item.runtimeMins,
-                                                genresCsv = item.genresCsv,
-                                                director = item.networkOrDirector,
-                                                streamingService = item.networkOrDirector,
-                                                rating = item.rating,
-                                                posterUrl = item.posterUrl,
-                                                overview = item.overview,
-                                                watched = false
-                                            )
-                                            dao.insertMovie(newMovie)
+                                            dao.updateMovie(existingMovie.copy(watched = false, watchedAt = ""))
                                         }
-                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                    } else {
+                                        val newMovie = MovieEntity(
+                                            userId = currentUserId,
+                                            externalId = item.externalId,
+                                            tmdbId = item.tmdbId,
+                                            title = item.title,
+                                            year = item.year,
+                                            runtimeMins = item.runtimeMins,
+                                            genresCsv = item.genresCsv,
+                                            director = "",
+                                            streamingService = item.networkOrDirector,
+                                            rating = item.rating,
+                                            posterUrl = item.posterUrl,
+                                            overview = item.overview,
+                                            watched = false
+                                        )
+                                        dao.insertMovie(newMovie)
                                     }
-                                    else -> {
-                                        val existing = shows.firstOrNull { it.externalId == item.externalId }
-                                        if (existing != null) {
-                                            val eps = TvTimeProgressCalculator.parseEpisodeList(existing.episodesJson)
-                                            val watched = TvTimeProgressCalculator.parseWatchedSet(existing.watchedCodesCsv)
-                                            val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
-                                            val eff = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, existing.userStatus)
-                                            if (eff == "interested") {
-                                                dao.deleteShow(existing.id)
-                                            } else {
-                                                dao.updateShow(existing.copy(userStatus = "interested", watchedCodesCsv = ""))
-                                            }
+                                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                } else {
+                                    val existing = shows.firstOrNull { it.externalId == item.externalId }
+                                    if (existing != null) {
+                                        val eps = TvTimeProgressCalculator.parseEpisodeList(existing.episodesJson)
+                                        val watched = TvTimeProgressCalculator.parseWatchedSet(existing.watchedCodesCsv)
+                                        val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
+                                        val eff = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, existing.userStatus)
+                                        if (eff == "interested") {
+                                            dao.deleteShow(existing.id)
                                         } else {
-                                            val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
-                                                tvmazeId = item.tvmazeId,
-                                                tmdbId = item.tmdbId,
-                                                title = item.title,
-                                                externalId = item.externalId
-                                            )
-                                            val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else listOf(
-                                                EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
-                                            )
-                                            val newShow = ShowEntity(
-                                                userId = currentUserId,
-                                                externalId = item.externalId,
-                                                tvmazeId = item.tvmazeId,
-                                                tmdbId = item.tmdbId,
-                                                title = item.title,
-                                                year = item.year,
-                                                network = item.networkOrDirector,
-                                                status = item.status,
-                                                runtimeMins = item.runtimeMins,
-                                                genresCsv = item.genresCsv,
-                                                castCsv = fetchedCast.joinToString(", "),
-                                                rating = item.rating,
-                                                posterUrl = item.posterUrl,
-                                                overview = item.overview,
-                                                userStatus = "interested",
-                                                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
-                                            )
-                                            dao.insertShow(newShow)
+                                            dao.updateShow(existing.copy(userStatus = "interested", watchedCodesCsv = ""))
                                         }
-                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                    } else {
+                                        val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+                                            tvmazeId = item.tvmazeId,
+                                            tmdbId = item.tmdbId,
+                                            title = item.title,
+                                            externalId = item.externalId
+                                        )
+                                        val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else listOf(
+                                            EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
+                                        )
+                                        val newShow = ShowEntity(
+                                            userId = currentUserId,
+                                            externalId = item.externalId,
+                                            tvmazeId = item.tvmazeId,
+                                            tmdbId = item.tmdbId,
+                                            title = item.title,
+                                            year = item.year,
+                                            network = item.networkOrDirector,
+                                            status = item.status,
+                                            runtimeMins = item.runtimeMins,
+                                            genresCsv = item.genresCsv,
+                                            castCsv = fetchedCast.joinToString(", "),
+                                            rating = item.rating,
+                                            posterUrl = item.posterUrl,
+                                            overview = item.overview,
+                                            userStatus = "interested",
+                                            episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                                        )
+                                        dao.insertShow(newShow)
                                     }
+                                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
                                 }
                             }
                         },
                         onQuickCompletedToggle = { item ->
                             scope.launch {
-                                when (item.mediaType) {
-                                    "movie" -> {
-                                        val existingMovie = movies.firstOrNull { it.externalId == item.externalId }
-                                        val todayIso = java.time.LocalDate.now().toString()
-                                        if (existingMovie != null) {
-                                            val nextWatched = !existingMovie.watched
-                                            dao.updateMovie(
-                                                existingMovie.copy(
-                                                    watched = nextWatched,
-                                                    watchedAt = if (nextWatched) todayIso else ""
+                                val isMovieItem = item.mediaType.equals("movie", ignoreCase = true) || item.externalId.startsWith("movie_")
+                                if (isMovieItem) {
+                                    val existingMovie = movies.firstOrNull { it.externalId == item.externalId }
+                                    val todayIso = java.time.LocalDate.now().toString()
+                                    if (existingMovie != null) {
+                                        val nextWatched = !existingMovie.watched
+                                        dao.updateMovie(
+                                            existingMovie.copy(
+                                                watched = nextWatched,
+                                                watchedAt = if (nextWatched) todayIso else ""
+                                            )
+                                        )
+                                    } else {
+                                        val newMovie = MovieEntity(
+                                            userId = currentUserId,
+                                            externalId = item.externalId,
+                                            tmdbId = item.tmdbId,
+                                            title = item.title,
+                                            year = item.year,
+                                            runtimeMins = item.runtimeMins,
+                                            genresCsv = item.genresCsv,
+                                            director = "",
+                                            streamingService = item.networkOrDirector,
+                                            rating = item.rating,
+                                            posterUrl = item.posterUrl,
+                                            overview = item.overview,
+                                            watched = true,
+                                            watchedAt = todayIso
+                                        )
+                                        dao.insertMovie(newMovie)
+                                    }
+                                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                } else {
+                                    val existing = shows.firstOrNull { it.externalId == item.externalId }
+                                    if (existing != null) {
+                                        val eps = TvTimeProgressCalculator.parseEpisodeList(existing.episodesJson)
+                                        val watched = TvTimeProgressCalculator.parseWatchedSet(existing.watchedCodesCsv)
+                                        val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
+                                        val eff = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, existing.userStatus)
+                                        if (eff == "completed") {
+                                            dao.updateShow(existing.copy(userStatus = "interested", watchedCodesCsv = ""))
+                                        } else {
+                                            val allCodes = eps.map { it.code }.toSet()
+                                            dao.updateShow(
+                                                existing.copy(
+                                                    userStatus = "completed",
+                                                    watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(allCodes)
                                                 )
                                             )
-                                        } else {
-                                            val newMovie = MovieEntity(
-                                                userId = currentUserId,
-                                                externalId = item.externalId,
-                                                tmdbId = item.tmdbId,
-                                                title = item.title,
-                                                year = item.year,
-                                                runtimeMins = item.runtimeMins,
-                                                genresCsv = item.genresCsv,
-                                                director = item.networkOrDirector,
-                                                streamingService = item.networkOrDirector,
-                                                rating = item.rating,
-                                                posterUrl = item.posterUrl,
-                                                overview = item.overview,
-                                                watched = true,
-                                                watchedAt = todayIso
-                                            )
-                                            dao.insertMovie(newMovie)
                                         }
-                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                    } else {
+                                        val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+                                            tvmazeId = item.tvmazeId,
+                                            tmdbId = item.tmdbId,
+                                            title = item.title,
+                                            externalId = item.externalId
+                                        )
+                                        val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else listOf(
+                                            EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
+                                        )
+                                        val allCodes = finalEps.map { it.code }.toSet()
+                                        val newShow = ShowEntity(
+                                            userId = currentUserId,
+                                            externalId = item.externalId,
+                                            tvmazeId = item.tvmazeId,
+                                            tmdbId = item.tmdbId,
+                                            title = item.title,
+                                            year = item.year,
+                                            network = item.networkOrDirector,
+                                            status = item.status,
+                                            runtimeMins = item.runtimeMins,
+                                            genresCsv = item.genresCsv,
+                                            castCsv = fetchedCast.joinToString(", "),
+                                            rating = item.rating,
+                                            posterUrl = item.posterUrl,
+                                            overview = item.overview,
+                                            userStatus = "completed",
+                                            watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(allCodes),
+                                            episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                                        )
+                                        dao.insertShow(newShow)
                                     }
-                                    else -> {
-                                        val existing = shows.firstOrNull { it.externalId == item.externalId }
-                                        if (existing != null) {
-                                            val eps = TvTimeProgressCalculator.parseEpisodeList(existing.episodesJson)
-                                            val watched = TvTimeProgressCalculator.parseWatchedSet(existing.watchedCodesCsv)
-                                            val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
-                                            val eff = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, existing.userStatus)
-                                            if (eff == "completed") {
-                                                dao.updateShow(existing.copy(userStatus = "interested", watchedCodesCsv = ""))
-                                            } else {
-                                                val allCodes = eps.map { it.code }.toSet()
-                                                dao.updateShow(
-                                                    existing.copy(
-                                                        userStatus = "completed",
-                                                        watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(allCodes)
-                                                    )
-                                                )
-                                            }
-                                        } else {
-                                            val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
-                                                tvmazeId = item.tvmazeId,
-                                                tmdbId = item.tmdbId,
-                                                title = item.title,
-                                                externalId = item.externalId
-                                            )
-                                            val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else listOf(
-                                                EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
-                                            )
-                                            val allCodes = finalEps.map { it.code }.toSet()
-                                            val newShow = ShowEntity(
-                                                userId = currentUserId,
-                                                externalId = item.externalId,
-                                                tvmazeId = item.tvmazeId,
-                                                tmdbId = item.tmdbId,
-                                                title = item.title,
-                                                year = item.year,
-                                                network = item.networkOrDirector,
-                                                status = item.status,
-                                                runtimeMins = item.runtimeMins,
-                                                genresCsv = item.genresCsv,
-                                                castCsv = fetchedCast.joinToString(", "),
-                                                rating = item.rating,
-                                                posterUrl = item.posterUrl,
-                                                overview = item.overview,
-                                                userStatus = "completed",
-                                                watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(allCodes),
-                                                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
-                                            )
-                                            dao.insertShow(newShow)
-                                        }
-                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                    }
+                                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
                                 }
                             }
                         }
@@ -747,7 +742,7 @@ fun TvTimeMainScreen(
                                 // 2. If watchlist or completed, add to DB
                                 if (action == "watchlist" || action == "completed") {
                                     val isCompleted = action == "completed"
-                                    if (item.mediaType == "movie") {
+                                    if (item.mediaType.equals("movie", ignoreCase = true) || item.externalId.startsWith("movie_")) {
                                         val existingMovie = movies.firstOrNull { it.externalId == item.externalId }
                                         if (existingMovie == null) {
                                             dao.insertMovie(
@@ -759,7 +754,7 @@ fun TvTimeMainScreen(
                                                     year = item.year,
                                                     runtimeMins = item.runtimeMins,
                                                     genresCsv = item.genresCsv,
-                                                    director = item.networkOrDirector,
+                                                    director = "",
                                                     streamingService = item.networkOrDirector,
                                                     rating = item.rating,
                                                     posterUrl = item.posterUrl,
@@ -1970,7 +1965,7 @@ private fun HomeTabScreen(
                                         }
                                     }
                                     Text(
-                                        text = "TV Show · ${show.network}",
+                                        text = "TV Show",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = TvTimePalette.Yellow,
                                         maxLines = 1,
@@ -3102,11 +3097,7 @@ private fun RecentlyWatchedFullPageScreen(
                             val watched = TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv)
                             val eps = TvTimeProgressCalculator.parseEpisodeList(show.episodesJson)
                             val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
-                            val badgeLabel = if (show.userStatus == "completed" || prog.isCompleted) {
-                                "Watched (${watched.size}/${eps.size})"
-                            } else {
-                                "In Progress (${watched.size}/${eps.size})"
-                            }
+                            val badgeLabel = "${watched.size}/${eps.size} eps"
 
                             Column(
                                 modifier = Modifier
@@ -3186,11 +3177,6 @@ private fun RecentlyWatchedFullPageScreen(
                                     color = Color.White,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "Watched",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFF4ADE80)
                                 )
                             }
                         }

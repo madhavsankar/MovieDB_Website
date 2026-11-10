@@ -679,14 +679,18 @@ fun MovieDetailBottomSheet(
                         style = MaterialTheme.typography.headlineSmall,
                         color = Color.White
                     )
+                    val streamingPart = movie.streamingService.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""
                     Text(
-                        text = "${movie.year} · Movie · ${movie.runtimeMins}m",
+                        text = "${movie.year} · Movie · ${movie.runtimeMins}m$streamingPart",
                         style = MaterialTheme.typography.bodySmall,
                         color = TvTimePalette.CyanMovie
                     )
-                    if (movie.castCsv.isNotBlank() || movie.director.isNotBlank()) {
+                    val cleanMovieDirector = movie.director.takeIf {
+                        it.isNotBlank() && !it.equals(movie.streamingService, ignoreCase = true)
+                    }.orEmpty()
+                    if (movie.castCsv.isNotBlank() || cleanMovieDirector.isNotBlank()) {
                         Text(
-                            text = movie.castCsv.ifBlank { movie.director },
+                            text = movie.castCsv.ifBlank { cleanMovieDirector },
                             style = MaterialTheme.typography.bodySmall,
                             color = TvTimePalette.TextSecondary
                         )
