@@ -59,9 +59,12 @@ import com.google.android.gms.common.api.ApiException
 import com.tvtime.tracker.BuildConfig
 import com.tvtime.tracker.data.ActorEntity
 import com.tvtime.tracker.data.FirestoreSyncService
+import com.tvtime.tracker.data.FriendLibraryData
+import com.tvtime.tracker.data.FriendUserSummary
 import com.tvtime.tracker.data.LiveMediaCatalogService
 import com.tvtime.tracker.data.MovieEntity
 import com.tvtime.tracker.data.ShowEntity
+import com.tvtime.tracker.data.SocialFriendsState
 import com.tvtime.tracker.data.TvTimeDao
 import com.tvtime.tracker.domain.EpisodeModel
 import com.tvtime.tracker.domain.SearchResultItem
@@ -304,7 +307,8 @@ fun TvTimeMainScreen(
                         .fillMaxWidth()
                         .statusBarsPadding()
                         .padding(horizontal = 16.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Surface(
                         onClick = { showHamburgerSheet = true },
@@ -327,6 +331,29 @@ fun TvTimeMainScreen(
                                 text = "TV Time",
                                 style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold),
                                 color = Color.White
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = { switchTab("friends") },
+                        shape = RoundedCornerShape(50),
+                        color = TvTimePalette.SurfacePill,
+                        border = BorderStroke(
+                            1.dp,
+                            if (activeBottomTab == "friends") TvTimePalette.Yellow else TvTimePalette.Border
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(text = "👥", fontSize = 14.sp)
+                            Text(
+                                text = "Friends",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold),
+                                color = if (activeBottomTab == "friends") TvTimePalette.Yellow else Color.White
                             )
                         }
                     }
@@ -925,6 +952,16 @@ fun TvTimeMainScreen(
                         onBack = navigateBack
                     )
                 }
+
+                "friends" -> {
+                    FriendsFullPageScreen(
+                        currentUserId = currentUserId,
+                        myShows = shows,
+                        myMovies = movies,
+                        dao = dao,
+                        onBack = navigateBack
+                    )
+                }
             }
 
             // Pull-to-Refresh Top Floating Pill Indicator
@@ -1066,6 +1103,10 @@ fun TvTimeMainScreen(
                             LeftDrawerItemRow(icon = "⌂", label = "Home") {
                                 showHamburgerSheet = false
                                 switchTab("home")
+                            }
+                            LeftDrawerItemRow(icon = "👥", label = "Friends") {
+                                showHamburgerSheet = false
+                                switchTab("friends")
                             }
                         }
 
@@ -3196,6 +3237,657 @@ private fun RecentlyWatchedFullPageScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FriendsFullPageScreen(
+    currentUserId: String,
+    myShows: List<ShowEntity>,
+    myMovies: List<MovieEntity>,
+    dao: TvTimeDao,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var socialState by remember { mutableStateOf(FirestoreSyncService.getCachedSocialState(currentUserId)) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var searchResults by remember { mutableStateOf<List<FriendUserSummary>>(emptyList()) }
+    var selectedFriendId by rememberSaveable { mutableStateOf("") }
+    var selectedFriendLibrary by remember { mutableStateOf<FriendLibraryData?>(null) }
+    var isLoadingLibrary by remember { mutableStateOf(false) }
+    var librarySegment by rememberSaveable { mutableStateOf("shows") } // "shows" | "movies"
+
+    val refreshFriends: () -> Unit = {
+        scope.launch {
+            socialState = FirestoreSyncService.fetchSocialFriendsState(currentUserId)
+            searchResults = FirestoreSyncService.searchUsersByUsername(currentUserId, searchQuery)
+        }
+    }
+
+    LaunchedEffect(currentUserId) {
+        socialState = FirestoreSyncService.fetchSocialFriendsState(currentUserId)
+        searchResults = FirestoreSyncService.searchUsersByUsername(currentUserId, searchQuery)
+    }
+
+    LaunchedEffect(searchQuery) {
+        delay(220)
+        searchResults = FirestoreSyncService.searchUsersByUsername(currentUserId, searchQuery)
+    }
+
+    val openFriendLibrary: (String) -> Unit = { friendId ->
+        selectedFriendId = friendId
+        isLoadingLibrary = true
+        scope.launch {
+            val res = FirestoreSyncService.fetchFriendLibrary(currentUserId, friendId)
+            selectedFriendLibrary = res.getOrNull()
+            if (res.isFailure) {
+                Toast.makeText(
+                    context,
+                    res.exceptionOrNull()?.message ?: "Could not load friend library.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            isLoadingLibrary = false
+        }
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item(key = "friends_header") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Surface(
+                        onClick = onBack,
+                        shape = CircleShape,
+                        color = TvTimePalette.SurfacePill,
+                        border = BorderStroke(1.dp, TvTimePalette.Border),
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text("←", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "👥 Friends",
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Search by username, send requests & view series and movies",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TvTimePalette.TextSecondary
+                        )
+                    }
+                }
+                Surface(
+                    onClick = refreshFriends,
+                    shape = RoundedCornerShape(50),
+                    color = TvTimePalette.SurfacePill,
+                    border = BorderStroke(1.dp, TvTimePalette.Border)
+                ) {
+                    Text(
+                        text = "↻ Sync",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = TvTimePalette.Yellow,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                    )
+                }
+            }
+        }
+
+        // Add Friend by Username Card
+        item(key = "friends_search_card") {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = TvTimePalette.SurfaceCard,
+                border = BorderStroke(1.dp, TvTimePalette.Border),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "ADD FRIEND BY USERNAME",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                            color = TvTimePalette.TextSecondary
+                        )
+                        Text(
+                            text = "Your username: @$currentUserId",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = TvTimePalette.Yellow
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text("Search username (e.g. partner)...", fontSize = 13.sp) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(
+                            onClick = {
+                                val target = searchQuery.trim().lowercase().substringBefore("@")
+                                if (target.isNotEmpty()) {
+                                    scope.launch {
+                                        val res = FirestoreSyncService.sendFriendRequest(currentUserId, target)
+                                        res.onSuccess { updated ->
+                                            socialState = updated
+                                            searchQuery = ""
+                                            searchResults = FirestoreSyncService.searchUsersByUsername(currentUserId, "")
+                                            Toast.makeText(
+                                                context,
+                                                "Friend request sent to @$target!",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }.onFailure { err ->
+                                            Toast.makeText(
+                                                context,
+                                                err.message ?: "Could not send request",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = TvTimePalette.Yellow,
+                                contentColor = TvTimePalette.OnYellow
+                            )
+                        ) {
+                            Text("+ Request", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                        }
+                    }
+
+                    searchResults.forEach { user ->
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = TvTimePalette.SurfacePill,
+                            border = BorderStroke(1.dp, TvTimePalette.Border),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "@${user.userId}",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = "${user.showCount} series · ${user.movieCount} movies",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TvTimePalette.TextSecondary
+                                    )
+                                }
+
+                                when (user.relation) {
+                                    "friend" -> {
+                                        Button(
+                                            onClick = { openFriendLibrary(user.userId) },
+                                            shape = RoundedCornerShape(50),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = Color(0xFF22C55E),
+                                                contentColor = Color.White
+                                            )
+                                        ) {
+                                            Text("View Library", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                    "incoming" -> {
+                                        Button(
+                                            onClick = {
+                                                scope.launch {
+                                                    FirestoreSyncService.respondToFriendRequest(
+                                                        currentUserId,
+                                                        user.userId,
+                                                        true
+                                                    ).onSuccess { socialState = it }
+                                                    searchResults = FirestoreSyncService.searchUsersByUsername(currentUserId, searchQuery)
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(50),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = TvTimePalette.Yellow,
+                                                contentColor = TvTimePalette.OnYellow
+                                            )
+                                        ) {
+                                            Text("✓ Accept", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                                        }
+                                    }
+                                    "outgoing" -> {
+                                        Text(
+                                            text = "Request Sent",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = TvTimePalette.TextSecondary
+                                        )
+                                    }
+                                    else -> {
+                                        Button(
+                                            onClick = {
+                                                scope.launch {
+                                                    FirestoreSyncService.sendFriendRequest(
+                                                        currentUserId,
+                                                        user.userId
+                                                    ).onSuccess { socialState = it }
+                                                    searchResults = FirestoreSyncService.searchUsersByUsername(currentUserId, searchQuery)
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(50),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = TvTimePalette.Yellow,
+                                                contentColor = TvTimePalette.OnYellow
+                                            )
+                                        ) {
+                                            Text("+ Add Friend", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Incoming Friend Requests
+        if (socialState.incomingRequests.isNotEmpty()) {
+            item(key = "friends_incoming_card") {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = TvTimePalette.SurfaceCard,
+                    border = BorderStroke(1.dp, TvTimePalette.Yellow.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "INCOMING FRIEND REQUESTS (${socialState.incomingRequests.size})",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                            color = TvTimePalette.Yellow
+                        )
+                        socialState.incomingRequests.forEach { reqUser ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "@$reqUser",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                    color = Color.White
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        onClick = {
+                                            scope.launch {
+                                                FirestoreSyncService.respondToFriendRequest(currentUserId, reqUser, true)
+                                                    .onSuccess { socialState = it }
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(50),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = TvTimePalette.Yellow,
+                                            contentColor = TvTimePalette.OnYellow
+                                        )
+                                    ) {
+                                        Text("✓ Accept", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            scope.launch {
+                                                FirestoreSyncService.respondToFriendRequest(currentUserId, reqUser, false)
+                                                    .onSuccess { socialState = it }
+                                            }
+                                        }
+                                    ) {
+                                        Text("Decline", color = Color(0xFFF87171), fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Accepted Friends List
+        item(key = "friends_accepted_card") {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = TvTimePalette.SurfaceCard,
+                border = BorderStroke(1.dp, TvTimePalette.Border),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "MY FRIENDS (${socialState.friends.size})",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                        color = TvTimePalette.TextSecondary
+                    )
+                    if (socialState.friends.isEmpty()) {
+                        Text(
+                            text = "No friends added yet. Search by username above and send a friend request!",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TvTimePalette.TextSecondary
+                        )
+                    } else {
+                        socialState.friends.forEach { friendId ->
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = TvTimePalette.SurfacePill,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selectedFriendId == friendId) TvTimePalette.Yellow else TvTimePalette.Border
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { openFriendLibrary(friendId) }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "@$friendId",
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            text = "✓ Friend · Tap to see series & movies",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFF4ADE80)
+                                        )
+                                    }
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Button(
+                                            onClick = { openFriendLibrary(friendId) },
+                                            shape = RoundedCornerShape(50),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = TvTimePalette.Yellow,
+                                                contentColor = TvTimePalette.OnYellow
+                                            )
+                                        ) {
+                                            Text("View Library", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                                        }
+                                        TextButton(
+                                            onClick = {
+                                                scope.launch {
+                                                    FirestoreSyncService.removeFriendOrRequest(currentUserId, friendId)
+                                                        .onSuccess {
+                                                            socialState = it
+                                                            if (selectedFriendId == friendId) {
+                                                                selectedFriendId = ""
+                                                                selectedFriendLibrary = null
+                                                            }
+                                                        }
+                                                }
+                                            }
+                                        ) {
+                                            Text("✕", color = TvTimePalette.TextSecondary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Selected Friend's Library Viewer
+        if (selectedFriendId.isNotEmpty()) {
+            item(key = "friend_library_panel") {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = TvTimePalette.SurfaceCard,
+                    border = BorderStroke(1.dp, TvTimePalette.Yellow.copy(alpha = 0.45f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = "@$selectedFriendId's Library",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                    color = Color.White
+                                )
+                                val lib = selectedFriendLibrary
+                                Text(
+                                    text = if (isLoadingLibrary) "Loading..." else "${lib?.shows?.size ?: 0} series · ${lib?.movies?.size ?: 0} movies",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TvTimePalette.TextSecondary
+                                )
+                            }
+                            TextButton(
+                                onClick = {
+                                    selectedFriendId = ""
+                                    selectedFriendLibrary = null
+                                }
+                            ) {
+                                Text("✕ Close", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf("shows" to "Series", "movies" to "Movies").forEach { (key, label) ->
+                                val selected = librarySegment == key
+                                Button(
+                                    onClick = { librarySegment = key },
+                                    shape = RoundedCornerShape(50),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (selected) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
+                                        contentColor = if (selected) TvTimePalette.OnYellow else Color.White
+                                    ),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(label, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
+                            }
+                        }
+
+                        val lib = selectedFriendLibrary
+                        if (!isLoadingLibrary && lib != null) {
+                            if (librarySegment == "movies") {
+                                if (lib.movies.isEmpty()) {
+                                    Text(
+                                        text = "No movies in @$selectedFriendId's library yet.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TvTimePalette.TextSecondary
+                                    )
+                                } else {
+                                    lib.movies.forEach { m ->
+                                        val alreadyHave = myMovies.any {
+                                            it.externalId == m.externalId || it.title.equals(m.title, ignoreCase = true)
+                                        }
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.weight(1f),
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                NetworkPosterImage(
+                                                    url = m.posterUrl,
+                                                    title = m.title,
+                                                    width = 44.dp,
+                                                    height = 64.dp,
+                                                    cornerRadius = 10.dp
+                                                )
+                                                Column {
+                                                    Text(
+                                                        text = m.title,
+                                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                                        color = Color.White,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Text(
+                                                        text = "${m.year} · ${if (m.watched) "✓ Watched" else "Watchlist"}",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = if (m.watched) Color(0xFF4ADE80) else TvTimePalette.Yellow
+                                                    )
+                                                }
+                                            }
+                                            if (!alreadyHave) {
+                                                TextButton(
+                                                    onClick = {
+                                                        scope.launch {
+                                                            dao.insertMovie(
+                                                                m.copy(
+                                                                    id = 0,
+                                                                    userId = currentUserId,
+                                                                    watched = false,
+                                                                    watchedAt = ""
+                                                                )
+                                                            )
+                                                            FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                                            Toast.makeText(context, "Added ${m.title} to Watchlist!", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    }
+                                                ) {
+                                                    Text("+ Watchlist", color = TvTimePalette.Yellow, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                if (lib.shows.isEmpty()) {
+                                    Text(
+                                        text = "No series in @$selectedFriendId's library yet.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TvTimePalette.TextSecondary
+                                    )
+                                } else {
+                                    lib.shows.forEach { s ->
+                                        val alreadyHave = myShows.any {
+                                            it.externalId == s.externalId || it.title.equals(s.title, ignoreCase = true)
+                                        }
+                                        val watchedCount = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv).size
+                                        val totalCount = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson).size.coerceAtLeast(1)
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.weight(1f),
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                NetworkPosterImage(
+                                                    url = s.posterUrl,
+                                                    title = s.title,
+                                                    width = 44.dp,
+                                                    height = 64.dp,
+                                                    cornerRadius = 10.dp
+                                                )
+                                                Column {
+                                                    Text(
+                                                        text = s.title,
+                                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                                        color = Color.White,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Text(
+                                                        text = "${s.year} · $watchedCount/$totalCount eps (${s.userStatus})",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = if (s.userStatus == "completed") Color(0xFF4ADE80) else TvTimePalette.Yellow
+                                                    )
+                                                }
+                                            }
+                                            if (!alreadyHave) {
+                                                TextButton(
+                                                    onClick = {
+                                                        scope.launch {
+                                                            dao.insertShow(
+                                                                s.copy(
+                                                                    id = 0,
+                                                                    userId = currentUserId,
+                                                                    userStatus = "interested",
+                                                                    watchedCodesCsv = ""
+                                                                )
+                                                            )
+                                                            FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                                            Toast.makeText(context, "Added ${s.title} to Watchlist!", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    }
+                                                ) {
+                                                    Text("+ Watchlist", color = TvTimePalette.Yellow, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

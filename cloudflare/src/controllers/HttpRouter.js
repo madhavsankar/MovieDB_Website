@@ -443,6 +443,25 @@ export class HttpRouter {
           sessionHeaders
         );
       }
+
+      if (path === "/api/friends/search") {
+        const q = url.searchParams.get("q") || "";
+        const users = await this.repo.searchUsersByUsername(userParam, q);
+        return this.json({ users }, 200, sessionHeaders);
+      }
+
+      if (path === "/api/friends/library") {
+        const friendId = url.searchParams.get("friendId") || "";
+        const library = await this.repo.getFriendLibrary(userParam, friendId);
+        if (!library) {
+          return this.json(
+            { error: "You can only view the series and movies of accepted friends." },
+            403,
+            sessionHeaders
+          );
+        }
+        return this.json({ library }, 200, sessionHeaders);
+      }
     }
 
     if (request.method === "POST") {
@@ -451,6 +470,37 @@ export class HttpRouter {
       }
 
       const body = await request.json().catch(() => ({}));
+
+      if (path === "/api/friends/request") {
+        try {
+          const state = await this.repo.sendFriendRequest(userParam, body.targetUserId);
+          return this.json({ ok: true, state }, 200, sessionHeaders);
+        } catch (err) {
+          return this.json({ error: err?.message || "Unable to send friend request." }, 400, sessionHeaders);
+        }
+      }
+
+      if (path === "/api/friends/respond") {
+        try {
+          const state = await this.repo.respondToFriendRequest(
+            userParam,
+            body.requesterUserId,
+            body.action
+          );
+          return this.json({ ok: true, state }, 200, sessionHeaders);
+        } catch (err) {
+          return this.json({ error: err?.message || "Unable to respond to friend request." }, 400, sessionHeaders);
+        }
+      }
+
+      if (path === "/api/friends/remove") {
+        try {
+          const state = await this.repo.removeFriendOrRequest(userParam, body.friendUserId);
+          return this.json({ ok: true, state }, 200, sessionHeaders);
+        } catch (err) {
+          return this.json({ error: err?.message || "Unable to remove friend." }, 400, sessionHeaders);
+        }
+      }
 
       if (path === "/api/state") {
         const state = {
@@ -461,13 +511,21 @@ export class HttpRouter {
           actors: Array.isArray(body.actors) ? body.actors : [],
           decidedIds: Array.isArray(body.decidedIds) ? body.decidedIds : [],
           followingUsers: Array.isArray(body.followingUsers) ? body.followingUsers : [],
+          friends: Array.isArray(body.friends) ? body.friends : undefined,
+          incomingFriendRequests: Array.isArray(body.incomingFriendRequests)
+            ? body.incomingFriendRequests
+            : undefined,
+          outgoingFriendRequests: Array.isArray(body.outgoingFriendRequests)
+            ? body.outgoingFriendRequests
+            : undefined,
         };
         await this.repo.saveUserState(userParam, state);
+        const saved = await this.repo.getUserState(userParam);
         return this.json(
           {
-            ...state,
+            ...saved,
             sessionToken,
-            stats: LiveCatalogService.computeStats(state),
+            stats: LiveCatalogService.computeStats(saved),
           },
           200,
           sessionHeaders

@@ -128,6 +128,17 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         </svg>
         <span class="text-xs font-extrabold tracking-tight text-white">TV Time</span>
       </button>
+
+      <button
+        id="header-friends-btn"
+        onclick="app.switchTab('friends')"
+        class="tv-pill-bar px-3.5 py-2 rounded-full flex items-center gap-2 text-zinc-200 hover:text-yellow-400 transition border border-zinc-800/80"
+        title="Friends"
+      >
+        <span class="text-sm">👥</span>
+        <span class="text-xs font-extrabold tracking-tight text-white">Friends</span>
+        <span id="header-friends-badge" class="hidden px-1.5 py-0.5 rounded-full tv-yellow-bg text-[10px] font-black">0</span>
+      </button>
     </header>
 
     <!-- ========================================================= -->
@@ -388,7 +399,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           </div>
           <div class="flex items-start gap-2.5">
             <span class="w-5 h-5 rounded-full bg-zinc-800 tv-yellow-text font-bold flex items-center justify-center shrink-0">3</span>
-            <span>Import a JSON backup file to restore or merge your shows and movies.</span>
+            <span>Import a CSV or JSON backup file to restore or merge your shows and movies.</span>
           </div>
         </div>
 
@@ -400,7 +411,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             📤 Export Full Library Backup (.json)
           </button>
           <button onclick="document.getElementById('tvtime-import-file').click()" class="w-full py-3.5 rounded-2xl tv-pill-bar border border-zinc-700 text-sm font-bold tv-yellow-text hover:text-white transition flex items-center justify-center gap-2">
-            📥 Import Backup File (.json)
+            📥 Import Backup File (.csv or .json)
           </button>
         </div>
       </div>
@@ -456,6 +467,123 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       </div>
     </section>
 
+    <!-- ========================================================= -->
+    <!-- FULL PAGE: FRIENDS & SHARED LIBRARIES (👥)                -->
+    <!-- ========================================================= -->
+    <section id="tab-friends" class="hidden space-y-4">
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2.5">
+          <button
+            onclick="app.goBack()"
+            class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
+            title="Back"
+          >
+            ←
+          </button>
+          <div>
+            <h2 class="text-lg font-extrabold text-white">👥 Friends</h2>
+            <p class="text-xs text-zinc-400">Search by username, send requests &amp; view each other&apos;s series &amp; movies</p>
+          </div>
+        </div>
+        <button onclick="app.loadState(true)" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold tv-yellow-text flex items-center gap-1 border border-zinc-800">
+          ↻ Sync
+        </button>
+      </div>
+
+      <!-- Search / Add Friend by Username Card -->
+      <div class="tv-card rounded-3xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="text-xs font-extrabold uppercase tracking-wider text-zinc-400">Add Friend by Username</div>
+          <div id="friends-my-username-badge" class="text-[11px] font-bold tv-yellow-text">@member</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="tv-pill-bar rounded-full px-3.5 py-2.5 flex items-center gap-2 border border-zinc-800 flex-1 min-w-0">
+            <span class="text-zinc-400 text-xs font-bold">@</span>
+            <input
+              id="friend-search-input"
+              type="text"
+              placeholder="Search username (e.g. partner)..."
+              oninput="app.onFriendSearchInput(this.value)"
+              onkeydown="if(event.key==='Enter'){app.sendFriendRequestFromInput();}"
+              class="w-full bg-transparent text-white text-sm focus:outline-none placeholder-zinc-500"
+            />
+          </div>
+          <button
+            onclick="app.sendFriendRequestFromInput()"
+            class="px-4 py-2.5 rounded-full tv-yellow-bg text-xs font-extrabold shrink-0"
+          >
+            + Send Request
+          </button>
+        </div>
+        <div id="friend-search-status" class="hidden text-xs font-semibold px-1"></div>
+        <div id="friend-search-results" class="space-y-2"></div>
+      </div>
+
+      <!-- Incoming Friend Requests -->
+      <div id="friends-incoming-section" class="hidden tv-card rounded-3xl p-4 space-y-2.5 border border-yellow-400/30">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-extrabold uppercase tracking-wider tv-yellow-text">Incoming Friend Requests</span>
+          <span id="friends-incoming-count" class="px-2 py-0.5 rounded-full tv-yellow-bg text-[10px] font-black">0</span>
+        </div>
+        <div id="friends-incoming-list" class="space-y-2"></div>
+      </div>
+
+      <!-- Outgoing Pending Requests -->
+      <div id="friends-outgoing-section" class="hidden tv-card rounded-3xl p-4 space-y-2.5">
+        <div class="text-xs font-extrabold uppercase tracking-wider text-zinc-400">Sent Requests (Pending)</div>
+        <div id="friends-outgoing-list" class="space-y-2"></div>
+      </div>
+
+      <!-- Accepted Friends List -->
+      <div class="tv-card rounded-3xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-extrabold uppercase tracking-wider text-zinc-400">My Friends</span>
+          <span id="friends-accepted-count" class="text-xs font-bold text-zinc-400">0</span>
+        </div>
+        <div id="friends-list-container" class="space-y-2.5"></div>
+      </div>
+
+      <!-- Selected Friend Library Viewer -->
+      <div id="friend-library-panel" class="hidden tv-card rounded-3xl p-4 space-y-4 border border-yellow-400/30">
+        <div class="flex items-center justify-between gap-2">
+          <div>
+            <h3 id="friend-library-title" class="text-base font-extrabold text-white">@friend&apos;s Library</h3>
+            <p id="friend-library-subtitle" class="text-xs text-zinc-400">Series &amp; Movies</p>
+          </div>
+          <button
+            onclick="app.closeFriendLibrary()"
+            class="tv-pill-bar px-3 py-1.5 rounded-full text-xs font-bold text-zinc-300 hover:text-white border border-zinc-800"
+          >
+            ✕ Close
+          </button>
+        </div>
+
+        <!-- Segmented Toggle: Series | Movies -->
+        <div class="tv-pill-bar p-1 rounded-full grid grid-cols-2 gap-1">
+          <button
+            id="friend-lib-seg-shows"
+            onclick="app.setFriendLibrarySegment('shows')"
+            class="py-2 rounded-full text-xs font-bold tv-yellow-bg transition"
+          >
+            Series
+          </button>
+          <button
+            id="friend-lib-seg-movies"
+            onclick="app.setFriendLibrarySegment('movies')"
+            class="py-2 rounded-full text-xs font-bold text-zinc-400 hover:text-white transition"
+          >
+            Movies
+          </button>
+        </div>
+
+        <!-- Status Filter Pills inside Friend Library -->
+        <div id="friend-lib-filter-bar" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar"></div>
+
+        <!-- Friend Library Cards -->
+        <div id="friend-library-items" class="space-y-2.5"></div>
+      </div>
+    </section>
+
   </main>
 
   <!-- ========================================================= -->
@@ -502,6 +630,16 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             </svg>
           </span>
           <span>Home</span>
+        </button>
+        <button
+          onclick="app.closeHamburgerMenu(); app.switchTab('friends');"
+          class="w-full py-2.5 px-2.5 rounded-2xl flex items-center gap-3.5 text-left text-sm font-semibold text-zinc-200 hover:bg-[#1c1c21] hover:text-yellow-400 transition group"
+        >
+          <span class="w-8 h-8 rounded-xl tv-pill-bar border border-zinc-800/80 flex items-center justify-center tv-yellow-text shrink-0 text-sm">
+            👥
+          </span>
+          <span class="flex-1">Friends</span>
+          <span id="drawer-friends-badge" class="hidden px-2 py-0.5 rounded-full tv-yellow-bg text-[10px] font-black">0</span>
         </button>
       </div>
 
@@ -669,7 +807,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         </div>
         <div class="flex items-start gap-2.5">
           <span class="w-5 h-5 rounded-full bg-zinc-800 tv-yellow-text font-bold flex items-center justify-center shrink-0">3</span>
-          <span>Import a JSON backup file to restore or merge your shows and movies.</span>
+          <span>Import a CSV or JSON backup file to restore or merge your shows and movies.</span>
         </div>
       </div>
       <input id="tvtime-import-file" type="file" accept=".json,.csv,.txt" class="hidden" onchange="app.handleImportFile(event)" />
@@ -681,7 +819,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           📊 Export Spreadsheet (.csv)
         </button>
         <button onclick="document.getElementById('tvtime-import-file').click()" class="w-full py-2.5 rounded-full tv-pill-bar text-xs font-semibold tv-yellow-text hover:text-white">
-          📥 Import Backup File (.json)
+          📥 Import Backup File (.csv or .json)
         </button>
         <button onclick="app.closeImportModal()" class="w-full py-2 text-xs font-bold text-white">
           Cancel
@@ -780,6 +918,15 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.tabHistory = [];
         this._handlingPopState = false;
 
+        this.friendSearchQuery = "";
+        this.friendSearchResults = [];
+        this.friendSearchTimer = null;
+        this.selectedFriendId = "";
+        this.selectedFriendLibrary = null;
+        this.isLoadingFriendLibrary = false;
+        this.friendLibrarySegment = "shows"; // "shows" | "movies"
+        this.friendLibraryFilter = "all"; // "all" | "in_progress" | "interested" | "completed"
+
         this.state = {
           userId: this.userId,
           email: this.userEmail || this.userId,
@@ -788,6 +935,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           actors: [],
           decidedIds: [],
           followingUsers: ["partner"],
+          friends: [],
+          incomingFriendRequests: [],
+          outgoingFriendRequests: [],
         };
 
         this.loadLocalCache();
@@ -1278,6 +1428,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           if (res.ok) {
             const data = await res.json();
             if (!Array.isArray(data.decidedIds)) data.decidedIds = [];
+            if (!Array.isArray(data.friends)) data.friends = [];
+            if (!Array.isArray(data.incomingFriendRequests)) data.incomingFriendRequests = [];
+            if (!Array.isArray(data.outgoingFriendRequests)) data.outgoingFriendRequests = [];
             this.state = data;
             this.deduplicateState();
             if (data.sessionToken || data.email) {
@@ -1309,6 +1462,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               actors: this.state.actors,
               decidedIds: Array.isArray(this.state.decidedIds) ? this.state.decidedIds : [],
               followingUsers: this.state.followingUsers,
+              friends: Array.isArray(this.state.friends) ? this.state.friends : [],
+              incomingFriendRequests: Array.isArray(this.state.incomingFriendRequests) ? this.state.incomingFriendRequests : [],
+              outgoingFriendRequests: Array.isArray(this.state.outgoingFriendRequests) ? this.state.outgoingFriendRequests : [],
             }),
           });
           if (res.ok) {
@@ -1398,7 +1554,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           this.pushHistoryEntry("tab_" + resolvedTab);
         }
         this.activeTab = resolvedTab;
-        ["home", "search", "swipe", "stats", "recent", "import", "settings"].forEach((t) => {
+        ["home", "search", "swipe", "stats", "recent", "import", "settings", "friends"].forEach((t) => {
           const sec = document.getElementById("tab-" + t);
           if (sec) sec.classList.toggle("hidden", t !== resolvedTab);
         });
@@ -1413,6 +1569,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         });
         if (resolvedTab === "swipe" && this.getFilteredRecommendations().length === 0) {
           this.loadRecommendations(false);
+        }
+        if (resolvedTab === "friends" && this.friendSearchResults.length === 0) {
+          this.searchFriendsOnServer("");
         }
         this.render();
       }
@@ -1616,6 +1775,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.renderSearch();
         this.renderProfile();
         this.renderSwipeDeck();
+        this.renderFriends();
         if (this.detailItem) {
           this.renderDetailSheet();
         }
@@ -3508,26 +3668,274 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         document.getElementById("import-modal")?.classList.add("hidden");
       }
 
+      parseCsvRows(rawText) {
+        const q = String.fromCharCode(34);
+        const lf = String.fromCharCode(10);
+        const cr = String.fromCharCode(13);
+        const rows = [];
+        let row = [];
+        let field = "";
+        let inQuotes = false;
+        const text = String(rawText || "");
+        for (let i = 0; i < text.length; i++) {
+          const ch = text[i];
+          if (inQuotes) {
+            if (ch === q) {
+              if (i + 1 < text.length && text[i + 1] === q) {
+                field += q;
+                i++;
+              } else {
+                inQuotes = false;
+              }
+            } else {
+              field += ch;
+            }
+          } else {
+            if (ch === q) {
+              inQuotes = true;
+            } else if (ch === ",") {
+              row.push(field.trim());
+              field = "";
+            } else if (ch === lf || ch === cr) {
+              if (ch === cr && i + 1 < text.length && text[i + 1] === lf) {
+                i++;
+              }
+              row.push(field.trim());
+              if (row.some((c) => c !== "")) {
+                rows.push(row);
+              }
+              row = [];
+              field = "";
+            } else {
+              field += ch;
+            }
+          }
+        }
+        if (field.trim() !== "" || row.length > 0) {
+          row.push(field.trim());
+          if (row.some((c) => c !== "")) {
+            rows.push(row);
+          }
+        }
+        return rows;
+      }
+
+      importFromCsvText(rawText) {
+        const rows = this.parseCsvRows(rawText);
+        if (rows.length === 0) return { showsAdded: 0, moviesAdded: 0 };
+        const firstRowLower = rows[0].map((c) => String(c || "").toLowerCase().replace(/[^a-z0-9]/g, ""));
+        const hasHeader =
+          firstRowLower.includes("title") ||
+          firstRowLower.includes("name") ||
+          firstRowLower.includes("show") ||
+          firstRowLower.includes("type");
+        const colIdx = (names) => {
+          for (const n of names) {
+            const idx = firstRowLower.indexOf(n);
+            if (idx !== -1) return idx;
+          }
+          return -1;
+        };
+
+        const idxType = hasHeader ? colIdx(["type", "mediatype", "kind"]) : -1;
+        const idxTitle = hasHeader ? colIdx(["title", "name", "show", "series", "movie"]) : 0;
+        const idxYear = hasHeader ? colIdx(["year", "releaseyear"]) : -1;
+        const idxRating = hasHeader ? colIdx(["rating", "score", "imdbrating"]) : -1;
+        const idxStatus = hasHeader ? colIdx(["status", "userstatus", "watchstatus"]) : -1;
+        const idxProgress = hasHeader ? colIdx(["progress", "watchedprogress", "episodes"]) : -1;
+        const idxRuntime = hasHeader ? colIdx(["runtimeminutes", "runtime", "runtimemins"]) : -1;
+        const idxFav = hasHeader ? colIdx(["favorite", "isfavorite"]) : -1;
+        const idxNet = hasHeader ? colIdx(["network", "networkordirector", "streamingservice", "platform"]) : -1;
+        const idxPoster = hasHeader ? colIdx(["posterurl", "poster", "image", "imageurl"]) : -1;
+        const idxTvmaze = hasHeader ? colIdx(["tvmazeid"]) : -1;
+        const idxTmdb = hasHeader ? colIdx(["tmdbid"]) : -1;
+
+        const startIdx = hasHeader ? 1 : 0;
+        let showsAdded = 0;
+        let moviesAdded = 0;
+        const importedShows = [];
+        const importedMovies = [];
+
+        for (let r = startIdx; r < rows.length; r++) {
+          const cols = rows[r];
+          const title = String(cols[idxTitle >= 0 ? idxTitle : 0] || "").trim();
+          if (!title || title.toLowerCase().endsWith(":")) continue;
+
+          const typeVal = idxType >= 0 ? String(cols[idxType] || "Show").trim().toLowerCase() : "show";
+          const year = idxYear >= 0 ? Number(cols[idxYear]) || 2020 : 2020;
+          const rating = idxRating >= 0 ? Number(cols[idxRating]) || 8.0 : 8.0;
+          const rawStatus = idxStatus >= 0 ? String(cols[idxStatus] || "Watched").trim().toLowerCase() : "watched";
+          const progressStr = idxProgress >= 0 ? String(cols[idxProgress] || "") : "";
+          const runtime = idxRuntime >= 0 ? Number(cols[idxRuntime]) || (typeVal === "movie" ? 120 : 45) : typeVal === "movie" ? 120 : 45;
+          const isFav = idxFav >= 0 ? String(cols[idxFav] || "").toLowerCase() === "true" : false;
+          const network = idxNet >= 0 && cols[idxNet] ? String(cols[idxNet]).trim() : "Streaming";
+          const posterUrl = idxPoster >= 0 && cols[idxPoster] ? String(cols[idxPoster]).trim() : "";
+          const tvmazeId = idxTvmaze >= 0 ? Number(cols[idxTvmaze]) || 0 : 0;
+          const tmdbId = idxTmdb >= 0 ? Number(cols[idxTmdb]) || 0 : 0;
+          const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+
+          if (typeVal === "movie" || typeVal === "film") {
+            const watched = rawStatus === "watched" || rawStatus === "completed" || rawStatus === "true";
+            importedMovies.push({
+              id: tmdbId ? "tmdb_movie_" + tmdbId : "csv_movie_" + slug,
+              tmdbId,
+              title,
+              year,
+              runtimeMins: runtime,
+              genres: ["Drama"],
+              cast: [],
+              director: "",
+              streamingService: network,
+              rating,
+              posterUrl,
+              overview: "",
+              watched,
+              watchedAt: watched ? new Date().toISOString().slice(0, 10) : "",
+              userRating: 0,
+              reaction: "",
+              rewatchCount: 0,
+              isFavorite: isFav,
+            });
+            moviesAdded++;
+          } else {
+            let watchedCount = 16;
+            let totalCount = 16;
+            const slashParts = progressStr.split("/");
+            if (slashParts.length >= 2) {
+              const wNum = parseInt(slashParts[0].replace(/[^0-9]/g, ""), 10);
+              const tNum = parseInt(slashParts[1].replace(/[^0-9]/g, ""), 10);
+              if (!isNaN(tNum) && tNum > 0) totalCount = Math.min(500, tNum);
+              if (!isNaN(wNum) && wNum >= 0) watchedCount = Math.min(totalCount, wNum);
+            }
+            let userStatus = "completed";
+            if (rawStatus === "watchlist" || rawStatus === "interested" || rawStatus === "plan to watch") {
+              userStatus = "interested";
+              watchedCount = 0;
+            } else if (rawStatus === "in progress" || rawStatus === "in_progress" || rawStatus === "watching") {
+              userStatus = "in_progress";
+              if (watchedCount >= totalCount) watchedCount = Math.max(1, totalCount - 1);
+            } else if (rawStatus === "stopped" || rawStatus === "dropped") {
+              userStatus = "stopped";
+            } else {
+              userStatus = "completed";
+              watchedCount = totalCount;
+            }
+
+            const episodes = [];
+            const watchedEpisodes = [];
+            for (let ep = 1; ep <= totalCount; ep++) {
+              const code = "S01E" + String(ep).padStart(2, "0");
+              episodes.push({
+                code,
+                season: 1,
+                number: ep,
+                title: "Episode " + ep,
+                airDate: year + "-01-01",
+                runtimeMins: runtime,
+              });
+              if (ep <= watchedCount) {
+                watchedEpisodes.push(code);
+              }
+            }
+
+            importedShows.push({
+              id: tvmazeId ? "tvmaze_" + tvmazeId : "csv_show_" + slug,
+              tvmazeId,
+              tmdbId,
+              title,
+              year,
+              network,
+              status: "Ended",
+              runtimeMins: runtime,
+              genres: ["Drama"],
+              cast: [],
+              rating,
+              posterUrl,
+              overview: "",
+              userStatus,
+              userRating: 0,
+              reaction: "",
+              isFavorite: isFav,
+              rewatchCount: 0,
+              watchedEpisodes,
+              episodes,
+              lastWatchedAt: new Date().toISOString(),
+            });
+            showsAdded++;
+          }
+        }
+
+        this.state.shows = [...importedShows, ...(this.state.shows || [])];
+        this.state.movies = [...importedMovies, ...(this.state.movies || [])];
+        this.deduplicateState();
+        return { showsAdded, moviesAdded };
+      }
+
+      async enrichImportedShowsInBackground() {
+        const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
+        let changed = false;
+        let count = 0;
+        for (const s of shows) {
+          if (count >= 25) break;
+          if (s.posterUrl && s.tvmazeId) continue;
+          count++;
+          try {
+            const res = await fetch("/api/search?q=" + encodeURIComponent(s.title));
+            if (res.ok) {
+              const data = await res.json();
+              const match = (data.results || []).find((it) => it.mediaType === "show") || (data.results || [])[0];
+              if (match) {
+                if (!s.posterUrl && match.posterUrl) s.posterUrl = match.posterUrl;
+                if (!s.tvmazeId && match.tvmazeId) s.tvmazeId = match.tvmazeId;
+                if (!s.tmdbId && match.tmdbId) s.tmdbId = match.tmdbId;
+                if (match.year) s.year = match.year;
+                if (match.rating) s.rating = match.rating;
+                if ((!s.network || s.network === "Streaming") && match.network) s.network = match.network;
+                changed = true;
+              }
+            }
+          } catch (_) {}
+        }
+        if (changed) {
+          await this.persistState();
+        }
+      }
+
       async handleImportFile(event) {
         const file = event?.target?.files?.[0];
         if (!file) return;
         try {
-          const text = await file.text();
-          const parsed = JSON.parse(text);
-          if (Array.isArray(parsed.shows)) {
-            this.state.shows = parsed.shows;
+          const text = (await file.text()).trim();
+          if (text.startsWith("{")) {
+            const parsed = JSON.parse(text);
+            if (Array.isArray(parsed.shows)) {
+              this.state.shows = [...parsed.shows, ...(this.state.shows || [])];
+            }
+            if (Array.isArray(parsed.movies)) {
+              this.state.movies = [...parsed.movies, ...(this.state.movies || [])];
+            }
+            if (Array.isArray(parsed.actors)) {
+              this.state.actors = parsed.actors;
+            }
+            this.deduplicateState();
+            this.closeImportModal();
+            await this.persistState();
+            alert("Imported TV Time JSON backup (" + this.state.shows.length + " shows, " + this.state.movies.length + " movies)!");
+          } else {
+            const { showsAdded, moviesAdded } = this.importFromCsvText(text);
+            if (showsAdded === 0 && moviesAdded === 0) {
+              alert("No valid shows or movies found in CSV file.");
+              return;
+            }
+            this.closeImportModal();
+            await this.persistState();
+            alert("Imported " + showsAdded + " shows and " + moviesAdded + " movies from CSV!");
+            this.enrichImportedShowsInBackground();
           }
-          if (Array.isArray(parsed.movies)) {
-            this.state.movies = parsed.movies;
-          }
-          if (Array.isArray(parsed.actors)) {
-            this.state.actors = parsed.actors;
-          }
-          this.closeImportModal();
-          await this.persistState();
-          alert("Imported TV Time history (" + this.state.shows.length + " shows, " + this.state.movies.length + " movies)!");
         } catch (_) {
-          alert("Could not parse import file. Please select a valid TV Time JSON export.");
+          alert("Could not parse import file. Please select a valid TV Time CSV or JSON file.");
+        } finally {
+          if (event && event.target) event.target.value = "";
         }
       }
 
@@ -3597,6 +4005,682 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
       closeAccountModal() {
         document.getElementById("account-modal")?.classList.add("hidden");
+      }
+
+      // =========================================================
+      // FRIENDS, FRIEND REQUESTS & SHARED LIBRARY VIEWER
+      // =========================================================
+      showFriendStatusToast(msg, isError = false) {
+        const el = document.getElementById("friend-search-status");
+        if (!el) return;
+        el.textContent = msg;
+        el.className =
+          "text-xs font-semibold px-1 " + (isError ? "text-rose-400" : "text-emerald-400");
+        el.classList.remove("hidden");
+        setTimeout(() => {
+          el.classList.add("hidden");
+        }, 4000);
+      }
+
+      onFriendSearchInput(val) {
+        this.friendSearchQuery = String(val || "").trim();
+        if (this.friendSearchTimer) clearTimeout(this.friendSearchTimer);
+        this.friendSearchTimer = setTimeout(() => {
+          this.searchFriendsOnServer(this.friendSearchQuery);
+        }, 220);
+      }
+
+      async searchFriendsOnServer(query) {
+        try {
+          const res = await fetch(
+            "/api/friends/search?q=" + encodeURIComponent(String(query || "").trim()),
+            { headers: this.getHeaders() }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            this.friendSearchResults = Array.isArray(data.results) ? data.results : [];
+            this.renderFriendSearchResults();
+          }
+        } catch (_) {}
+      }
+
+      async sendFriendRequestFromInput() {
+        const inp = document.getElementById("friend-search-input");
+        const val = String((inp && inp.value) || this.friendSearchQuery || "")
+          .trim()
+          .toLowerCase()
+          .split("@")[0];
+        if (!val) {
+          this.showFriendStatusToast("Enter a username first.", true);
+          return;
+        }
+        await this.sendFriendRequest(val);
+        if (inp) inp.value = "";
+        this.friendSearchQuery = "";
+      }
+
+      async sendFriendRequest(targetUserId) {
+        const cleanTarget = String(targetUserId || "")
+          .trim()
+          .toLowerCase()
+          .split("@")[0];
+        if (!cleanTarget) return;
+        try {
+          const res = await fetch("/api/friends/request", {
+            method: "POST",
+            headers: this.getHeaders(),
+            body: JSON.stringify({ targetUserId: cleanTarget }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            this.showFriendStatusToast(data.error || "Could not send friend request.", true);
+            return;
+          }
+          if (Array.isArray(data.friends)) this.state.friends = data.friends;
+          if (Array.isArray(data.incomingFriendRequests)) {
+            this.state.incomingFriendRequests = data.incomingFriendRequests;
+          }
+          if (Array.isArray(data.outgoingFriendRequests)) {
+            this.state.outgoingFriendRequests = data.outgoingFriendRequests;
+          }
+          this.saveLocalCache();
+          this.showFriendStatusToast(
+            data.status === "accepted"
+              ? "You and @" + cleanTarget + " are now friends!"
+              : "Friend request sent to @" + cleanTarget + "!"
+          );
+          await this.searchFriendsOnServer(this.friendSearchQuery);
+          this.renderFriends();
+        } catch (_) {
+          this.showFriendStatusToast("Network error sending friend request.", true);
+        }
+      }
+
+      async respondFriendRequest(requesterUserId, action) {
+        const cleanReq = String(requesterUserId || "").trim().toLowerCase();
+        if (!cleanReq) return;
+        try {
+          const res = await fetch("/api/friends/respond", {
+            method: "POST",
+            headers: this.getHeaders(),
+            body: JSON.stringify({ requesterUserId: cleanReq, action }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok) {
+            if (Array.isArray(data.friends)) this.state.friends = data.friends;
+            if (Array.isArray(data.incomingFriendRequests)) {
+              this.state.incomingFriendRequests = data.incomingFriendRequests;
+            }
+            if (Array.isArray(data.outgoingFriendRequests)) {
+              this.state.outgoingFriendRequests = data.outgoingFriendRequests;
+            }
+            this.saveLocalCache();
+            this.showFriendStatusToast(
+              action === "accept"
+                ? "Accepted @" + cleanReq + "! You can now view each other's libraries."
+                : "Declined request from @" + cleanReq + "."
+            );
+            await this.searchFriendsOnServer(this.friendSearchQuery);
+            this.renderFriends();
+          }
+        } catch (_) {}
+      }
+
+      async removeFriend(friendUserId) {
+        const cleanFriend = String(friendUserId || "").trim().toLowerCase();
+        if (!cleanFriend) return;
+        try {
+          const res = await fetch("/api/friends/remove", {
+            method: "POST",
+            headers: this.getHeaders(),
+            body: JSON.stringify({ friendUserId: cleanFriend }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok) {
+            if (Array.isArray(data.friends)) this.state.friends = data.friends;
+            if (Array.isArray(data.incomingFriendRequests)) {
+              this.state.incomingFriendRequests = data.incomingFriendRequests;
+            }
+            if (Array.isArray(data.outgoingFriendRequests)) {
+              this.state.outgoingFriendRequests = data.outgoingFriendRequests;
+            }
+            if (this.selectedFriendId === cleanFriend) {
+              this.closeFriendLibrary();
+            }
+            this.saveLocalCache();
+            await this.searchFriendsOnServer(this.friendSearchQuery);
+            this.renderFriends();
+          }
+        } catch (_) {}
+      }
+
+      async openFriendLibrary(friendUserId) {
+        const cleanFriend = String(friendUserId || "").trim().toLowerCase();
+        if (!cleanFriend) return;
+        this.selectedFriendId = cleanFriend;
+        this.isLoadingFriendLibrary = true;
+        this.renderFriendLibrary();
+        const panel = document.getElementById("friend-library-panel");
+        if (panel) {
+          panel.classList.remove("hidden");
+          try {
+            panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          } catch (_) {}
+        }
+        try {
+          const res = await fetch(
+            "/api/friends/library?friendId=" + encodeURIComponent(cleanFriend),
+            { headers: this.getHeaders() }
+          );
+          const data = await res.json().catch(() => ({}));
+          if (res.ok) {
+            this.selectedFriendLibrary = {
+              userId: data.userId || cleanFriend,
+              email: data.email || cleanFriend,
+              shows: Array.isArray(data.shows) ? data.shows : [],
+              movies: Array.isArray(data.movies) ? data.movies : [],
+            };
+          } else {
+            this.showFriendStatusToast(
+              data.error || "Friend must accept your request before viewing their library.",
+              true
+            );
+            this.selectedFriendLibrary = null;
+          }
+        } catch (_) {
+          this.selectedFriendLibrary = null;
+        }
+        this.isLoadingFriendLibrary = false;
+        this.renderFriendLibrary();
+      }
+
+      closeFriendLibrary() {
+        this.selectedFriendId = "";
+        this.selectedFriendLibrary = null;
+        document.getElementById("friend-library-panel")?.classList.add("hidden");
+      }
+
+      setFriendLibrarySegment(seg) {
+        this.friendLibrarySegment = seg === "movies" ? "movies" : "shows";
+        this.friendLibraryFilter = "all";
+        this.renderFriendLibrary();
+      }
+
+      setFriendLibraryFilter(filter) {
+        this.friendLibraryFilter = filter || "all";
+        this.renderFriendLibrary();
+      }
+
+      renderFriendSearchResults() {
+        const box = document.getElementById("friend-search-results");
+        if (!box) return;
+        const results = Array.isArray(this.friendSearchResults) ? this.friendSearchResults : [];
+        if (results.length === 0) {
+          box.innerHTML = this.friendSearchQuery
+            ? '<p class="text-xs text-zinc-400 py-1 px-1">No users found matching &quot;' +
+              escapeHtml(this.friendSearchQuery) +
+              '&quot;. Click &quot;+ Send Request&quot; to invite @' +
+              escapeHtml(this.friendSearchQuery.toLowerCase().split("@")[0]) +
+              ".</p>"
+            : "";
+          return;
+        }
+        box.innerHTML = results
+          .map((u) => {
+            const uid = String(u.userId || "").toLowerCase();
+            const initials = uid.slice(0, 2).toUpperCase() || "TV";
+            const counts = (Number(u.showCount) || 0) + " series · " + (Number(u.movieCount) || 0) + " movies";
+            let actionHtml = "";
+            if (u.relation === "friend") {
+              actionHtml =
+                '<button onclick="app.openFriendLibrary(&quot;' +
+                escapeHtml(uid) +
+                '&quot;)" class="px-3 py-1.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 text-xs font-extrabold">View Library →</button>';
+            } else if (u.relation === "incoming") {
+              actionHtml =
+                '<button onclick="app.respondFriendRequest(&quot;' +
+                escapeHtml(uid) +
+                '&quot;, &quot;accept&quot;)" class="px-3 py-1.5 rounded-full tv-yellow-bg text-xs font-extrabold">✓ Accept</button>';
+            } else if (u.relation === "outgoing") {
+              actionHtml =
+                '<span class="px-3 py-1 rounded-full bg-zinc-800 text-zinc-400 text-[11px] font-bold">Request Sent</span>';
+            } else {
+              actionHtml =
+                '<button onclick="app.sendFriendRequest(&quot;' +
+                escapeHtml(uid) +
+                '&quot;)" class="px-3 py-1.5 rounded-full tv-pill-bar border border-yellow-400/60 tv-yellow-text hover:bg-yellow-400 hover:text-black text-xs font-extrabold transition">+ Add Friend</button>';
+            }
+            return (
+              '<div class="tv-pill-bar rounded-2xl p-3 flex items-center justify-between gap-2.5 border border-zinc-800/80">' +
+              '<div class="flex items-center gap-3 min-w-0">' +
+              '<div class="w-9 h-9 rounded-full bg-zinc-800 flex items-center justify-center text-xs font-extrabold tv-yellow-text shrink-0">' +
+              escapeHtml(initials) +
+              "</div>" +
+              '<div class="min-w-0">' +
+              '<div class="text-sm font-extrabold text-white truncate">@' +
+              escapeHtml(uid) +
+              "</div>" +
+              '<div class="text-[11px] text-zinc-400 truncate">' +
+              escapeHtml(counts) +
+              "</div>" +
+              "</div>" +
+              "</div>" +
+              actionHtml +
+              "</div>"
+            );
+          })
+          .join("");
+      }
+
+      renderFriends() {
+        const friends = Array.isArray(this.state.friends) ? this.state.friends : [];
+        const incoming = Array.isArray(this.state.incomingFriendRequests)
+          ? this.state.incomingFriendRequests
+          : [];
+        const outgoing = Array.isArray(this.state.outgoingFriendRequests)
+          ? this.state.outgoingFriendRequests
+          : [];
+
+        const myBadge = document.getElementById("friends-my-username-badge");
+        if (myBadge) {
+          myBadge.textContent = "Your username: @" + String(this.userId || "member").toLowerCase();
+        }
+
+        // Update top header & drawer notification badges for incoming friend requests
+        const headerBadge = document.getElementById("header-friends-badge");
+        const drawerBadge = document.getElementById("drawer-friends-badge");
+        if (headerBadge) {
+          headerBadge.textContent = String(incoming.length);
+          headerBadge.classList.toggle("hidden", incoming.length === 0);
+        }
+        if (drawerBadge) {
+          drawerBadge.textContent = String(incoming.length);
+          drawerBadge.classList.toggle("hidden", incoming.length === 0);
+        }
+
+        // 1. Incoming Friend Requests
+        const incSec = document.getElementById("friends-incoming-section");
+        const incCount = document.getElementById("friends-incoming-count");
+        const incList = document.getElementById("friends-incoming-list");
+        if (incSec) incSec.classList.toggle("hidden", incoming.length === 0);
+        if (incCount) incCount.textContent = String(incoming.length);
+        if (incList) {
+          incList.innerHTML = incoming
+            .map((uid) => {
+              const clean = String(uid || "").toLowerCase();
+              return (
+                '<div class="tv-pill-bar rounded-2xl p-3 flex items-center justify-between gap-2 border border-zinc-800">' +
+                '<div class="flex items-center gap-2.5 min-w-0">' +
+                '<div class="w-9 h-9 rounded-full bg-zinc-800 flex items-center justify-center text-xs font-extrabold tv-yellow-text shrink-0">' +
+                escapeHtml(clean.slice(0, 2).toUpperCase()) +
+                "</div>" +
+                '<div class="min-w-0">' +
+                '<div class="text-sm font-extrabold text-white truncate">@' +
+                escapeHtml(clean) +
+                "</div>" +
+                '<div class="text-[11px] tv-yellow-text font-semibold">Wants to share series &amp; movies with you</div>' +
+                "</div>" +
+                "</div>" +
+                '<div class="flex items-center gap-1.5 shrink-0">' +
+                '<button onclick="app.respondFriendRequest(&quot;' +
+                escapeHtml(clean) +
+                '&quot;, &quot;accept&quot;)" class="px-3 py-1.5 rounded-full tv-yellow-bg text-xs font-extrabold">✓ Accept</button>' +
+                '<button onclick="app.respondFriendRequest(&quot;' +
+                escapeHtml(clean) +
+                '&quot;, &quot;decline&quot;)" class="px-2.5 py-1.5 rounded-full bg-zinc-800 text-zinc-400 hover:text-rose-400 text-xs font-bold">✕</button>' +
+                "</div>" +
+                "</div>"
+              );
+            })
+            .join("");
+        }
+
+        // 2. Outgoing Friend Requests
+        const outSec = document.getElementById("friends-outgoing-section");
+        const outList = document.getElementById("friends-outgoing-list");
+        if (outSec) outSec.classList.toggle("hidden", outgoing.length === 0);
+        if (outList) {
+          outList.innerHTML = outgoing
+            .map((uid) => {
+              const clean = String(uid || "").toLowerCase();
+              return (
+                '<div class="tv-pill-bar rounded-2xl p-3 flex items-center justify-between gap-2 border border-zinc-800/80">' +
+                '<div class="flex items-center gap-2.5 min-w-0">' +
+                '<div class="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-xs font-extrabold text-zinc-300 shrink-0">' +
+                escapeHtml(clean.slice(0, 2).toUpperCase()) +
+                "</div>" +
+                '<div class="text-sm font-bold text-zinc-200 truncate">@' +
+                escapeHtml(clean) +
+                ' <span class="text-[11px] text-zinc-500 font-normal">· Pending approval</span></div>' +
+                "</div>" +
+                '<button onclick="app.removeFriend(&quot;' +
+                escapeHtml(clean) +
+                '&quot;)" class="px-2.5 py-1 rounded-full bg-zinc-800 text-zinc-400 hover:text-rose-400 text-[11px] font-bold">Cancel</button>' +
+                "</div>"
+              );
+            })
+            .join("");
+        }
+
+        // 3. Accepted Friends List
+        const accCount = document.getElementById("friends-accepted-count");
+        const accList = document.getElementById("friends-list-container");
+        if (accCount) accCount.textContent = friends.length + (friends.length === 1 ? " friend" : " friends");
+        if (accList) {
+          if (friends.length === 0) {
+            accList.innerHTML =
+              '<p class="text-xs text-zinc-400 py-3 text-center">No friends added yet. Search by username above and send a friend request!</p>';
+          } else {
+            accList.innerHTML = friends
+              .map((uid) => {
+                const clean = String(uid || "").toLowerCase();
+                const isSelected = this.selectedFriendId === clean;
+                return (
+                  '<div class="tv-pill-bar rounded-2xl p-3.5 flex items-center justify-between gap-2.5 border ' +
+                  (isSelected ? "border-yellow-400/70" : "border-zinc-800/80") +
+                  '">' +
+                  '<div class="flex items-center gap-3 min-w-0 cursor-pointer flex-1" onclick="app.openFriendLibrary(&quot;' +
+                  escapeHtml(clean) +
+                  '&quot;)">' +
+                  '<div class="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-xs font-extrabold tv-yellow-text shrink-0">' +
+                  escapeHtml(clean.slice(0, 2).toUpperCase()) +
+                  "</div>" +
+                  '<div class="min-w-0">' +
+                  '<div class="text-sm font-extrabold text-white truncate">@' +
+                  escapeHtml(clean) +
+                  "</div>" +
+                  '<div class="text-[11px] text-emerald-400 font-semibold">✓ Friend · Tap to see series &amp; movies</div>' +
+                  "</div>" +
+                  "</div>" +
+                  '<div class="flex items-center gap-1.5 shrink-0">' +
+                  '<button onclick="app.openFriendLibrary(&quot;' +
+                  escapeHtml(clean) +
+                  '&quot;)" class="px-3 py-1.5 rounded-full tv-yellow-bg text-xs font-extrabold">View Library</button>' +
+                  '<button title="Remove friend" onclick="app.removeFriend(&quot;' +
+                  escapeHtml(clean) +
+                  '&quot;)" class="w-8 h-8 rounded-full bg-zinc-800/80 text-zinc-400 hover:text-rose-400 text-xs font-bold flex items-center justify-center">✕</button>' +
+                  "</div>" +
+                  "</div>"
+                );
+              })
+              .join("");
+          }
+        }
+
+        this.renderFriendSearchResults();
+        if (this.selectedFriendId) {
+          this.renderFriendLibrary();
+        }
+      }
+
+      renderFriendLibrary() {
+        const panel = document.getElementById("friend-library-panel");
+        const titleEl = document.getElementById("friend-library-title");
+        const subEl = document.getElementById("friend-library-subtitle");
+        const segShows = document.getElementById("friend-lib-seg-shows");
+        const segMovies = document.getElementById("friend-lib-seg-movies");
+        const filterBar = document.getElementById("friend-lib-filter-bar");
+        const itemsBox = document.getElementById("friend-library-items");
+        if (!panel || !itemsBox) return;
+
+        if (!this.selectedFriendId) {
+          panel.classList.add("hidden");
+          return;
+        }
+        panel.classList.remove("hidden");
+
+        if (titleEl) titleEl.textContent = "@" + this.selectedFriendId + "'s Library";
+        if (segShows) {
+          segShows.className =
+            this.friendLibrarySegment === "shows"
+              ? "py-2 rounded-full text-xs font-bold tv-yellow-bg transition"
+              : "py-2 rounded-full text-xs font-bold text-zinc-400 hover:text-white transition";
+        }
+        if (segMovies) {
+          segMovies.className =
+            this.friendLibrarySegment === "movies"
+              ? "py-2 rounded-full text-xs font-bold tv-yellow-bg transition"
+              : "py-2 rounded-full text-xs font-bold text-zinc-400 hover:text-white transition";
+        }
+
+        if (this.isLoadingFriendLibrary) {
+          if (subEl) subEl.textContent = "Loading series & movies...";
+          itemsBox.innerHTML =
+            '<p class="text-xs text-zinc-400 py-6 text-center">Loading @' +
+            escapeHtml(this.selectedFriendId) +
+            "&apos;s library...</p>";
+          return;
+        }
+
+        const lib = this.selectedFriendLibrary;
+        if (!lib) {
+          itemsBox.innerHTML =
+            '<p class="text-xs text-zinc-400 py-4 text-center">Could not load friend library.</p>';
+          return;
+        }
+
+        const friendShows = Array.isArray(lib.shows) ? lib.shows : [];
+        const friendMovies = Array.isArray(lib.movies) ? lib.movies : [];
+        if (subEl) {
+          subEl.textContent = friendShows.length + " series · " + friendMovies.length + " movies";
+        }
+
+        const filterDefs =
+          this.friendLibrarySegment === "movies"
+            ? [
+                { id: "all", label: "All (" + friendMovies.length + ")" },
+                {
+                  id: "interested",
+                  label: "Watchlist (" + friendMovies.filter((m) => !m.watched).length + ")",
+                },
+                {
+                  id: "completed",
+                  label: "Watched (" + friendMovies.filter((m) => m.watched).length + ")",
+                },
+              ]
+            : [
+                { id: "all", label: "All (" + friendShows.length + ")" },
+                {
+                  id: "in_progress",
+                  label:
+                    "In Progress (" +
+                    friendShows.filter((s) => this.getEffectiveShowStatus(s) === "in_progress").length +
+                    ")",
+                },
+                {
+                  id: "interested",
+                  label:
+                    "Watchlist (" +
+                    friendShows.filter((s) => this.getEffectiveShowStatus(s) === "interested").length +
+                    ")",
+                },
+                {
+                  id: "completed",
+                  label:
+                    "Completed (" +
+                    friendShows.filter((s) => this.getEffectiveShowStatus(s) === "completed").length +
+                    ")",
+                },
+              ];
+
+        if (filterBar) {
+          filterBar.innerHTML = filterDefs
+            .map(
+              (f) =>
+                '<button onclick="app.setFriendLibraryFilter(&quot;' +
+                f.id +
+                '&quot;)" class="px-3 py-1.5 rounded-full text-xs font-bold shrink-0 border transition ' +
+                (this.friendLibraryFilter === f.id
+                  ? "tv-yellow-bg border-yellow-400"
+                  : "tv-pill-bar text-zinc-400 border-zinc-800 hover:text-white") +
+                '">' +
+                escapeHtml(f.label) +
+                "</button>"
+            )
+            .join("");
+        }
+
+        if (this.friendLibrarySegment === "movies") {
+          const list = friendMovies.filter((m) => {
+            if (this.friendLibraryFilter === "completed") return Boolean(m.watched);
+            if (this.friendLibraryFilter === "interested") return !m.watched;
+            return true;
+          });
+          if (list.length === 0) {
+            itemsBox.innerHTML =
+              '<p class="text-xs text-zinc-400 py-6 text-center">No movies in this category.</p>';
+            return;
+          }
+          itemsBox.innerHTML = list
+            .map((m) => {
+              const poster =
+                m.posterUrl ||
+                "https://via.placeholder.com/160x240/1c1c22/facc15?text=" +
+                  encodeURIComponent(m.title || "Movie");
+              const statusBadge = m.watched
+                ? '<span class="text-[11px] font-bold text-emerald-400">✓ Watched</span>'
+                : '<span class="text-[11px] font-bold tv-yellow-text">Watchlist</span>';
+              const inMyLib = (this.state.movies || []).some(
+                (myM) =>
+                  myM.id === m.id ||
+                  String(myM.title || "").trim().toLowerCase() ===
+                    String(m.title || "").trim().toLowerCase()
+              );
+              const addBtn = inMyLib
+                ? '<span class="px-2.5 py-1 rounded-full bg-zinc-800 text-zinc-400 text-[11px] font-bold shrink-0">In Library</span>'
+                : '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;movie&quot;, &quot;' +
+                  escapeHtml(m.id) +
+                  '&quot;)" class="px-3 py-1.5 rounded-full tv-pill-bar border border-yellow-400/60 tv-yellow-text hover:bg-yellow-400 hover:text-black text-xs font-extrabold shrink-0 transition">+ Watchlist</button>';
+              return (
+                '<div class="tv-pill-bar rounded-2xl p-2.5 flex items-center justify-between gap-3 border border-zinc-800/80">' +
+                '<div class="flex items-center gap-3 min-w-0">' +
+                '<img src="' +
+                escapeHtml(poster) +
+                '" class="w-12 h-16 object-cover rounded-xl bg-zinc-900 shrink-0" />' +
+                '<div class="min-w-0">' +
+                '<div class="text-sm font-extrabold text-white truncate">' +
+                escapeHtml(m.title) +
+                "</div>" +
+                '<div class="text-xs text-zinc-400">' +
+                escapeHtml(m.year || "") +
+                (m.streamingService ? " · " + escapeHtml(m.streamingService) : "") +
+                "</div>" +
+                statusBadge +
+                "</div>" +
+                "</div>" +
+                addBtn +
+                "</div>"
+              );
+            })
+            .join("");
+          return;
+        }
+
+        const list = friendShows.filter((s) => {
+          const eff = this.getEffectiveShowStatus(s);
+          if (this.friendLibraryFilter === "all") return true;
+          return eff === this.friendLibraryFilter;
+        });
+        if (list.length === 0) {
+          itemsBox.innerHTML =
+            '<p class="text-xs text-zinc-400 py-6 text-center">No series in this category.</p>';
+          return;
+        }
+        itemsBox.innerHTML = list
+          .map((s) => {
+            const poster =
+              s.posterUrl ||
+              "https://via.placeholder.com/160x240/1c1c22/facc15?text=" +
+                encodeURIComponent(s.title || "Show");
+            const prog = this.computeShowProgress(s);
+            const eff = this.getEffectiveShowStatus(s);
+            const statusText =
+              eff === "completed"
+                ? "✓ Completed (" + prog.total + " eps)"
+                : eff === "in_progress"
+                ? "Watching · " + prog.watchedCount + "/" + prog.total + " eps"
+                : "Watchlist";
+            const statusColor =
+              eff === "completed"
+                ? "text-emerald-400"
+                : eff === "in_progress"
+                ? "tv-yellow-text"
+                : "text-zinc-400";
+            const inMyLib = (this.state.shows || []).some(
+              (myS) =>
+                myS.id === s.id ||
+                String(myS.title || "").trim().toLowerCase() ===
+                  String(s.title || "").trim().toLowerCase()
+            );
+            const addBtn = inMyLib
+              ? '<span class="px-2.5 py-1 rounded-full bg-zinc-800 text-zinc-400 text-[11px] font-bold shrink-0">In Library</span>'
+              : '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;show&quot;, &quot;' +
+                escapeHtml(s.id) +
+                '&quot;)" class="px-3 py-1.5 rounded-full tv-pill-bar border border-yellow-400/60 tv-yellow-text hover:bg-yellow-400 hover:text-black text-xs font-extrabold shrink-0 transition">+ Watchlist</button>';
+            return (
+              '<div class="tv-pill-bar rounded-2xl p-2.5 flex items-center justify-between gap-3 border border-zinc-800/80">' +
+              '<div class="flex items-center gap-3 min-w-0">' +
+              '<img src="' +
+              escapeHtml(poster) +
+              '" class="w-12 h-16 object-cover rounded-xl bg-zinc-900 shrink-0" />' +
+              '<div class="min-w-0">' +
+              '<div class="text-sm font-extrabold text-white truncate">' +
+              escapeHtml(s.title) +
+              "</div>" +
+              '<div class="text-xs text-zinc-400">' +
+              escapeHtml(s.year || "") +
+              (s.network ? " · " + escapeHtml(s.network) : "") +
+              "</div>" +
+              '<div class="text-[11px] font-bold ' +
+              statusColor +
+              '">' +
+              escapeHtml(statusText) +
+              "</div>" +
+              "</div>" +
+              "</div>" +
+              addBtn +
+              "</div>"
+            );
+          })
+          .join("");
+      }
+
+      async addFromFriendLibrary(mediaType, itemId) {
+        const lib = this.selectedFriendLibrary;
+        if (!lib) return;
+        if (mediaType === "movie") {
+          const found = (lib.movies || []).find((m) => m.id === itemId);
+          if (!found) return;
+          this.state.movies = [
+            {
+              ...found,
+              watched: false,
+              watchedAt: "",
+              userRating: 0,
+              reaction: "",
+              rewatchCount: 0,
+              isFavorite: false,
+            },
+            ...(this.state.movies || []),
+          ];
+        } else {
+          const found = (lib.shows || []).find((s) => s.id === itemId);
+          if (!found) return;
+          this.state.shows = [
+            {
+              ...found,
+              userStatus: "interested",
+              watchedEpisodes: [],
+              userRating: 0,
+              reaction: "",
+              rewatchCount: 0,
+              isFavorite: false,
+            },
+            ...(this.state.shows || []),
+          ];
+        }
+        await this.persistState();
+        this.renderFriendLibrary();
       }
     }
 

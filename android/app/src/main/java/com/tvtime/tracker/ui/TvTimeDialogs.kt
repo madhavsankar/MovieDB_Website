@@ -932,7 +932,7 @@ fun TvTimeImportHistoryDialog(
                 listOf(
                     "1" to "Export JSON (.json) for full lossless backup and cross-device restore.",
                     "2" to "Export CSV (.csv) to open your watch history in Excel or Google Sheets.",
-                    "3" to "Import a JSON backup file to merge shows, movies, and watched episodes."
+                    "3" to "Import a CSV or JSON backup file to merge shows, movies, and watched episodes."
                 ).forEach { (num, stepText) ->
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1002,7 +1002,7 @@ fun TvTimeImportHistoryDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        "📥 Import Backup File (.json)",
+                        "📥 Import Backup File (.csv or .json)",
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(vertical = 4.dp)
                     )
