@@ -938,6 +938,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.isLoadingFriendLibrary = false;
         this.friendLibrarySegment = "shows"; // "shows" | "movies"
         this.friendLibraryFilter = "all"; // "all" | "in_progress" | "interested" | "completed"
+        this.searchItemCache = new Map();
+        this._searchReqSeq = 0;
+        this._persistPromise = null;
+        this._persistNeedsRerun = false;
+        this._lastLocalMutationAt = 0;
+        this._sessionRemovedKeys = new Set();
 
         this.state = {
           userId: this.userId,
@@ -1325,6 +1331,18 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         return out;
       }
 
+      normalizeTitleKey(raw) {
+        return String(raw || "")
+          .toLowerCase()
+          .split("'")
+          .join("")
+          .split(String.fromCharCode(8217))
+          .join("")
+          .replace(/&/g, " and ")
+          .replace(/[^a-z0-9]+/g, " ")
+          .trim();
+      }
+
       deduplicateState() {
         if (!this.state) return;
         const statusRank = { completed: 4, in_progress: 3, watching: 3, stopped: 2, interested: 1 };
@@ -1332,7 +1350,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const byKey = new Map();
           for (const s of this.state.shows) {
             if (!s || typeof s !== "object") continue;
-            const titleKey = String(s.title || "").trim().toLowerCase();
+            const titleKey = this.normalizeTitleKey(s.title);
             const idKey = String(s.id || "").trim();
             const key = titleKey ? "title:" + titleKey : idKey || "idx:" + byKey.size;
             const incomingEps = (Array.isArray(s.episodes) ? s.episodes : []).map((e) =>
@@ -1411,7 +1429,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const byKey = new Map();
           for (const m of this.state.movies) {
             if (!m || typeof m !== "object") continue;
-            const titleKey = String(m.title || "").trim().toLowerCase();
+            const titleKey = this.normalizeTitleKey(m.title);
             const idKey = String(m.id || "").trim();
             const key = titleKey ? "title:" + titleKey + ":" + (m.year || "") : idKey || "idx:" + byKey.size;
             if (!byKey.has(key)) {
@@ -1525,6 +1543,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
       async loadState(showToast = false, mergeLocal = null) {
         try {
+          if (this._persistPromise) {
+            await this._persistPromise;
+          }
+          const loadStartedAt = Date.now();
           const res = await fetch("/api/state", {
             headers: this.getHeaders(),
           });
@@ -1549,11 +1571,44 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             if (!Array.isArray(data.outgoingFriendRequests)) data.outgoingFriendRequests = [];
             const remoteShowCount = Array.isArray(data.shows) ? data.shows.length : 0;
             const remoteMovieCount = Array.isArray(data.movies) ? data.movies.length : 0;
+            const mutatedDuringFetch = !mergeLocal && this._lastLocalMutationAt > loadStartedAt;
             if (mergeLocal) {
               data.shows = [...(mergeLocal.localShows || []), ...(data.shows || [])];
               data.movies = [...(mergeLocal.localMovies || []), ...(data.movies || [])];
               data.decidedIds = Array.from(
                 new Set([...(mergeLocal.localDecided || []), ...(data.decidedIds || [])])
+              );
+            } else if (mutatedDuringFetch) {
+              const curShows = Array.isArray(this.state.shows) ? this.state.shows : [];
+              const curMovies = Array.isArray(this.state.movies) ? this.state.movies : [];
+              const localShowIds = new Set(curShows.map((s) => String(s.id || "")));
+              const localShowTitles = new Set(curShows.map((s) => this.normalizeTitleKey(s.title)).filter(Boolean));
+              const localMovieIds = new Set(curMovies.map((m) => String(m.id || "")));
+              const localMovieTitles = new Set(curMovies.map((m) => this.normalizeTitleKey(m.title)).filter(Boolean));
+              const extraRemoteShows = (data.shows || []).filter((s) => {
+                if (!s) return false;
+                const sid = String(s.id || "");
+                const st = this.normalizeTitleKey(s.title);
+                const rem = this._sessionRemovedKeys;
+                if (rem && (rem.has(sid) || (st && rem.has("title:" + st)))) {
+                  return false;
+                }
+                return !localShowIds.has(sid) && (!st || !localShowTitles.has(st));
+              });
+              const extraRemoteMovies = (data.movies || []).filter((m) => {
+                if (!m) return false;
+                const mid = String(m.id || "");
+                const mt = this.normalizeTitleKey(m.title);
+                const rem = this._sessionRemovedKeys;
+                if (rem && (rem.has(mid) || (mt && rem.has("title:" + mt)))) {
+                  return false;
+                }
+                return !localMovieIds.has(mid) && (!mt || !localMovieTitles.has(mt));
+              });
+              data.shows = [...curShows, ...extraRemoteShows];
+              data.movies = [...curMovies, ...extraRemoteMovies];
+              data.decidedIds = Array.from(
+                new Set([...(this.state.decidedIds || []), ...(data.decidedIds || [])])
               );
             }
             this.state = data;
@@ -1566,9 +1621,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             this.saveLocalCache();
             this.render();
             if (
-              mergeLocal &&
-              ((this.state.shows || []).length !== remoteShowCount ||
-                (this.state.movies || []).length !== remoteMovieCount)
+              mutatedDuringFetch ||
+              (mergeLocal &&
+                ((this.state.shows || []).length !== remoteShowCount ||
+                  (this.state.movies || []).length !== remoteMovieCount))
             ) {
               await this.persistState();
             }
@@ -1595,9 +1651,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
       }
 
-      async persistState() {
-        this.saveLocalCache();
-        this.render();
+      async _sendPersistRequest() {
         try {
           const res = await fetch("/api/state", {
             method: "POST",
@@ -1628,6 +1682,27 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           }
         } catch (_) {}
         return false;
+      }
+
+      async persistState() {
+        this._lastLocalMutationAt = Date.now();
+        this.saveLocalCache();
+        this.render();
+        this._persistNeedsRerun = true;
+        if (this._persistPromise) {
+          return this._persistPromise;
+        }
+        this._persistPromise = (async () => {
+          let lastOk = false;
+          while (this._persistNeedsRerun) {
+            this._persistNeedsRerun = false;
+            lastOk = await this._sendPersistRequest();
+          }
+          return lastOk;
+        })().finally(() => {
+          this._persistPromise = null;
+        });
+        return this._persistPromise;
       }
 
       initBackNavigation() {
@@ -1782,12 +1857,15 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
       computeShowProgress(show) {
         const episodes = Array.isArray(show.episodes) ? show.episodes : [];
+        const rawStatus = String(show.userStatus || "").toLowerCase();
         const watchedSet = new Set(
           (show.watchedEpisodes || []).map((c) => String(c || "").trim().toUpperCase()).filter(Boolean)
         );
-        const total = episodes.length || 10;
-        const watchedCount =
-          episodes.length > 0
+        const isRawCompletedEmpty = episodes.length === 0 && rawStatus === "completed";
+        const total = isRawCompletedEmpty ? Math.max(watchedSet.size, 1) : episodes.length || 10;
+        const watchedCount = isRawCompletedEmpty
+          ? total
+          : episodes.length > 0
             ? episodes.filter((ep) => watchedSet.has(String(ep.code || "").trim().toUpperCase())).length
             : watchedSet.size;
         const leftCount = Math.max(0, total - watchedCount);
@@ -1831,7 +1909,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           nextEp,
           lastWatchedEp,
           pct,
-          isCompleted: total > 0 && leftCount === 0,
+          isCompleted: (total > 0 && leftCount === 0) || isRawCompletedEmpty,
           hasStarted: watchedCount > 0,
         };
       }
@@ -1840,6 +1918,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const prog = this.computeShowProgress(show);
         const raw = String(show.userStatus || "").toLowerCase();
         if (prog.isCompleted) return "completed";
+        if (raw === "completed" && (!Array.isArray(show.episodes) || show.episodes.length === 0)) {
+          return "completed";
+        }
         if (prog.hasStarted) return raw === "stopped" ? "stopped" : "in_progress";
         return raw === "stopped" ? "stopped" : "interested";
       }
@@ -2482,6 +2563,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           await this.removeItemFromLibrary(movieId);
           return;
         }
+        if (!this._sessionRemovedKeys) this._sessionRemovedKeys = new Set();
+        this._sessionRemovedKeys.delete(String(movie.id || ""));
+        const mTitleKey = this.normalizeTitleKey(movie.title);
+        if (mTitleKey) this._sessionRemovedKeys.delete("title:" + mTitleKey);
         movie.watched = Boolean(isWatched);
         movie.watchedAt = movie.watched ? new Date().toISOString().slice(0, 10) : "";
         await this.persistState();
@@ -2493,14 +2578,35 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (!show) return;
         const eps = Array.isArray(show.episodes) ? show.episodes : [];
         const eff = wasInLib ? this.getEffectiveShowStatus(show) : "preview";
+        const sTitleKey = this.normalizeTitleKey(show.title);
+        let needsCompletedEnrich = false;
         if (status === "completed") {
           if (eff === "completed") {
             await this.removeItemFromLibrary(showId);
             return;
           }
-          show.watchedEpisodes = eps.map((e) => e.code).sort();
+          const baseEps =
+            eps.length > 0
+              ? eps
+              : [
+                  {
+                    code: "S01E01",
+                    season: 1,
+                    number: 1,
+                    title: "Pilot",
+                    airDate: String(show.year || 2024) + "-01-01",
+                  },
+                ];
+          if (eps.length === 0) {
+            show.episodes = baseEps;
+          }
+          show.watchedEpisodes = baseEps.map((e) => e.code).sort();
           show.userStatus = "completed";
           this.openSeasons = new Set();
+          needsCompletedEnrich =
+            eps.length <= 1 ||
+            !eps.some((e) => Number(e.season) === 1) ||
+            this.isSyntheticEpisodeList(eps);
         } else if (status === "in_progress") {
           if ((show.watchedEpisodes || []).length === 0 && eps.length > 0) {
             show.watchedEpisodes = [eps[0].code];
@@ -2522,23 +2628,65 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           show.watchedEpisodes = [];
           show.userStatus = "interested";
         }
+        if (!this._sessionRemovedKeys) this._sessionRemovedKeys = new Set();
+        this._sessionRemovedKeys.delete(String(show.id || ""));
+        if (sTitleKey) this._sessionRemovedKeys.delete("title:" + sTitleKey);
         show.lastWatchedAt = new Date().toISOString();
         await this.persistState();
+
+        if (needsCompletedEnrich) {
+          const detailsUrl = this.getShowDetailsUrl(show);
+          if (detailsUrl) {
+            try {
+              const res = await fetch(detailsUrl);
+              if (res.ok) {
+                const full = await res.json();
+                const liveShow = (this.state.shows || []).find(
+                  (s) => s.id === show.id || (sTitleKey && this.normalizeTitleKey(s.title) === sTitleKey)
+                );
+                if (liveShow && full && Array.isArray(full.episodes) && full.episodes.length > 0) {
+                  liveShow.episodes = full.episodes
+                    .map((e) => this.compactEpisode(e))
+                    .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
+                  if (full.cast && full.cast.length > 0) liveShow.cast = full.cast;
+                  if (full.network && !this.isGenericStreamingLabel(full.network)) liveShow.network = full.network;
+                  if (String(liveShow.userStatus || "").toLowerCase() === "completed") {
+                    liveShow.watchedEpisodes = liveShow.episodes.map((e) => e.code).sort();
+                  }
+                  await this.persistState();
+                }
+              }
+            } catch (_) {}
+          }
+        }
       }
 
       // =========================================================
       // SEARCH / DISCOVER LOGIC
       // =========================================================
+      cacheSearchItems(items) {
+        if (!Array.isArray(items)) return;
+        if (!this.searchItemCache) this.searchItemCache = new Map();
+        for (const r of items) {
+          if (r && r.id) {
+            this.searchItemCache.set(r.id, r);
+          }
+        }
+      }
+
       async runDefaultDiscover() {
+        const seq = ++this._searchReqSeq;
         try {
           const provCsv = Array.from(this.selectedUsPlatforms).join(",");
           const url = provCsv
             ? "/api/discover-providers?providers=" + encodeURIComponent(provCsv)
             : "/api/search?q=" + encodeURIComponent("Game of Thrones");
           const res = await fetch(url);
-          if (res.ok) {
+          if (res.ok && seq === this._searchReqSeq) {
             const data = await res.json();
-            this.searchResults = (data.results || []).filter((r) => r.mediaType !== "actor");
+            const filtered = (data.results || []).filter((r) => r.mediaType !== "actor");
+            this.cacheSearchItems(filtered);
+            this.searchResults = filtered;
             this.renderSearch();
           }
         } catch (_) {}
@@ -2553,11 +2701,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             await this.runDefaultDiscover();
             return;
           }
+          const seq = ++this._searchReqSeq;
           try {
             const res = await fetch("/api/search?q=" + encodeURIComponent(q));
-            if (res.ok) {
+            if (res.ok && seq === this._searchReqSeq) {
               const data = await res.json();
-              this.searchResults = (data.results || []).filter((r) => r.mediaType !== "actor");
+              const filtered = (data.results || []).filter((r) => r.mediaType !== "actor");
+              this.cacheSearchItems(filtered);
+              this.searchResults = filtered;
               this.renderSearch();
             }
           } catch (_) {}
@@ -2603,24 +2754,38 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
 
         const showById = new Map((this.state.shows || []).map((s) => [s.id, s]));
+        const showByTmdbId = new Map(
+          (this.state.shows || []).filter((s) => Number(s.tmdbId) > 0).map((s) => [Number(s.tmdbId), s])
+        );
+        const showByTvmazeId = new Map(
+          (this.state.shows || []).filter((s) => Number(s.tvmazeId) > 0).map((s) => [Number(s.tvmazeId), s])
+        );
         const showByTitle = new Map(
-          (this.state.shows || []).map((s) => [String(s.title || "").trim().toLowerCase(), s])
+          (this.state.shows || []).map((s) => [this.normalizeTitleKey(s.title), s])
         );
         const movieById = new Map((this.state.movies || []).map((m) => [m.id, m]));
+        const movieByTmdbId = new Map(
+          (this.state.movies || []).filter((m) => Number(m.tmdbId) > 0).map((m) => [Number(m.tmdbId), m])
+        );
         const movieByTitle = new Map(
-          (this.state.movies || []).map((m) => [String(m.title || "").trim().toLowerCase(), m])
+          (this.state.movies || []).map((m) => [this.normalizeTitleKey(m.title), m])
         );
 
         listEl.innerHTML =
           items
             .map((item) => {
-              const normTitle = String(item.title || "").trim().toLowerCase();
+              const normTitle = this.normalizeTitleKey(item.title);
               const isMovieItem = item.mediaType === "movie" || String(item.id || "").startsWith("movie_");
               const existingShow = !isMovieItem
-                ? showById.get(item.id) || (normTitle ? showByTitle.get(normTitle) : null)
+                ? showById.get(item.id) ||
+                  (Number(item.tmdbId) > 0 ? showByTmdbId.get(Number(item.tmdbId)) : null) ||
+                  (Number(item.tvmazeId) > 0 ? showByTvmazeId.get(Number(item.tvmazeId)) : null) ||
+                  (normTitle ? showByTitle.get(normTitle) : null)
                 : null;
               const existingMovie = isMovieItem
-                ? movieById.get(item.id) || (normTitle ? movieByTitle.get(normTitle) : null)
+                ? movieById.get(item.id) ||
+                  (Number(item.tmdbId) > 0 ? movieByTmdbId.get(Number(item.tmdbId)) : null) ||
+                  (normTitle ? movieByTitle.get(normTitle) : null)
                 : null;
               const showStatus = existingShow ? this.getEffectiveShowStatus(existingShow) : "";
               const isInWatchlist =
@@ -2715,24 +2880,38 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No results found. Try searching another title!</div>';
       }
 
+      findSearchItemById(itemId) {
+        return (
+          (this.searchResults || []).find((r) => r.id === itemId) ||
+          (this.searchItemCache ? this.searchItemCache.get(itemId) : null) ||
+          null
+        );
+      }
+
       findExistingForSearchItem(itemId) {
-        const item = (this.searchResults || []).find((r) => r.id === itemId);
-        const normTitle = item ? String(item.title || "").trim().toLowerCase() : "";
+        const item = this.findSearchItemById(itemId);
+        const normTitle = item ? this.normalizeTitleKey(item.title) : "";
+        const itemTmdbId = item && Number(item.tmdbId) > 0 ? Number(item.tmdbId) : 0;
+        const itemTvmazeId = item && Number(item.tvmazeId) > 0 ? Number(item.tvmazeId) : 0;
         const isMovieItem =
-          item && (item.mediaType === "movie" || String(item.id || "").startsWith("movie_"));
+          item
+            ? item.mediaType === "movie" || String(item.id || "").startsWith("movie_")
+            : String(itemId || "").startsWith("movie_");
         if (isMovieItem) {
           const existingMovie = (this.state.movies || []).find(
             (m) =>
               m.id === itemId ||
-              (normTitle && String(m.title || "").trim().toLowerCase() === normTitle)
+              (itemTmdbId > 0 && Number(m.tmdbId) === itemTmdbId) ||
+              (normTitle && this.normalizeTitleKey(m.title) === normTitle)
           );
           return { existingShow: null, existingMovie };
         }
         const existingShow = (this.state.shows || []).find(
           (s) =>
             s.id === itemId ||
-            (!item && false) ||
-            (normTitle && !isMovieItem && String(s.title || "").trim().toLowerCase() === normTitle)
+            (itemTmdbId > 0 && Number(s.tmdbId) === itemTmdbId) ||
+            (itemTvmazeId > 0 && Number(s.tvmazeId) === itemTvmazeId) ||
+            (normTitle && this.normalizeTitleKey(s.title) === normTitle)
         );
         const existingMovie = !existingShow
           ? (this.state.movies || []).find((m) => m.id === itemId)
@@ -2802,36 +2981,41 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (!this.isGenericStreamingLabel(movie.streamingService) && Array.isArray(movie.cast) && movie.cast.length > 0) {
           return;
         }
+        const mTitleKey = this.normalizeTitleKey(movie.title);
         fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupId))
           .then((r) => (r.ok ? r.json() : null))
           .then((full) => {
             if (!full) return;
+            const liveMovie =
+              (this.state.movies || []).find(
+                (m) => m.id === movie.id || (mTitleKey && this.normalizeTitleKey(m.title) === mTitleKey)
+              ) || movie;
             let changed = false;
             if (full.streamingService && !this.isGenericStreamingLabel(full.streamingService)) {
-              movie.streamingService = full.streamingService;
+              liveMovie.streamingService = full.streamingService;
               changed = true;
             }
             if (full.runtimeMins && Number(full.runtimeMins) > 0) {
-              movie.runtimeMins = Number(full.runtimeMins);
+              liveMovie.runtimeMins = Number(full.runtimeMins);
               changed = true;
             }
-            if (full.director && !movie.director) {
-              movie.director = full.director;
+            if (full.director && !liveMovie.director) {
+              liveMovie.director = full.director;
               changed = true;
             }
             if (Array.isArray(full.cast) && full.cast.length > 0) {
-              movie.cast = full.cast;
+              liveMovie.cast = full.cast;
               changed = true;
             }
             if (Array.isArray(full.genres) && full.genres.length > 0) {
-              movie.genres = full.genres;
+              liveMovie.genres = full.genres;
               changed = true;
             }
             if (changed) {
-              if ((this.state.movies || []).some((m) => m.id === movie.id)) {
+              if ((this.state.movies || []).some((m) => m.id === liveMovie.id)) {
                 this.persistState();
               }
-              if (this.detailItem && this.detailItem.id === movie.id) {
+              if (this.detailItem && this.detailItem.id === liveMovie.id) {
                 this.renderDetailSheet();
               }
             }
@@ -2840,92 +3024,108 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       async addSearchResult(itemId, targetStatus = "interested") {
-        const item = (this.searchResults || []).find((r) => r.id === itemId);
+        const item = this.findSearchItemById(itemId);
         if (!item) return;
         const isCompleted = targetStatus === "completed";
+        const normTitle = this.normalizeTitleKey(item.title);
         const isMovieItem = item.mediaType === "movie" || String(item.id || "").startsWith("movie_");
 
+        if (!this._sessionRemovedKeys) this._sessionRemovedKeys = new Set();
+        this._sessionRemovedKeys.delete(String(item.id || ""));
+        if (normTitle) this._sessionRemovedKeys.delete("title:" + normTitle);
+
+        const { existingShow, existingMovie } = this.findExistingForSearchItem(itemId);
         if (isMovieItem) {
-          if (!(this.state.movies || []).some((m) => m.id === item.id)) {
-            const newMovie = {
-              ...item,
-              watched: isCompleted,
-              watchedAt: isCompleted ? new Date().toISOString().slice(0, 10) : "",
-              userRating: 0,
-              reaction: "",
-              rewatchCount: 0,
-              isFavorite: false,
-            };
-            this.state.movies = [newMovie, ...(this.state.movies || [])];
-            this.render();
-            await this.persistState();
-            this.enrichMovieStreamingIfNeeded(newMovie);
+          if (existingMovie) {
+            await this.setMovieStatus(existingMovie.id, isCompleted);
+            return;
           }
+          const newMovie = {
+            ...item,
+            watched: isCompleted,
+            watchedAt: isCompleted ? new Date().toISOString().slice(0, 10) : "",
+            userRating: 0,
+            reaction: "",
+            rewatchCount: 0,
+            isFavorite: false,
+          };
+          this.state.movies = [newMovie, ...(this.state.movies || [])];
+          await this.persistState();
+          this.enrichMovieStreamingIfNeeded(newMovie);
           return;
         }
 
-        // TV Show -> update state immediately with targetStatus (never passing through Watchlist when completed), then enrich full episode guide
-        if (!(this.state.shows || []).some((s) => s.id === item.id)) {
-          const fallbackEpisodes =
-            Array.isArray(item.episodes) && item.episodes.length > 0
-              ? item.episodes.map((e) => this.compactEpisode(e))
-              : [
-                  {
-                    code: "S01E01",
-                    season: 1,
-                    number: 1,
-                    title: "Pilot",
-                    airDate: String(item.year || 2024) + "-01-01",
-                    runtimeMins: item.runtimeMins || 45,
-                  },
-                ];
-          const newShow = {
-            ...item,
-            id: item.id,
-            userStatus: isCompleted ? "completed" : "interested",
-            userRating: 0,
-            reaction: "",
-            isFavorite: false,
-            rewatchCount: 0,
-            watchedEpisodes: isCompleted ? fallbackEpisodes.map((e) => e.code).sort() : [],
-            episodes: fallbackEpisodes,
-            lastWatchedAt: isCompleted ? new Date().toISOString() : "",
-          };
-          this.state.shows = [newShow, ...(this.state.shows || [])];
-          this.render();
+        if (existingShow) {
+          await this.setShowStatus(existingShow.id, isCompleted ? "completed" : "interested");
+          return;
+        }
 
-          const detailsUrl = this.getShowDetailsUrl(item);
-          if (detailsUrl) {
-            try {
-              const res = await fetch(detailsUrl);
-              if (res.ok) {
-                const fullShow = await res.json();
-                if (fullShow) {
-                  if (Array.isArray(fullShow.episodes) && fullShow.episodes.length > 0) {
-                    newShow.episodes = fullShow.episodes
-                      .map((e) => this.compactEpisode(e))
-                      .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
-                  }
-                  if (fullShow.tvmazeId && !newShow.tvmazeId) newShow.tvmazeId = fullShow.tvmazeId;
-                  if (fullShow.tmdbId && !newShow.tmdbId) newShow.tmdbId = fullShow.tmdbId;
-                  if (fullShow.network && !this.isGenericStreamingLabel(fullShow.network)) {
-                    newShow.network = fullShow.network;
-                  }
-                  if (Array.isArray(fullShow.cast) && fullShow.cast.length > 0) {
-                    newShow.cast = fullShow.cast;
-                  }
-                  if (fullShow.overview && !newShow.overview) {
-                    newShow.overview = fullShow.overview;
-                  }
-                  if (isCompleted) {
-                    newShow.userStatus = "completed";
-                    newShow.watchedEpisodes = newShow.episodes.map((e) => e.code).sort();
-                  }
+        // TV Show -> persist immediately with targetStatus so DB updates before any re-search or tab close, then enrich full episode guide
+        const fallbackEpisodes =
+          Array.isArray(item.episodes) && item.episodes.length > 0
+            ? item.episodes.map((e) => this.compactEpisode(e))
+            : [
+                {
+                  code: "S01E01",
+                  season: 1,
+                  number: 1,
+                  title: "Pilot",
+                  airDate: String(item.year || 2024) + "-01-01",
+                  runtimeMins: item.runtimeMins || 45,
+                },
+              ];
+        const newShow = {
+          ...item,
+          id: item.id,
+          userStatus: isCompleted ? "completed" : "interested",
+          userRating: 0,
+          reaction: "",
+          isFavorite: false,
+          rewatchCount: 0,
+          watchedEpisodes: isCompleted ? fallbackEpisodes.map((e) => e.code).sort() : [],
+          episodes: fallbackEpisodes,
+          lastWatchedAt: isCompleted ? new Date().toISOString() : "",
+        };
+        this.state.shows = [newShow, ...(this.state.shows || [])];
+        await this.persistState();
+
+        const detailsUrl = this.getShowDetailsUrl(item);
+        if (detailsUrl) {
+          try {
+            const res = await fetch(detailsUrl);
+            if (res.ok) {
+              const fullShow = await res.json();
+              const liveShow = (this.state.shows || []).find(
+                (s) =>
+                  s.id === item.id ||
+                  (Number(item.tmdbId) > 0 && Number(s.tmdbId) === Number(item.tmdbId)) ||
+                  (normTitle && this.normalizeTitleKey(s.title) === normTitle)
+              );
+              if (fullShow && liveShow) {
+                if (Array.isArray(fullShow.episodes) && fullShow.episodes.length > 0) {
+                  liveShow.episodes = fullShow.episodes
+                    .map((e) => this.compactEpisode(e))
+                    .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
                 }
+                if (fullShow.tvmazeId && !liveShow.tvmazeId) liveShow.tvmazeId = fullShow.tvmazeId;
+                if (fullShow.tmdbId && !liveShow.tmdbId) liveShow.tmdbId = fullShow.tmdbId;
+                if (fullShow.network && !this.isGenericStreamingLabel(fullShow.network)) {
+                  liveShow.network = fullShow.network;
+                }
+                if (Array.isArray(fullShow.cast) && fullShow.cast.length > 0) {
+                  liveShow.cast = fullShow.cast;
+                }
+                if (fullShow.overview && !liveShow.overview) {
+                  liveShow.overview = fullShow.overview;
+                }
+                if (String(liveShow.userStatus || "").toLowerCase() === "completed") {
+                  liveShow.userStatus = "completed";
+                  liveShow.watchedEpisodes = liveShow.episodes.map((e) => e.code).sort();
+                }
+                await this.persistState();
               }
-            } catch (_) {}
-          }
-          await this.persistState();
+            }
+          } catch (_) {}
         }
       }
 
@@ -2938,7 +3138,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           this.renderDetailSheet();
           return;
         }
-        const item = (this.searchResults || []).find((r) => r.id === itemId);
+        const item = this.findSearchItemById(itemId);
         if (!item) return;
 
         if (item.mediaType === "movie" || String(item.id || "").startsWith("movie_")) {
@@ -2992,23 +3192,35 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
         const detailsUrl = this.getShowDetailsUrl(item);
         if (detailsUrl) {
+          const pTitleKey = this.normalizeTitleKey(previewShow.title);
           fetch(detailsUrl)
             .then((r) => (r.ok ? r.json() : null))
             .then((full) => {
               if (!full) return;
+              const liveShow = (this.state.shows || []).find(
+                (s) => s.id === previewShow.id || (pTitleKey && this.normalizeTitleKey(s.title) === pTitleKey)
+              );
+              const target = liveShow || previewShow;
               if (Array.isArray(full.episodes) && full.episodes.length > 0) {
-                previewShow.episodes = [...full.episodes].sort(
-                  (a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number))
-                );
+                target.episodes = full.episodes
+                  .map((e) => this.compactEpisode(e))
+                  .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
               }
-              if (full.tvmazeId && !previewShow.tvmazeId) previewShow.tvmazeId = full.tvmazeId;
-              if (full.tmdbId && !previewShow.tmdbId) previewShow.tmdbId = full.tmdbId;
+              if (full.tvmazeId && !target.tvmazeId) target.tvmazeId = full.tvmazeId;
+              if (full.tmdbId && !target.tmdbId) target.tmdbId = full.tmdbId;
               if (full.network && !this.isGenericStreamingLabel(full.network)) {
-                previewShow.network = full.network;
+                target.network = full.network;
               }
-              if (full.cast?.length) previewShow.cast = full.cast;
-              if (full.overview && !previewShow.overview) previewShow.overview = full.overview;
-              if (this.detailItem && this.detailItem.id === previewShow.id) {
+              if (full.cast && full.cast.length > 0) target.cast = full.cast;
+              if (full.overview && !target.overview) target.overview = full.overview;
+              if (liveShow) {
+                if (String(liveShow.userStatus || "").toLowerCase() === "completed") {
+                  liveShow.watchedEpisodes = liveShow.episodes.map((e) => e.code).sort();
+                }
+                this.persistState();
+              }
+              if (this.detailItem && this.detailItem.id === target.id) {
+                this.detailItem = target;
                 this.renderDetailSheet();
               }
             })
@@ -3270,8 +3482,20 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       async removeItemFromLibrary(id) {
-        this.state.shows = (this.state.shows || []).filter((s) => s.id !== id);
-        this.state.movies = (this.state.movies || []).filter((m) => m.id !== id);
+        if (!this._sessionRemovedKeys) this._sessionRemovedKeys = new Set();
+        const targetShow = (this.state.shows || []).find((s) => s.id === id);
+        const targetMovie = (this.state.movies || []).find((m) => m.id === id);
+        this._sessionRemovedKeys.add(String(id || ""));
+        const showTitleKey = targetShow ? this.normalizeTitleKey(targetShow.title) : "";
+        const movieTitleKey = targetMovie ? this.normalizeTitleKey(targetMovie.title) : "";
+        if (showTitleKey) this._sessionRemovedKeys.add("title:" + showTitleKey);
+        if (movieTitleKey) this._sessionRemovedKeys.add("title:" + movieTitleKey);
+        this.state.shows = (this.state.shows || []).filter(
+          (s) => s.id !== id && (!showTitleKey || this.normalizeTitleKey(s.title) !== showTitleKey)
+        );
+        this.state.movies = (this.state.movies || []).filter(
+          (m) => m.id !== id && (!movieTitleKey || this.normalizeTitleKey(m.title) !== movieTitleKey)
+        );
         this.closeDetailSheet();
         await this.persistState();
       }

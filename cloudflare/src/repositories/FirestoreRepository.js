@@ -47,13 +47,25 @@ export class FirestoreRepository {
     return out;
   }
 
+  static normalizeTitleKey(raw) {
+    return String(raw || "")
+      .toLowerCase()
+      .split("'")
+      .join("")
+      .split("\u2019")
+      .join("")
+      .replace(/&/g, " and ")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  }
+
   static deduplicateShows(shows) {
     if (!Array.isArray(shows)) return [];
     const byKey = new Map();
     const statusRank = { completed: 4, in_progress: 3, watching: 3, stopped: 2, interested: 1 };
     for (const s of shows) {
       if (!s || typeof s !== "object") continue;
-      const titleKey = String(s.title || "").trim().toLowerCase();
+      const titleKey = FirestoreRepository.normalizeTitleKey(s.title);
       const idKey = String(s.id || "").trim();
       const key = titleKey ? `title:${titleKey}` : idKey || `idx:${byKey.size}`;
       const incomingEps = (Array.isArray(s.episodes) ? s.episodes : []).map((e) =>
@@ -134,7 +146,7 @@ export class FirestoreRepository {
     const byKey = new Map();
     for (const m of movies) {
       if (!m || typeof m !== "object") continue;
-      const titleKey = String(m.title || "").trim().toLowerCase();
+      const titleKey = FirestoreRepository.normalizeTitleKey(m.title);
       const idKey = String(m.id || "").trim();
       const key = titleKey ? `title:${titleKey}:${m.year || ""}` : idKey || `idx:${byKey.size}`;
       if (!byKey.has(key)) {
@@ -325,11 +337,12 @@ export class FirestoreRepository {
     };
 
     let serializedPayload = JSON.stringify(payloadObj);
-    if (serializedPayload.length > 750000) {
+    if (serializedPayload.length > 550000) {
       payloadObj.shows = shows.map((s) => {
         if (s.userStatus !== "completed") return s;
         return {
           ...s,
+          watchedEpisodes: [],
           episodes: (Array.isArray(s.episodes) ? s.episodes : []).map((ep) => ({
             code: ep.code,
             season: ep.season,
@@ -339,10 +352,10 @@ export class FirestoreRepository {
       });
       serializedPayload = JSON.stringify(payloadObj);
     }
-    if (serializedPayload.length > 850000) {
+    if (serializedPayload.length > 750000) {
       payloadObj.shows = payloadObj.shows.map((s) => {
         const eps = Array.isArray(s.episodes) ? s.episodes : [];
-        if (eps.length <= 150) return s;
+        if (eps.length <= 100) return s;
         return {
           ...s,
           episodes: eps.map((ep) => ({

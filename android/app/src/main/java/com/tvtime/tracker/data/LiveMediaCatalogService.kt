@@ -370,10 +370,11 @@ object LiveMediaCatalogService {
                 }
 
                 fun normTitleKey(raw: String): String =
-                    raw.lowercase().replace("&", " and ").replace(Regex("[^a-z0-9]+"), " ").trim()
+                    TvTimeProgressCalculator.normalizeTitleKey(raw)
 
                 val normQ = normTitleKey(q)
                 val combinedItems = mutableListOf<JSONObject>()
+                val personItems = mutableListOf<JSONObject>()
                 if (Regex("\\band\\b", RegexOption.IGNORE_CASE).containsMatchIn(q)) {
                     val ampEncoded = URLEncoder.encode(q.replace(Regex("\\band\\b", RegexOption.IGNORE_CASE), "&"), "UTF-8")
                     val ampRoot = fetchTmdbJson("/search/tv?query=$ampEncoded&include_adult=false&language=en-US&page=1")
@@ -387,8 +388,101 @@ object LiveMediaCatalogService {
                 val multiArr = multiRoot?.optJSONArray("results") ?: JSONArray()
                 for (i in 0 until minOf(16, multiArr.length())) {
                     val item = multiArr.optJSONObject(i) ?: continue
-                    combinedItems.add(item)
+                    if (item.optString("media_type", "").equals("person", ignoreCase = true)) {
+                        personItems.add(item)
+                    } else {
+                        combinedItems.add(item)
+                    }
                 }
+
+                // Expand actor matches into movies starring that actor (never emitting actor items)
+                val actorMovieResults = mutableListOf<SearchResultItem>()
+                val matchedActors = personItems.filter { p ->
+                    val pid = p.optInt("id", 0)
+                    val pName = normTitleKey(p.optString("name", ""))
+                    pid > 0 && pName.isNotEmpty() && (
+                        pName == normQ ||
+                            pName.contains(normQ) ||
+                            normQ.contains(pName) ||
+                            personItems.indexOf(p) == 0
+                        )
+                }.sortedByDescending { p ->
+                    val pName = normTitleKey(p.optString("name", ""))
+                    val exactBonus = if (pName == normQ) 200.0 else if (pName.startsWith(normQ)) 80.0 else 0.0
+                    p.optDouble("popularity", 0.0) + exactBonus
+                }.take(2)
+
+                for (actorObj in matchedActors) {
+                    val actorId = actorObj.optInt("id", 0)
+                    val actorName = actorObj.optString("name", "").trim()
+                    val creditsJson = fetchTmdbJson("/person/$actorId/movie_credits?language=en-US") ?: continue
+                    val castArr = creditsJson.optJSONArray("cast") ?: JSONArray()
+                    val candidateMovies = mutableListOf<JSONObject>()
+                    for (ci in 0 until castArr.length()) {
+                        val m = castArr.optJSONObject(ci) ?: continue
+                        val mid = m.optInt("id", 0)
+                        val mTitle = m.optString("title", m.optString("original_title", "")).trim()
+                        if (mid <= 0 || mTitle.isEmpty()) continue
+                        val genreIds = m.optJSONArray("genre_ids")
+                        var isDoc = false
+                        if (genreIds != null) {
+                            for (gi in 0 until genreIds.length()) {
+                                if (genreIds.optInt(gi, 0) == 99) isDoc = true
+                            }
+                        }
+                        val charLower = m.optString("character", "").lowercase()
+                        val isSelf = charLower.contains("self") || charLower.contains("himself") ||
+                            charLower.contains("herself") || charLower.contains("archive")
+                        if (isDoc && isSelf && m.optInt("vote_count", 0) < 200) continue
+                        candidateMovies.add(m)
+                    }
+                    candidateMovies.sortByDescending { m ->
+                        m.optDouble("popularity", 0.0) + minOf(300.0, m.optDouble("vote_count", 0.0) / 12.0)
+                    }
+                    for (m in candidateMovies.take(24)) {
+                        val mid = m.optInt("id", 0)
+                        val title = m.optString("title", m.optString("original_title", "Untitled Movie"))
+                        val year = m.optString("release_date", "").take(4).toIntOrNull() ?: 2024
+                        val key = "${normTitleKey(title)}_$year"
+                        if (!seenMovies.add(key)) continue
+                        val posterPath = m.optString("poster_path", "")
+                        val poster = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else ""
+                        val rating = (m.optDouble("vote_average", 7.8).takeIf { !it.isNaN() && it > 0 } ?: 7.8)
+                        val rawOverview = stripHtml(m.optString("overview", ""))
+                        val overview = if (actorName.isNotEmpty() && rawOverview.isNotEmpty()) {
+                            "Starring $actorName · $rawOverview"
+                        } else if (actorName.isNotEmpty()) {
+                            "Starring $actorName"
+                        } else {
+                            rawOverview
+                        }
+                        actorMovieResults.add(
+                            SearchResultItem(
+                                externalId = "movie_$mid",
+                                tmdbId = mid,
+                                mediaType = "movie",
+                                title = title,
+                                year = year,
+                                networkOrDirector = if (actorName.isNotEmpty()) "Starring $actorName" else "TMDB Feature Film",
+                                status = "Released",
+                                runtimeMins = 125,
+                                genresCsv = "Movie",
+                                castCsv = actorName,
+                                rating = Math.round(rating * 10.0) / 10.0,
+                                posterUrl = poster,
+                                overview = overview
+                            )
+                        )
+                    }
+                }
+
+                val topMultiIsPerson = multiArr.length() > 0 &&
+                    (multiArr.optJSONObject(0)?.optString("media_type", "")?.equals("person", ignoreCase = true) == true ||
+                        matchedActors.any { normTitleKey(it.optString("name", "")) == normQ })
+                if (topMultiIsPerson && actorMovieResults.isNotEmpty()) {
+                    results.addAll(actorMovieResults)
+                }
+
                 combinedItems.sortByDescending { item ->
                     val rawTitle = item.optString("name", item.optString("title", ""))
                     val tKey = normTitleKey(rawTitle)
@@ -449,6 +543,9 @@ object LiveMediaCatalogService {
                             )
                         )
                     }
+                }
+                if (!topMultiIsPerson && actorMovieResults.isNotEmpty()) {
+                    results.addAll(actorMovieResults)
                 }
             } catch (_: Exception) {}
         }

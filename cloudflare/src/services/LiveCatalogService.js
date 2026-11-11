@@ -321,6 +321,7 @@ export class LiveCatalogService {
       }
 
       const combinedTmdbItems = [];
+      let tmdbRawResults = [];
       if (tmdbAmpTvRes.status === "fulfilled" && tmdbAmpTvRes.value && tmdbAmpTvRes.value.ok) {
         const ampData = await tmdbAmpTvRes.value.json();
         for (const tvItem of (ampData?.results || []).slice(0, 10)) {
@@ -331,10 +332,115 @@ export class LiveCatalogService {
       }
       if (tmdbRes.status === "fulfilled" && tmdbRes.value && tmdbRes.value.ok) {
         const tmdbData = await tmdbRes.value.json();
-        for (const item of (tmdbData?.results || []).slice(0, 18)) {
+        tmdbRawResults = Array.isArray(tmdbData?.results) ? tmdbData.results : [];
+        for (const item of tmdbRawResults.slice(0, 18)) {
           if (item && item.id) combinedTmdbItems.push(item);
         }
       }
+
+      // Expand matched actors (person) into their movies (without ever returning actor cards)
+      const matchedPersons = [];
+      const seenPersonIds = new Set();
+      for (let idx = 0; idx < Math.min(8, tmdbRawResults.length); idx++) {
+        const p = tmdbRawResults[idx];
+        if (!p || !p.id || String(p.media_type || "").toLowerCase() !== "person") continue;
+        const pNorm = normalizeSearchTitle(p.name || p.original_name || "");
+        if (!pNorm || seenPersonIds.has(p.id)) continue;
+        if (
+          idx < 3 ||
+          pNorm === normQuery ||
+          (normQuery.length >= 4 && (pNorm.startsWith(normQuery) || normQuery.startsWith(pNorm)))
+        ) {
+          seenPersonIds.add(p.id);
+          matchedPersons.push(p);
+        }
+      }
+      const actorIsPrimary =
+        matchedPersons.length > 0 &&
+        (String(tmdbRawResults[0]?.media_type || "").toLowerCase() === "person" ||
+          normalizeSearchTitle(matchedPersons[0].name || "") === normQuery);
+
+      const actorMovieItems = [];
+      if (matchedPersons.length > 0) {
+        const creditReqs = matchedPersons.slice(0, 2).map((p) => {
+          const cReq = LiveCatalogService._buildTmdbRequest(
+            `/person/${p.id}/movie_credits?language=en-US`,
+            env
+          );
+          return cReq
+            ? fetchImpl(cReq.url, { headers: cReq.headers })
+                .then((r) => (r.ok ? r.json() : null))
+                .then((data) => ({ personName: p.name || "Actor", cast: data?.cast || [] }))
+                .catch(() => null)
+            : Promise.resolve(null);
+        });
+        const creditBatches = (await Promise.all(creditReqs)).filter(Boolean);
+        for (const batch of creditBatches) {
+          const cleanCast = (batch.cast || []).filter((m) => {
+            if (!m || !m.id || !(m.title || m.original_title)) return false;
+            const gIds = Array.isArray(m.genre_ids) ? m.genre_ids : [];
+            const charLower = String(m.character || "").toLowerCase();
+            const isSelfDoc =
+              gIds.includes(99) &&
+              (charLower.includes("self") ||
+                charLower.includes("himself") ||
+                charLower.includes("herself") ||
+                charLower.includes("archive")) &&
+              (Number(m.vote_count) || 0) < 200;
+            return !isSelfDoc;
+          });
+          cleanCast.sort((a, b) => {
+            const aVotes = Number(a.vote_count) || 0;
+            const bVotes = Number(b.vote_count) || 0;
+            const aScore =
+              aVotes >= 30
+                ? (Number(a.popularity) || 0) + Math.min(300, aVotes / 20)
+                : (Number(a.popularity) || 0) * 0.2;
+            const bScore =
+              bVotes >= 30
+                ? (Number(b.popularity) || 0) + Math.min(300, bVotes / 20)
+                : (Number(b.popularity) || 0) * 0.2;
+            return bScore - aScore;
+          });
+          for (const m of cleanCast.slice(0, 28)) {
+            actorMovieItems.push({ movie: m, personName: batch.personName });
+          }
+        }
+      }
+
+      const pushActorMovies = () => {
+        for (const entry of actorMovieItems) {
+          const m = entry.movie;
+          const title = m.title || m.original_title || "Untitled Movie";
+          const rel = String(m.release_date || "");
+          const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
+          const key = `${normalizeSearchTitle(title)}_${year}`;
+          if (seenMovieTitles.has(key)) continue;
+          seenMovieTitles.add(key);
+          const posterUrl = m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : "";
+          const cleanOverview = stripHtml(m.overview || "");
+          results.push({
+            id: `movie_${m.id}`,
+            tmdbId: m.id,
+            mediaType: "movie",
+            title,
+            year,
+            director: `Starring ${entry.personName}`,
+            cast: [entry.personName],
+            runtimeMins: 125,
+            genres: ["Movie"],
+            streamingService: "Theaters / Streaming",
+            rating: m.vote_average ? Math.round(Number(m.vote_average) * 10) / 10 : 7.8,
+            posterUrl,
+            overview: cleanOverview ? `Starring ${entry.personName} · ${cleanOverview}` : `Starring ${entry.personName}`,
+          });
+        }
+      };
+
+      if (actorIsPrimary) {
+        pushActorMovies();
+      }
+
       combinedTmdbItems.sort((a, b) => {
         const aTitle = normalizeSearchTitle(a.name || a.title || a.original_name || a.original_title || "");
         const bTitle = normalizeSearchTitle(b.name || b.title || b.original_name || b.original_title || "");
@@ -348,6 +454,7 @@ export class LiveCatalogService {
       for (const item of combinedTmdbItems) {
         if (!item || !item.id) continue;
         const mType = String(item.media_type || "").toLowerCase();
+        if (actorIsPrimary && (Number(item.vote_count) || 0) < 25) continue;
         if (mType === "tv") {
           const title = item.name || item.original_name || "Untitled Show";
           const normTitle = normalizeSearchTitle(title);
@@ -399,30 +506,36 @@ export class LiveCatalogService {
         }
       }
 
-      for (const entry of showsData.slice(0, 12)) {
-        const show = entry?.show;
-        if (!show || !show.id) continue;
-        const normTitle = normalizeSearchTitle(show.name || "");
-        if (!normTitle || seenShowTitles.has(normTitle)) continue;
-        seenShowTitles.add(normTitle);
-        const premiered = String(show.premiered || "");
-        const year = premiered ? parseInt(premiered.slice(0, 4), 10) || 2024 : 2024;
-        const network = show.network?.name || show.webChannel?.name || "Streaming";
-        const posterUrl = show.image?.medium || show.image?.original || "";
-        results.push({
-          id: `tvmaze_${show.id}`,
-          tvmazeId: show.id,
-          mediaType: "show",
-          title: show.name || "Untitled Show",
-          year,
-          network,
-          status: show.status || "Running",
-          runtimeMins: Number(show.averageRuntime || show.runtime) || 45,
-          genres: Array.isArray(show.genres) ? show.genres : [],
-          rating: Number(show.rating?.average) || 7.8,
-          posterUrl: posterUrl.replace(/^http:\/\//i, "https://"),
-          overview: stripHtml(show.summary),
-        });
+      if (!actorIsPrimary && actorMovieItems.length > 0) {
+        pushActorMovies();
+      }
+
+      if (!actorIsPrimary || actorMovieItems.length === 0) {
+        for (const entry of showsData.slice(0, 12)) {
+          const show = entry?.show;
+          if (!show || !show.id) continue;
+          const normTitle = normalizeSearchTitle(show.name || "");
+          if (!normTitle || seenShowTitles.has(normTitle)) continue;
+          seenShowTitles.add(normTitle);
+          const premiered = String(show.premiered || "");
+          const year = premiered ? parseInt(premiered.slice(0, 4), 10) || 2024 : 2024;
+          const network = show.network?.name || show.webChannel?.name || "Streaming";
+          const posterUrl = show.image?.medium || show.image?.original || "";
+          results.push({
+            id: `tvmaze_${show.id}`,
+            tvmazeId: show.id,
+            mediaType: "show",
+            title: show.name || "Untitled Show",
+            year,
+            network,
+            status: show.status || "Running",
+            runtimeMins: Number(show.averageRuntime || show.runtime) || 45,
+            genres: Array.isArray(show.genres) ? show.genres : [],
+            rating: Number(show.rating?.average) || 7.8,
+            posterUrl: posterUrl.replace(/^http:\/\//i, "https://"),
+            overview: stripHtml(show.summary),
+          });
+        }
       }
 
       if (imdbRes.status === "fulfilled" && imdbRes.value.ok) {
@@ -431,7 +544,7 @@ export class LiveCatalogService {
           if (!item || !item.id || !item.l) continue;
           const qid = String(item.qid || "").toLowerCase();
           if (qid === "movie" || qid === "feature" || qid === "tvmovie") {
-            const key = `${item.l.toLowerCase()}_${item.y || 2024}`;
+            const key = `${normalizeSearchTitle(item.l)}_${item.y || 2024}`;
             if (seenMovieTitles.has(key)) continue;
             seenMovieTitles.add(key);
             const castArr = item.s ? String(item.s).split(",").map((c) => c.trim()).filter(Boolean) : [];

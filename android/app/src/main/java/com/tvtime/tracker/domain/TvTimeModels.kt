@@ -111,6 +111,15 @@ data class SearchResultItem(
 
 object TvTimeProgressCalculator {
 
+    fun normalizeTitleKey(raw: String): String {
+        return raw.lowercase()
+            .replace("'", "")
+            .replace("\u2019", "")
+            .replace("&", " and ")
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
+    }
+
     fun parseEpisodeList(episodesJson: String): List<EpisodeModel> {
         if (episodesJson.isBlank()) return emptyList()
         return try {
@@ -149,14 +158,20 @@ object TvTimeProgressCalculator {
 
     fun computeShowProgress(
         episodes: List<EpisodeModel>,
-        watchedCodes: Set<String>
+        watchedCodes: Set<String>,
+        rawUserStatus: String = ""
     ): ShowProgressSummary {
         val normWatched = watchedCodes.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
-        val total = if (episodes.isNotEmpty()) episodes.size else 10
-        val watchedCount = if (episodes.isNotEmpty()) {
-            episodes.count { normWatched.contains(it.code.trim().uppercase()) }
-        } else {
-            normWatched.size
+        val isRawCompletedEmpty = episodes.isEmpty() && rawUserStatus.trim().equals("completed", ignoreCase = true)
+        val total = when {
+            isRawCompletedEmpty -> normWatched.size.coerceAtLeast(1)
+            episodes.isNotEmpty() -> episodes.size
+            else -> 10
+        }
+        val watchedCount = when {
+            isRawCompletedEmpty -> total
+            episodes.isNotEmpty() -> episodes.count { normWatched.contains(it.code.trim().uppercase()) }
+            else -> normWatched.size
         }
         val leftCount = (total - watchedCount).coerceAtLeast(0)
         val nextEp = episodes.firstOrNull { !normWatched.contains(it.code.trim().uppercase()) }
@@ -195,7 +210,7 @@ object TvTimeProgressCalculator {
             leftCount = leftCount,
             nextEpisode = nextEp,
             progressFraction = fraction,
-            isCompleted = total > 0 && leftCount == 0,
+            isCompleted = (total > 0 && leftCount == 0) || isRawCompletedEmpty,
             hasStarted = watchedCount > 0,
             lastWatchedEpisode = lastWatchedEp
         )
@@ -218,7 +233,7 @@ object TvTimeProgressCalculator {
         watchedCodes: Set<String>,
         rawUserStatus: String
     ): String {
-        val progress = computeShowProgress(episodes, watchedCodes)
+        val progress = computeShowProgress(episodes, watchedCodes, rawUserStatus)
         return deriveEffectiveShowStatus(progress, rawUserStatus)
     }
 

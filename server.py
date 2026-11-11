@@ -312,18 +312,64 @@ def search_multi(query):
         tmdb_token = (CONFIG.get("TMDB_READ_TOKEN") or os.environ.get("TMDB_READ_TOKEN") or "").strip()
         tmdb_key = (CONFIG.get("TMDB_API_KEY") or os.environ.get("TMDB_API_KEY") or "").strip()
         if tmdb_token or tmdb_key:
-            try:
-                tmdb_url = (
-                    f"https://api.themoviedb.org/3/search/movie?query={enc}&include_adult=false&language=en-US&page=1"
+            def _tmdb_get(path):
+                sep = "&" if "?" in path else "?"
+                url = (
+                    f"https://api.themoviedb.org/3{path}"
                     if tmdb_token
-                    else f"https://api.themoviedb.org/3/search/movie?query={enc}&include_adult=false&language=en-US&page=1&api_key={urllib.parse.quote(tmdb_key)}"
+                    else f"https://api.themoviedb.org/3{path}{sep}api_key={urllib.parse.quote(tmdb_key)}"
                 )
                 req_headers = {"User-Agent": "TVTimeTracker/1.0", "Accept": "application/json"}
                 if tmdb_token:
                     req_headers["Authorization"] = f"Bearer {tmdb_token}"
-                req = urllib.request.Request(tmdb_url, headers=req_headers)
+                req = urllib.request.Request(url, headers=req_headers)
                 with urllib.request.urlopen(req, timeout=8) as r:
-                    tmdb_data = json.loads(r.read().decode("utf-8"))
+                    return json.loads(r.read().decode("utf-8"))
+
+            try:
+                person_data = _tmdb_get(f"/search/person?query={enc}&include_adult=false&language=en-US&page=1")
+                for person in (person_data.get("results") or [])[:2]:
+                    pid = person.get("id")
+                    pname = str(person.get("name") or "").strip()
+                    if not pid or not pname:
+                        continue
+                    credits = _tmdb_get(f"/person/{pid}/movie_credits?language=en-US")
+                    cast_movies = list(credits.get("cast") or [])
+                    cast_movies.sort(
+                        key=lambda m: float(m.get("popularity") or 0) + min(300.0, float(m.get("vote_count") or 0) / 12.0),
+                        reverse=True,
+                    )
+                    for m in cast_movies[:24]:
+                        title = m.get("title") or m.get("original_title")
+                        if not m.get("id") or not title:
+                            continue
+                        rel = str(m.get("release_date") or "2024")[:4]
+                        yr = int(rel) if rel.isdigit() else 2024
+                        key = f"{title.lower()}_{yr}"
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        poster_path = m.get("poster_path") or ""
+                        raw_ov = m.get("overview") or ""
+                        out.append({
+                            "id": f"movie_{m['id']}",
+                            "tmdbId": m["id"],
+                            "mediaType": "movie",
+                            "title": title,
+                            "year": yr,
+                            "runtimeMins": 125,
+                            "genres": ["Movie"],
+                            "cast": [pname],
+                            "director": f"Starring {pname}",
+                            "streamingService": "Theaters / Streaming",
+                            "rating": round(float(m.get("vote_average") or 7.8), 1),
+                            "posterUrl": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else "",
+                            "overview": f"Starring {pname} · {raw_ov}" if raw_ov else f"Starring {pname}",
+                        })
+            except Exception:
+                pass
+            try:
+                tmdb_data = _tmdb_get(f"/search/movie?query={enc}&include_adult=false&language=en-US&page=1")
                 for item in (tmdb_data.get("results") or [])[:12]:
                     title = item.get("title") or item.get("original_title")
                     if not item.get("id") or not title:

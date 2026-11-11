@@ -601,6 +601,307 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertTrue(out["hasSeason1Html"])
         self.assertTrue(out["hasSeason35Html"])
 
+    def test_actor_search_returns_actor_movies_without_actor_items(self):
+        """Verifies searching an actor name returns movies of that actor and zero actor items."""
+        svc_path = os.path.join(ROOT_DIR, "cloudflare", "src", "services", "LiveCatalogService.js")
+        with open(svc_path, "r", encoding="utf-8") as f:
+            svc_src = (
+                f.read()
+                .replace("export function formatEpisodeCode", "function formatEpisodeCode")
+                .replace("export class LiveCatalogService", "class LiveCatalogService")
+            )
+
+        harness = (
+            svc_src
+            + """
+            (async () => {
+              const mockFetch = async (url) => {
+                const rawUrl = String(url || "");
+                if (rawUrl.includes("/search/multi")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      results: [
+                        { id: 6193, media_type: "person", name: "Leonardo DiCaprio", popularity: 95.0 }
+                      ]
+                    })
+                  };
+                }
+                if (rawUrl.includes("/person/6193/movie_credits")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      cast: [
+                        { id: 27205, title: "Inception", release_date: "2010-07-16", popularity: 120, vote_count: 35000, vote_average: 8.4, genre_ids: [28, 878], character: "Dom Cobb", poster_path: "/inc.jpg", overview: "Dream heist." },
+                        { id: 597, title: "Titanic", release_date: "1997-11-18", popularity: 110, vote_count: 24000, vote_average: 7.9, genre_ids: [18, 10749], character: "Jack Dawson", poster_path: "/tit.jpg", overview: "Ocean liner." },
+                        { id: 999999, title: "Archive Self Short", release_date: "2020-01-01", popularity: 5, vote_count: 12, vote_average: 6.0, genre_ids: [99], character: "Self (archive footage)", overview: "Doc." }
+                      ]
+                    })
+                  };
+                }
+                return { ok: true, json: async () => [] };
+              };
+
+              const res = await LiveCatalogService.searchMulti("Leonardo DiCaprio", {
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "test_key" }
+              });
+              const out = JSON.stringify({
+                count: res.results.length,
+                hasActorItems: res.results.some((r) => r.mediaType === "actor"),
+                allMovies: res.results.every((r) => r.mediaType === "movie"),
+                titles: res.results.map((r) => r.title),
+                firstDirector: res.results[0] ? res.results[0].director : "",
+                firstCast: res.results[0] ? res.results[0].cast : []
+              });
+              if (typeof console !== "undefined" && console.log) console.log(out);
+              else if (typeof print !== "undefined") print(out);
+            })();
+            """
+        )
+        out = self._run_js(harness)
+        self.assertFalse(out["hasActorItems"])
+        self.assertTrue(out["allMovies"])
+        self.assertEqual(out["titles"], ["Inception", "Titanic"])
+        self.assertEqual(out["firstDirector"], "Starring Leonardo DiCaprio")
+        self.assertEqual(out["firstCast"], ["Leonardo DiCaprio"])
+
+    def test_search_quick_complete_persists_immediately_and_survives_research_and_compaction(self):
+        """Verifies marking completed in search saves immediately, survives re-search/cloning, and compacts cleanly in Firestore."""
+        view_path = os.path.join(ROOT_DIR, "cloudflare", "src", "ui", "WebAppView.js")
+        repo_path = os.path.join(ROOT_DIR, "cloudflare", "src", "repositories", "FirestoreRepository.js")
+        with open(repo_path, "r", encoding="utf-8") as f:
+            repo_src = (
+                f.read()
+                .replace("export const STARTER_SHOWS", "const STARTER_SHOWS")
+                .replace("export const STARTER_MOVIES", "const STARTER_MOVIES")
+                .replace("export const STARTER_ACTORS", "const STARTER_ACTORS")
+                .replace("export class FirestoreRepository", "class FirestoreRepository")
+            )
+        with open(view_path, "r", encoding="utf-8") as f:
+            view_src = f.read().replace("export const WEB_APP_HTML", "const WEB_APP_HTML")
+
+        harness = (
+            repo_src
+            + "\n"
+            + view_src
+            + """
+            (async () => {
+              const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+              const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+              const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+              const els = {};
+              const makeEl = (id) => {
+                if (!els[id]) {
+                  els[id] = {
+                    id,
+                    innerHTML: "",
+                    textContent: "",
+                    value: "",
+                    className: "",
+                    style: {},
+                    classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => true }
+                  };
+                }
+                return els[id];
+              };
+              Object.defineProperty(globalThis, "window", {
+                value: { location: { search: "" }, history: { replaceState: () => {}, pushState: () => {} }, addEventListener: () => {} },
+                writable: true,
+                configurable: true
+              });
+              Object.defineProperty(globalThis, "document", {
+                value: { cookie: "", getElementById: makeEl, querySelectorAll: () => [], addEventListener: () => {} },
+                writable: true,
+                configurable: true
+              });
+              const storage = {};
+              Object.defineProperty(globalThis, "localStorage", {
+                value: {
+                  getItem: (k) => storage[k] || null,
+                  setItem: (k, v) => { storage[k] = String(v); },
+                  removeItem: (k) => { delete storage[k]; }
+                },
+                writable: true,
+                configurable: true
+              });
+              Object.defineProperty(globalThis, "setTimeout", {
+                value: (fn) => { fn(); return 1; },
+                writable: true,
+                configurable: true
+              });
+              Object.defineProperty(globalThis, "clearTimeout", {
+                value: () => {},
+                writable: true,
+                configurable: true
+              });
+
+              let savedPayloads = [];
+              let resolveShowDetails = null;
+              const detailsGate = new Promise((r) => { resolveShowDetails = r; });
+              const himymFullEpisodes = Array.from({ length: 208 }, (_, idx) => {
+                const sNum = Math.floor(idx / 24) + 1;
+                const eNum = (idx % 24) + 1;
+                return {
+                  code: "S" + String(sNum).padStart(2, "0") + "E" + String(eNum).padStart(2, "0"),
+                  season: sNum,
+                  number: eNum,
+                  title: "Episode " + (idx + 1),
+                  airDate: "2006-01-01",
+                  runtimeMins: 22
+                };
+              });
+
+              Object.defineProperty(globalThis, "fetch", {
+                value: async (url, opts) => {
+                  const u = String(url || "");
+                  if (u === "/api/state" && opts && opts.method === "POST") {
+                    savedPayloads.push(JSON.parse(opts.body));
+                    return { ok: true, json: async () => ({ ok: true }) };
+                  }
+                  if (u.includes("/api/show-details")) {
+                    await detailsGate;
+                    return {
+                      ok: true,
+                      json: async () => ({
+                        id: "tmdb_tv_1100",
+                        tmdbId: 1100,
+                        title: "How I Met Your Mother",
+                        episodes: himymFullEpisodes
+                      })
+                    };
+                  }
+                  return { ok: false };
+                },
+                writable: true,
+                configurable: true
+              });
+
+              (new Function(clientJs))();
+              const dummy = Object.create(globalThis.TvTimeClientClass.prototype);
+              dummy.userId = "tester";
+              dummy.userEmail = "tester@example.com";
+              dummy.googleIdToken = "tok";
+              dummy.activeTab = "search";
+              dummy.homeSegment = "shows";
+              dummy.mediaFilter = "in_progress";
+              dummy.selectedUsPlatforms = new Set();
+              dummy.usPlatforms = ["Netflix", "Prime Video", "Hulu", "Max", "Disney+", "Apple TV+", "Paramount+", "Peacock"];
+              dummy.swipeMediaFilter = "all";
+              dummy.searchSort = "top";
+              dummy.searchQuery = "How I Met Your Mother";
+              dummy.searchItemCache = new Map();
+              dummy._searchReqSeq = 0;
+              dummy._persistPromise = null;
+              dummy._persistNeedsRerun = false;
+              dummy._lastLocalMutationAt = 0;
+              dummy._sessionRemovedKeys = new Set();
+              dummy.openSeasons = new Set();
+              dummy.tabHistory = [];
+              dummy.recPool = [];
+              dummy.state = { userId: "tester", email: "tester@example.com", shows: [], movies: [], actors: [], decidedIds: [], friends: [], incomingFriendRequests: [], outgoingFriendRequests: [] };
+
+              const initialResults = [
+                { id: "tmdb_tv_1100", tmdbId: 1100, mediaType: "show", title: "How I Met Your Mother", year: 2005, rating: 8.2 }
+              ];
+              dummy.cacheSearchItems(initialResults);
+              dummy.searchResults = initialResults;
+              dummy.renderSearch();
+
+              // Start quickMarkSearchCompleted - details fetch is still pending!
+              const completePromise = dummy.quickMarkSearchCompleted("tmdb_tv_1100");
+              await Promise.resolve();
+              await Promise.resolve();
+              await Promise.resolve();
+
+              const savedBeforeDetailsCount = savedPayloads.length;
+              const savedBeforeDetailsStatus = savedBeforeDetailsCount > 0 ? savedPayloads[0].shows[0].userStatus : "";
+
+              // User immediately searches again (even if result ID differs slightly or punctuation varies) while details are still loading
+              dummy.deduplicateState();
+              dummy.searchQuery = "how i met your mother";
+              dummy.searchResults = [
+                { id: "tvmaze_171", tvmazeId: 171, tmdbId: 1100, mediaType: "show", title: "How I Met Your Mother", year: 2005, rating: 8.2 }
+              ];
+              dummy.cacheSearchItems(dummy.searchResults);
+              dummy.renderSearch();
+              const tickedDuringResearchHtml = makeEl("search-results-list").innerHTML.includes("Completed (Tap to mark unwatched)");
+
+              // Now let show-details resolve with 208 episodes and ensure liveShow (not detached!) gets all 208 episodes
+              resolveShowDetails();
+              await completePromise;
+
+              const finalSavedShow = savedPayloads[savedPayloads.length - 1].shows[0];
+              dummy.renderSearch();
+              const tickedAfterDetailsHtml = makeEl("search-results-list").innerHTML.includes("Completed (Tap to mark unwatched)");
+
+              // Test FirestoreRepository >550KB compaction and full 208-episode watched reconstruction
+              let storedFirestoreDoc = null;
+              Object.defineProperty(globalThis, "fetch", {
+                value: async (fUrl, fOpts) => {
+                  if (fOpts && fOpts.method === "PATCH") {
+                    storedFirestoreDoc = JSON.parse(fOpts.body);
+                    return { ok: true, json: async () => storedFirestoreDoc };
+                  }
+                  if (storedFirestoreDoc) {
+                    return { ok: true, json: async () => storedFirestoreDoc };
+                  }
+                  return { ok: false };
+                },
+                writable: true,
+                configurable: true
+              });
+              const repo = new FirestoreRepository({ FIREBASE_PROJECT_ID: "demo-test-proj" });
+              const largeFillerShows = Array.from({ length: 120 }, (_, i) => ({
+                id: "filler_" + i,
+                title: "Filler Series " + i,
+                userStatus: "completed",
+                watchedEpisodes: himymFullEpisodes.slice(0, 40).map((e) => e.code),
+                episodes: himymFullEpisodes.slice(0, 40),
+                overview: "A".repeat(400)
+              }));
+              await repo.saveUserState("tester", {
+                userId: "tester",
+                shows: [finalSavedShow, ...largeFillerShows],
+                movies: []
+              });
+              const compactedPayloadStr = storedFirestoreDoc.fields.payload.stringValue;
+              const compactedParsed = JSON.parse(compactedPayloadStr);
+              const compactedHimym = compactedParsed.shows.find((s) => s.title === "How I Met Your Mother");
+              const reloaded = await repo.getUserState("tester");
+              const reloadedHimym = reloaded.shows.find((s) => s.title === "How I Met Your Mother");
+
+              const out = JSON.stringify({
+                savedBeforeDetailsCount,
+                savedBeforeDetailsStatus,
+                tickedDuringResearchHtml,
+                tickedAfterDetailsHtml,
+                finalSaveCount: savedPayloads.length,
+                finalEpCount: finalSavedShow.episodes.length,
+                finalWatchedCount: finalSavedShow.watchedEpisodes.length,
+                compactedByteLen: compactedPayloadStr.length,
+                compactedWatchedLen: compactedHimym.watchedEpisodes.length,
+                reloadedWatchedLen: reloadedHimym.watchedEpisodes.length,
+                reloadedStatus: reloadedHimym.userStatus
+              });
+              if (typeof console !== "undefined" && console.log) console.log(out);
+              else if (typeof print !== "undefined") print(out);
+            })();
+            """
+        )
+        out = self._run_js(harness)
+        self.assertGreaterEqual(out["savedBeforeDetailsCount"], 1)
+        self.assertEqual(out["savedBeforeDetailsStatus"], "completed")
+        self.assertTrue(out["tickedDuringResearchHtml"])
+        self.assertTrue(out["tickedAfterDetailsHtml"])
+        self.assertGreaterEqual(out["finalSaveCount"], 2)
+        self.assertEqual(out["finalEpCount"], 208)
+        self.assertEqual(out["finalWatchedCount"], 208)
+        self.assertLess(out["compactedByteLen"], 600000)
+        self.assertEqual(out["compactedWatchedLen"], 0)
+        self.assertEqual(out["reloadedWatchedLen"], 208)
+        self.assertEqual(out["reloadedStatus"], "completed")
+
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""
         proc = subprocess.run(

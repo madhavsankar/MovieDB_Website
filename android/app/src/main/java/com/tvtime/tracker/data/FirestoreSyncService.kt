@@ -94,9 +94,9 @@ object FirestoreSyncService {
                         if (title.isNotEmpty()) put("title", title)
                         val airDate = ep.optString("airDate", "")
                         if (airDate.isNotEmpty()) put("airDate", airDate)
+                        val rt = ep.optInt("runtimeMins", 0)
+                        if (rt > 0) put("runtimeMins", rt)
                     }
-                    val rt = ep.optInt("runtimeMins", 0)
-                    if (rt > 0) put("runtimeMins", rt)
                 }
                 out.put(obj)
             }
@@ -114,7 +114,7 @@ object FirestoreSyncService {
             else -> 1
         }
         for (s in shows) {
-            val titleKey = s.title.trim().lowercase()
+            val titleKey = TvTimeProgressCalculator.normalizeTitleKey(s.title)
             val key = if (titleKey.isNotEmpty()) "title:$titleKey" else s.externalId.ifBlank { "id:${s.id}" }
             val existing = byKey[key]
             if (existing == null) {
@@ -169,7 +169,7 @@ object FirestoreSyncService {
     fun deduplicateMovies(movies: List<MovieEntity>): List<MovieEntity> {
         val byKey = LinkedHashMap<String, MovieEntity>()
         for (m in movies) {
-            val titleKey = m.title.trim().lowercase()
+            val titleKey = TvTimeProgressCalculator.normalizeTitleKey(m.title)
             val key = if (titleKey.isNotEmpty()) "title:$titleKey:${m.year}" else m.externalId.ifBlank { "id:${m.id}" }
             val existing = byKey[key]
             if (existing == null) {
@@ -247,10 +247,14 @@ object FirestoreSyncService {
                 fun buildShowsArray(minimalCompleted: Boolean, minimalLargeShows: Boolean = false): JSONArray {
                     val arr = JSONArray()
                     for (s in shows) {
-                        val watchedArr = JSONArray(TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv).toList())
                         val isComp = s.userStatus.equals("completed", ignoreCase = true)
+                        val watchedArr = if (minimalCompleted && isComp) {
+                            JSONArray()
+                        } else {
+                            JSONArray(TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv).toList())
+                        }
                         val parsedCount = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson).size
-                        val useMinimal = (minimalCompleted && isComp) || (minimalLargeShows && parsedCount > 150)
+                        val useMinimal = (minimalCompleted && isComp) || (minimalLargeShows && parsedCount > 100)
                         val epsArr = compactEpisodesJsonArray(s.episodesJson, useMinimal)
                         arr.put(
                             JSONObject().apply {
@@ -349,11 +353,11 @@ object FirestoreSyncService {
                 }
 
                 var payloadStr = payloadObj.toString()
-                if (payloadStr.length > 750_000) {
+                if (payloadStr.length > 550_000) {
                     payloadObj.put("shows", buildShowsArray(minimalCompleted = true))
                     payloadStr = payloadObj.toString()
                 }
-                if (payloadStr.length > 850_000) {
+                if (payloadStr.length > 750_000) {
                     payloadObj.put("shows", buildShowsArray(minimalCompleted = true, minimalLargeShows = true))
                     payloadStr = payloadObj.toString()
                 }
