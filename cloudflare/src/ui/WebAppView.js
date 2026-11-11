@@ -2560,13 +2560,25 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
 
         const showById = new Map((this.state.shows || []).map((s) => [s.id, s]));
+        const showByTitle = new Map(
+          (this.state.shows || []).map((s) => [String(s.title || "").trim().toLowerCase(), s])
+        );
         const movieById = new Map((this.state.movies || []).map((m) => [m.id, m]));
+        const movieByTitle = new Map(
+          (this.state.movies || []).map((m) => [String(m.title || "").trim().toLowerCase(), m])
+        );
 
         listEl.innerHTML =
           items
             .map((item) => {
-              const existingShow = showById.get(item.id);
-              const existingMovie = movieById.get(item.id);
+              const normTitle = String(item.title || "").trim().toLowerCase();
+              const isMovieItem = item.mediaType === "movie" || String(item.id || "").startsWith("movie_");
+              const existingShow = !isMovieItem
+                ? showById.get(item.id) || (normTitle ? showByTitle.get(normTitle) : null)
+                : null;
+              const existingMovie = isMovieItem
+                ? movieById.get(item.id) || (normTitle ? movieByTitle.get(normTitle) : null)
+                : null;
               const showStatus = existingShow ? this.getEffectiveShowStatus(existingShow) : "";
               const isInWatchlist =
                 (existingShow && showStatus === "interested") ||
@@ -2660,57 +2672,71 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No results found. Try searching another title!</div>';
       }
 
+      findExistingForSearchItem(itemId) {
+        const item = (this.searchResults || []).find((r) => r.id === itemId);
+        const normTitle = item ? String(item.title || "").trim().toLowerCase() : "";
+        const isMovieItem =
+          item && (item.mediaType === "movie" || String(item.id || "").startsWith("movie_"));
+        if (isMovieItem) {
+          const existingMovie = (this.state.movies || []).find(
+            (m) =>
+              m.id === itemId ||
+              (normTitle && String(m.title || "").trim().toLowerCase() === normTitle)
+          );
+          return { existingShow: null, existingMovie };
+        }
+        const existingShow = (this.state.shows || []).find(
+          (s) =>
+            s.id === itemId ||
+            (!item && false) ||
+            (normTitle && !isMovieItem && String(s.title || "").trim().toLowerCase() === normTitle)
+        );
+        const existingMovie = !existingShow
+          ? (this.state.movies || []).find((m) => m.id === itemId)
+          : null;
+        return { existingShow, existingMovie };
+      }
+
       async quickToggleSearchWatchlist(itemId) {
-        const existingShow = (this.state.shows || []).find((s) => s.id === itemId);
+        const { existingShow, existingMovie } = this.findExistingForSearchItem(itemId);
         if (existingShow) {
           const eff = this.getEffectiveShowStatus(existingShow);
           if (eff === "interested") {
-            await this.removeItemFromLibrary(itemId);
+            await this.removeItemFromLibrary(existingShow.id);
           } else {
-            await this.setShowStatus(itemId, "interested");
+            await this.setShowStatus(existingShow.id, "interested");
           }
           return;
         }
-        const existingMovie = (this.state.movies || []).find((m) => m.id === itemId);
         if (existingMovie) {
           if (!existingMovie.watched) {
-            await this.removeItemFromLibrary(itemId);
+            await this.removeItemFromLibrary(existingMovie.id);
           }
           return;
         }
-        await this.addSearchResult(itemId);
+        await this.addSearchResult(itemId, "interested");
       }
 
       async quickMarkSearchCompleted(itemId) {
-        const existingShow = (this.state.shows || []).find((s) => s.id === itemId);
+        const { existingShow, existingMovie } = this.findExistingForSearchItem(itemId);
         if (existingShow) {
           const eff = this.getEffectiveShowStatus(existingShow);
           if (eff === "completed") {
-            await this.removeItemFromLibrary(itemId);
+            await this.removeItemFromLibrary(existingShow.id);
           } else {
-            await this.setShowStatus(itemId, "completed");
+            await this.setShowStatus(existingShow.id, "completed");
           }
           return;
         }
-        const existingMovie = (this.state.movies || []).find((m) => m.id === itemId);
         if (existingMovie) {
           if (existingMovie.watched) {
-            await this.removeItemFromLibrary(itemId);
+            await this.removeItemFromLibrary(existingMovie.id);
           } else {
-            await this.setMovieStatus(itemId, true);
+            await this.setMovieStatus(existingMovie.id, true);
           }
           return;
         }
-        await this.addSearchResult(itemId);
-        const addedShow = (this.state.shows || []).find((s) => s.id === itemId);
-        if (addedShow) {
-          await this.setShowStatus(itemId, "completed");
-          return;
-        }
-        const addedMovie = (this.state.movies || []).find((m) => m.id === itemId);
-        if (addedMovie) {
-          await this.setMovieStatus(itemId, true);
-        }
+        await this.addSearchResult(itemId, "completed");
       }
 
       isGenericStreamingLabel(val) {
@@ -2770,60 +2796,99 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           .catch(() => {});
       }
 
-      async addSearchResult(itemId) {
+      async addSearchResult(itemId, targetStatus = "interested") {
         const item = (this.searchResults || []).find((r) => r.id === itemId);
         if (!item) return;
+        const isCompleted = targetStatus === "completed";
+        const isMovieItem = item.mediaType === "movie" || String(item.id || "").startsWith("movie_");
 
-        if (item.mediaType === "movie") {
+        if (isMovieItem) {
           if (!(this.state.movies || []).some((m) => m.id === item.id)) {
             const newMovie = {
               ...item,
-              watched: false,
-              watchedAt: "",
+              watched: isCompleted,
+              watchedAt: isCompleted ? new Date().toISOString().slice(0, 10) : "",
               userRating: 0,
               reaction: "",
               rewatchCount: 0,
               isFavorite: false,
             };
             this.state.movies = [newMovie, ...(this.state.movies || [])];
+            this.render();
             await this.persistState();
             this.enrichMovieStreamingIfNeeded(newMovie);
           }
           return;
         }
 
-        // TV Show -> fetch full episode guide from TMDB or TVMaze
+        // TV Show -> update state immediately with targetStatus (never passing through Watchlist when completed), then enrich full episode guide
         if (!(this.state.shows || []).some((s) => s.id === item.id)) {
-          let fullShow = null;
-          const lookupKey = item.tvmazeId || item.id;
-          if (lookupKey) {
-            try {
-              const res = await fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey));
-              if (res.ok) fullShow = await res.json();
-            } catch (_) {}
-          }
+          const fallbackEpisodes =
+            Array.isArray(item.episodes) && item.episodes.length > 0
+              ? item.episodes.map((e) => this.compactEpisode(e))
+              : [
+                  {
+                    code: "S01E01",
+                    season: 1,
+                    number: 1,
+                    title: "Pilot",
+                    airDate: String(item.year || 2024) + "-01-01",
+                    runtimeMins: item.runtimeMins || 45,
+                  },
+                ];
           const newShow = {
-            ...(fullShow || item),
-            userStatus: "interested",
+            ...item,
+            id: item.id,
+            userStatus: isCompleted ? "completed" : "interested",
             userRating: 0,
             reaction: "",
             isFavorite: false,
             rewatchCount: 0,
-            watchedEpisodes: [],
-            episodes: fullShow?.episodes || [
-              { code: "S01E01", season: 1, number: 1, title: "Pilot", airDate: String(item.year || 2024) + "-01-01", runtimeMins: item.runtimeMins || 45 },
-            ],
+            watchedEpisodes: isCompleted ? fallbackEpisodes.map((e) => e.code).sort() : [],
+            episodes: fallbackEpisodes,
+            lastWatchedAt: isCompleted ? new Date().toISOString() : "",
           };
           this.state.shows = [newShow, ...(this.state.shows || [])];
+          this.render();
+
+          const lookupKey = item.tvmazeId || item.id;
+          if (lookupKey) {
+            try {
+              const res = await fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey));
+              if (res.ok) {
+                const fullShow = await res.json();
+                if (fullShow) {
+                  if (Array.isArray(fullShow.episodes) && fullShow.episodes.length > 0) {
+                    newShow.episodes = fullShow.episodes.map((e) => this.compactEpisode(e));
+                  }
+                  if (fullShow.tvmazeId && !newShow.tvmazeId) newShow.tvmazeId = fullShow.tvmazeId;
+                  if (fullShow.tmdbId && !newShow.tmdbId) newShow.tmdbId = fullShow.tmdbId;
+                  if (fullShow.network && !this.isGenericStreamingLabel(fullShow.network)) {
+                    newShow.network = fullShow.network;
+                  }
+                  if (Array.isArray(fullShow.cast) && fullShow.cast.length > 0) {
+                    newShow.cast = fullShow.cast;
+                  }
+                  if (fullShow.overview && !newShow.overview) {
+                    newShow.overview = fullShow.overview;
+                  }
+                  if (isCompleted) {
+                    newShow.userStatus = "completed";
+                    newShow.watchedEpisodes = newShow.episodes.map((e) => e.code).sort();
+                  }
+                }
+              }
+            } catch (_) {}
+          }
           await this.persistState();
         }
       }
 
       async addOrOpenSearchResult(itemId) {
-        const existingShow = (this.state.shows || []).find((s) => s.id === itemId);
-        const existingMovie = (this.state.movies || []).find((m) => m.id === itemId);
+        const { existingShow, existingMovie } = this.findExistingForSearchItem(itemId);
         if (existingShow || existingMovie) {
-          await this.openItemById(itemId);
+          const targetId = existingShow ? existingShow.id : existingMovie.id;
+          await this.openItemById(targetId);
           this.detailTab = "info";
           this.renderDetailSheet();
           return;
