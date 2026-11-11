@@ -169,6 +169,23 @@ def default_user_state(user_id):
     return seed
 
 
+def compact_episode(ep):
+    if not isinstance(ep, dict):
+        return ep
+    out = {
+        "code": str(ep.get("code") or "S01E01"),
+        "season": int(ep.get("season") or 1),
+        "number": int(ep.get("number") or 1),
+    }
+    if ep.get("title"):
+        out["title"] = str(ep["title"])
+    if ep.get("airDate"):
+        out["airDate"] = str(ep["airDate"])
+    if ep.get("runtimeMins"):
+        out["runtimeMins"] = int(ep["runtimeMins"])
+    return out
+
+
 def get_user_state_from_firestore(user_id):
     clean = sanitize_user_id(user_id)
     url = firestore_doc_url(clean)
@@ -188,6 +205,9 @@ def get_user_state_from_firestore(user_id):
             "actors": parsed.get("actors") if isinstance(parsed.get("actors"), list) else default_user_state(clean)["actors"],
             "decidedIds": parsed.get("decidedIds") if isinstance(parsed.get("decidedIds"), list) else [],
             "followingUsers": parsed.get("followingUsers") if isinstance(parsed.get("followingUsers"), list) else [],
+            "friends": parsed.get("friends") if isinstance(parsed.get("friends"), list) else [],
+            "incomingFriendRequests": parsed.get("incomingFriendRequests") if isinstance(parsed.get("incomingFriendRequests"), list) else [],
+            "outgoingFriendRequests": parsed.get("outgoingFriendRequests") if isinstance(parsed.get("outgoingFriendRequests"), list) else [],
             "updatedAt": parsed.get("updatedAt") or datetime.now(timezone.utc).isoformat(),
         }
     except Exception:
@@ -199,11 +219,21 @@ def save_user_state_to_firestore(user_id, state):
     url = firestore_doc_url(clean)
     if not url:
         return False
-    shows = state.get("shows") if isinstance(state.get("shows"), list) else []
+    raw_shows = state.get("shows") if isinstance(state.get("shows"), list) else []
+    shows = []
+    for s in raw_shows:
+        if not isinstance(s, dict):
+            continue
+        sc = dict(s)
+        sc["episodes"] = [compact_episode(e) for e in (s.get("episodes") or []) if isinstance(e, dict)]
+        shows.append(sc)
     movies = state.get("movies") if isinstance(state.get("movies"), list) else []
     actors = state.get("actors") if isinstance(state.get("actors"), list) else []
     decided_ids = state.get("decidedIds") if isinstance(state.get("decidedIds"), list) else []
     following_users = state.get("followingUsers") if isinstance(state.get("followingUsers"), list) else []
+    friends = state.get("friends") if isinstance(state.get("friends"), list) else []
+    incoming_reqs = state.get("incomingFriendRequests") if isinstance(state.get("incomingFriendRequests"), list) else []
+    outgoing_reqs = state.get("outgoingFriendRequests") if isinstance(state.get("outgoingFriendRequests"), list) else []
     updated_at = datetime.now(timezone.utc).isoformat()
 
     payload_obj = {
@@ -214,6 +244,9 @@ def save_user_state_to_firestore(user_id, state):
         "actors": actors,
         "decidedIds": decided_ids,
         "followingUsers": following_users,
+        "friends": friends,
+        "incomingFriendRequests": incoming_reqs,
+        "outgoingFriendRequests": outgoing_reqs,
         "updatedAt": updated_at,
     }
     firestore_body = {

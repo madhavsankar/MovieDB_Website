@@ -295,8 +295,13 @@ fun TvShowWatchCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        val stoppedSubtitle = if (progress.lastWatchedEpisode != null) {
+                            "Watched till ${progress.lastWatchedEpisode.formattedDotCode} (${progress.watchedCount}/${progress.totalEpisodes} watched)"
+                        } else {
+                            "Stopped watching (${progress.watchedCount}/${progress.totalEpisodes} watched)"
+                        }
                         Text(
-                            text = "${progress.watchedCount}/${progress.totalEpisodes} episodes watched",
+                            text = stoppedSubtitle,
                             style = MaterialTheme.typography.bodySmall,
                             color = TvTimePalette.TextSecondary,
                             maxLines = 1,
@@ -489,6 +494,7 @@ fun TvSearchResultCard(
     item: SearchResultItem,
     isInWatchlist: Boolean,
     isCompleted: Boolean,
+    canShowWatchlist: Boolean = true,
     onCardClick: () -> Unit,
     onWatchlistClick: () -> Unit,
     onCompletedClick: () -> Unit
@@ -574,33 +580,35 @@ fun TvSearchResultCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // + Watchlist quick-action button (shows + before adding, yellow Watchlist bookmark logo when in Watchlist)
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(if (isInWatchlist) Color(0x2EFACC15) else Color(0xFF232329))
-                        .border(
-                            width = 1.5.dp,
-                            color = if (isInWatchlist) TvTimePalette.Yellow else Color(0xFF3F3F46),
-                            shape = CircleShape
-                        )
-                        .clickable(onClick = onWatchlistClick),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (isInWatchlist) {
-                        WatchlistBookmarkIcon(
-                            tint = TvTimePalette.Yellow,
-                            size = 19.dp,
-                            filled = true
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add to Watchlist",
-                            tint = TvTimePalette.Yellow,
-                            modifier = Modifier.size(20.dp)
-                        )
+                if (canShowWatchlist) {
+                    // + Watchlist quick-action button (hidden for watched/started items)
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(if (isInWatchlist) Color(0x2EFACC15) else Color(0xFF232329))
+                            .border(
+                                width = 1.5.dp,
+                                color = if (isInWatchlist) TvTimePalette.Yellow else Color(0xFF3F3F46),
+                                shape = CircleShape
+                            )
+                            .clickable(onClick = onWatchlistClick),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isInWatchlist) {
+                            WatchlistBookmarkIcon(
+                                tint = TvTimePalette.Yellow,
+                                size = 19.dp,
+                                filled = true
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add to Watchlist",
+                                tint = TvTimePalette.Yellow,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
 

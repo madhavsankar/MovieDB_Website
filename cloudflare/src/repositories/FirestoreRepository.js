@@ -29,6 +29,24 @@ export class FirestoreRepository {
     return FirestoreRepository.sanitizeUserId(userId);
   }
 
+  static isSyntheticEpisodeList(eps) {
+    if (!Array.isArray(eps) || eps.length === 0) return true;
+    return eps.every((e) => !e || !e.title || /^Episode \d+$/i.test(String(e.title).trim()));
+  }
+
+  static compactEpisode(ep) {
+    if (!ep || typeof ep !== "object") return ep;
+    const out = {
+      code: String(ep.code || "S01E01"),
+      season: Number(ep.season) || 1,
+      number: Number(ep.number) || 1,
+    };
+    if (ep.title) out.title = String(ep.title);
+    if (ep.airDate) out.airDate = String(ep.airDate);
+    if (ep.runtimeMins) out.runtimeMins = Number(ep.runtimeMins);
+    return out;
+  }
+
   static deduplicateShows(shows) {
     if (!Array.isArray(shows)) return [];
     const byKey = new Map();
@@ -38,33 +56,67 @@ export class FirestoreRepository {
       const titleKey = String(s.title || "").trim().toLowerCase();
       const idKey = String(s.id || "").trim();
       const key = titleKey ? `title:${titleKey}` : idKey || `idx:${byKey.size}`;
+      const incomingEps = (Array.isArray(s.episodes) ? s.episodes : []).map((e) =>
+        FirestoreRepository.compactEpisode(e)
+      );
       if (!byKey.has(key)) {
+        let watched = Array.from(
+          new Set(Array.isArray(s.watchedEpisodes) ? s.watchedEpisodes : [])
+        ).sort();
+        if (s.userStatus === "completed" && incomingEps.length > 0 && watched.length < incomingEps.length) {
+          watched = incomingEps.map((e) => e.code).sort();
+        } else if (
+          incomingEps.length > 0 &&
+          !FirestoreRepository.isSyntheticEpisodeList(incomingEps) &&
+          watched.length > incomingEps.length
+        ) {
+          const validCodes = new Set(incomingEps.map((e) => e.code));
+          const filtered = watched.filter((c) => validCodes.has(c));
+          if (filtered.length > 0) watched = filtered.sort();
+        }
         byKey.set(key, {
           ...s,
-          watchedEpisodes: Array.from(new Set(Array.isArray(s.watchedEpisodes) ? s.watchedEpisodes : [])).sort(),
-          episodes: Array.isArray(s.episodes) ? s.episodes : [],
+          watchedEpisodes: watched,
+          episodes: incomingEps,
         });
       } else {
         const existing = byKey.get(key);
-        const mergedWatched = Array.from(
+        const existingEps = Array.isArray(existing.episodes) ? existing.episodes : [];
+        const existingSynth = FirestoreRepository.isSyntheticEpisodeList(existingEps);
+        const newSynth = FirestoreRepository.isSyntheticEpisodeList(incomingEps);
+        let bestEps = existingEps;
+        if (existingSynth && !newSynth && incomingEps.length > 0) {
+          bestEps = incomingEps;
+        } else if (!existingSynth && newSynth && existingEps.length > 0) {
+          bestEps = existingEps;
+        } else if (incomingEps.length > existingEps.length) {
+          bestEps = incomingEps;
+        }
+        const bestStatus =
+          (statusRank[s.userStatus] || 0) > (statusRank[existing.userStatus] || 0)
+            ? s.userStatus
+            : existing.userStatus;
+        let mergedWatched = Array.from(
           new Set([
             ...(Array.isArray(existing.watchedEpisodes) ? existing.watchedEpisodes : []),
             ...(Array.isArray(s.watchedEpisodes) ? s.watchedEpisodes : []),
           ])
         ).sort();
-        const existingEps = Array.isArray(existing.episodes) ? existing.episodes : [];
-        const newEps = Array.isArray(s.episodes) ? s.episodes : [];
-        const bestEps = newEps.length > existingEps.length ? newEps : existingEps;
-        const bestStatus =
-          (statusRank[s.userStatus] || 0) > (statusRank[existing.userStatus] || 0)
-            ? s.userStatus
-            : existing.userStatus;
+        if (bestStatus === "completed" && bestEps.length > 0) {
+          mergedWatched = bestEps.map((e) => e.code).sort();
+        } else if (bestEps.length > 0 && !FirestoreRepository.isSyntheticEpisodeList(bestEps)) {
+          const validCodes = new Set(bestEps.map((e) => e.code));
+          const filtered = mergedWatched.filter((c) => validCodes.has(c));
+          if (filtered.length > 0) mergedWatched = filtered.sort();
+        }
         byKey.set(key, {
           ...existing,
           ...s,
           id: existing.id || s.id,
           tvmazeId: existing.tvmazeId || s.tvmazeId || 0,
           tmdbId: existing.tmdbId || s.tmdbId || 0,
+          posterUrl: existing.posterUrl || s.posterUrl || "",
+          overview: existing.overview || s.overview || "",
           network:
             existing.network && existing.network !== "Streaming"
               ? existing.network
@@ -96,6 +148,8 @@ export class FirestoreRepository {
           ...m,
           id: existing.id || m.id,
           tmdbId: existing.tmdbId || m.tmdbId || 0,
+          posterUrl: existing.posterUrl || m.posterUrl || "",
+          overview: existing.overview || m.overview || "",
           watched: Boolean(existing.watched || m.watched),
           watchedAt: existing.watchedAt || m.watchedAt || "",
           streamingService:
@@ -199,7 +253,11 @@ export class FirestoreRepository {
         outgoingFriendRequests,
         updatedAt: parsed.updatedAt || doc?.fields?.updatedAt?.stringValue || new Date().toISOString(),
       };
-      if (rawShows.length !== shows.length || rawMovies.length !== movies.length) {
+      if (
+        rawShows.length !== shows.length ||
+        rawMovies.length !== movies.length ||
+        payloadStr.length > 750000
+      ) {
         await this.saveUserState(clean, cleanedState);
       }
       return cleanedState;
@@ -268,11 +326,27 @@ export class FirestoreRepository {
       updatedAt,
     };
 
+    let serializedPayload = JSON.stringify(payloadObj);
+    if (serializedPayload.length > 750000) {
+      payloadObj.shows = shows.map((s) => {
+        if (s.userStatus !== "completed") return s;
+        return {
+          ...s,
+          episodes: (Array.isArray(s.episodes) ? s.episodes : []).map((ep) => ({
+            code: ep.code,
+            season: ep.season,
+            number: ep.number,
+          })),
+        };
+      });
+      serializedPayload = JSON.stringify(payloadObj);
+    }
+
     const firestoreBody = {
       fields: {
         userId: { stringValue: clean },
         email: { stringValue: payloadObj.email },
-        payload: { stringValue: JSON.stringify(payloadObj) },
+        payload: { stringValue: serializedPayload },
         showCount: { integerValue: String(shows.length) },
         movieCount: { integerValue: String(movies.length) },
         actorCount: { integerValue: String(actors.length) },

@@ -48,7 +48,10 @@ fun ShowDetailBottomSheet(
     onDismiss: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var activeTab by remember { mutableStateOf("episodes") } // "info" | "episodes"
+    var persistedShowId by remember(show.id) { mutableLongStateOf(show.id) }
+    var activeTab by remember(show.id) {
+        mutableStateOf(if (show.id == 0L || show.userStatus == "preview") "info" else "episodes")
+    } // "info" | "episodes"
     var episodes by remember(show.id, show.episodesJson) {
         mutableStateOf(TvTimeProgressCalculator.parseEpisodeList(show.episodesJson))
     }
@@ -58,7 +61,12 @@ fun ShowDetailBottomSheet(
     var userStatus by remember(show.id, show.userStatus, show.watchedCodesCsv) {
         val initEps = TvTimeProgressCalculator.parseEpisodeList(show.episodesJson)
         val initWatched = TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv)
-        mutableStateOf(TvTimeProgressCalculator.deriveEffectiveShowStatus(initEps, initWatched, show.userStatus))
+        val initStat = if (show.id == 0L || show.userStatus == "preview") {
+            "preview"
+        } else {
+            TvTimeProgressCalculator.deriveEffectiveShowStatus(initEps, initWatched, show.userStatus)
+        }
+        mutableStateOf(initStat)
     }
     var isFavorite by remember(show.id, show.isFavorite) { mutableStateOf(show.isFavorite) }
     var castCsv by remember(show.id, show.castCsv) { mutableStateOf(show.castCsv) }
@@ -90,17 +98,23 @@ fun ShowDetailBottomSheet(
         nextFavorite: Boolean = isFavorite,
         nextCastCsv: String = castCsv
     ) {
+        val cleanStatus = if (nextStatus == "preview") "interested" else nextStatus
         val updated = show.copy(
+            id = persistedShowId,
             episodesJson = TvTimeProgressCalculator.serializeEpisodeList(nextEpisodes),
             watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(nextWatchedSet),
-            userStatus = nextStatus,
+            userStatus = cleanStatus,
             isFavorite = nextFavorite,
             rewatchCount = 0,
             reaction = "",
             castCsv = nextCastCsv
         )
         scope.launch {
-            dao.updateShow(updated)
+            if (persistedShowId == 0L) {
+                persistedShowId = dao.insertShow(updated.copy(id = 0L))
+            } else {
+                dao.updateShow(updated)
+            }
             FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
         }
     }
@@ -123,7 +137,11 @@ fun ShowDetailBottomSheet(
                 watchedSet
             }
             val nextProg = TvTimeProgressCalculator.computeShowProgress(fetchedEps, nextWatched)
-            val nextEff = TvTimeProgressCalculator.deriveEffectiveShowStatus(nextProg, userStatus)
+            val nextEff = if (persistedShowId == 0L && userStatus == "preview") {
+                "preview"
+            } else {
+                TvTimeProgressCalculator.deriveEffectiveShowStatus(nextProg, userStatus)
+            }
             watchedSet = nextWatched
             userStatus = nextEff
             openSeasons = if (nextEff == "in_progress" && nextProg.nextEpisode != null) {
@@ -131,17 +149,26 @@ fun ShowDetailBottomSheet(
             } else {
                 emptySet()
             }
-            persistUpdatedShow(
-                nextEpisodes = fetchedEps,
-                nextWatchedSet = nextWatched,
-                nextStatus = nextEff,
-                nextCastCsv = mergedCast
-            )
+            if (persistedShowId != 0L) {
+                persistUpdatedShow(
+                    nextEpisodes = fetchedEps,
+                    nextWatchedSet = nextWatched,
+                    nextStatus = nextEff,
+                    nextCastCsv = mergedCast
+                )
+            }
         }
     }
 
-    val effectiveStatus = remember(episodes, watchedSet, userStatus) {
-        TvTimeProgressCalculator.deriveEffectiveShowStatus(episodes, watchedSet, userStatus)
+    val prog = remember(episodes, watchedSet) {
+        TvTimeProgressCalculator.computeShowProgress(episodes, watchedSet)
+    }
+    val effectiveStatus = remember(prog, userStatus, persistedShowId) {
+        if (persistedShowId == 0L && userStatus == "preview" && watchedSet.isEmpty()) {
+            "preview"
+        } else {
+            TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, userStatus)
+        }
     }
 
     ModalBottomSheet(
@@ -178,13 +205,22 @@ fun ShowDetailBottomSheet(
                         val statusBadgeText = when (effectiveStatus) {
                             "completed" -> "✓ Completed"
                             "in_progress" -> "▶ In Progress (${watchedSet.size}/${episodes.size} watched)"
-                            "stopped" -> "⏹ Stopped (${watchedSet.size}/${episodes.size} watched)"
+                            "stopped" -> {
+                                val lastEp = prog.lastWatchedEpisode
+                                if (lastEp != null) {
+                                    "⏹ Stopped · Watched till ${lastEp.formattedDotCode} (${watchedSet.size}/${episodes.size} watched)"
+                                } else {
+                                    "⏹ Stopped (0/${episodes.size} watched)"
+                                }
+                            }
+                            "preview" -> "Not in library yet"
                             else -> "Watchlist"
                         }
                         val statusBadgeColor = when (effectiveStatus) {
                             "completed" -> Color(0xFF4ADE80)
                             "in_progress" -> TvTimePalette.Yellow
                             "stopped" -> TvTimePalette.Error
+                            "preview" -> TvTimePalette.TextSecondary
                             else -> TvTimePalette.Yellow
                         }
                         Row(
@@ -201,34 +237,72 @@ fun ShowDetailBottomSheet(
                             )
                         }
                     }
-                    TextButton(
-                        onClick = {
-                            scope.launch {
-                                dao.deleteShow(show.id)
-                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                onDismiss()
-                            }
-                        },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                    ) {
-                        Text("✕ Not Watched", color = TvTimePalette.Error, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    if (persistedShowId != 0L) {
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    dao.deleteShow(persistedShowId)
+                                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                    onDismiss()
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text("✕ Not Watched", color = TvTimePalette.Error, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
 
-                // Settable Watch Statuses: Completed | Stopped (In Progress is automatic when partially watched)
+                // Settable Watch Statuses: In Progress | Completed | Stopped
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    val isInProgress = effectiveStatus == "in_progress"
                     val isCompleted = effectiveStatus == "completed"
+                    val isStopped = effectiveStatus == "stopped"
+
+                    Surface(
+                        onClick = {
+                            val nextWatched = when {
+                                watchedSet.isEmpty() && episodes.isNotEmpty() -> setOf(episodes.first().code.uppercase())
+                                isCompleted && episodes.size > 1 -> episodes.dropLast(1).map { it.code.uppercase() }.toSet()
+                                else -> watchedSet
+                            }
+                            watchedSet = nextWatched
+                            userStatus = "in_progress"
+                            val nextProg = TvTimeProgressCalculator.computeShowProgress(episodes, nextWatched)
+                            openSeasons = if (nextProg.nextEpisode != null) setOf(nextProg.nextEpisode.season) else emptySet()
+                            persistUpdatedShow(nextWatchedSet = nextWatched, nextStatus = "in_progress")
+                        },
+                        shape = RoundedCornerShape(50),
+                        color = if (isInProgress) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(vertical = 9.dp, horizontal = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "▶ In Progress",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isInProgress) TvTimePalette.OnYellow else Color.White,
+                                maxLines = 1
+                            )
+                        }
+                    }
+
                     Surface(
                         onClick = {
                             if (isCompleted) {
-                                val nextWatched = emptySet<String>()
-                                watchedSet = nextWatched
-                                userStatus = "interested"
-                                openSeasons = emptySet()
-                                persistUpdatedShow(nextWatchedSet = nextWatched, nextStatus = "interested")
+                                scope.launch {
+                                    if (persistedShowId != 0L) {
+                                        dao.deleteShow(persistedShowId)
+                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                    }
+                                    onDismiss()
+                                }
                             } else {
                                 val nextWatched = episodes.map { it.code.uppercase() }.toSet()
                                 watchedSet = nextWatched
@@ -242,12 +316,12 @@ fun ShowDetailBottomSheet(
                         modifier = Modifier.weight(1f)
                     ) {
                         Box(
-                            modifier = Modifier.padding(vertical = 9.dp, horizontal = 8.dp),
+                            modifier = Modifier.padding(vertical = 9.dp, horizontal = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = "✓ Completed",
-                                fontSize = 12.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (isCompleted) TvTimePalette.OnYellow else Color.White,
                                 maxLines = 1
@@ -255,103 +329,84 @@ fun ShowDetailBottomSheet(
                         }
                     }
 
-                    val isStopped = effectiveStatus == "stopped"
-                    val canStop = !isCompleted
                     Surface(
                         onClick = {
-                            if (!canStop) return@Surface
+                            val nextWatched = if (isCompleted && episodes.size > 1) {
+                                episodes.dropLast(1).map { it.code.uppercase() }.toSet()
+                            } else {
+                                watchedSet
+                            }
                             val nextStat = if (isStopped) {
-                                if (watchedSet.isNotEmpty()) "in_progress" else "interested"
+                                if (nextWatched.isNotEmpty()) "in_progress" else "interested"
                             } else {
                                 "stopped"
                             }
+                            watchedSet = nextWatched
                             userStatus = nextStat
-                            persistUpdatedShow(nextWatchedSet = watchedSet, nextStatus = nextStat)
+                            persistUpdatedShow(nextWatchedSet = nextWatched, nextStatus = nextStat)
                         },
                         shape = RoundedCornerShape(50),
-                        color = when {
-                            isStopped -> TvTimePalette.Yellow
-                            canStop -> TvTimePalette.SurfacePill
-                            else -> Color(0xFF1A1A20)
-                        },
+                        color = if (isStopped) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
                         modifier = Modifier.weight(1f)
                     ) {
                         Box(
-                            modifier = Modifier.padding(vertical = 9.dp, horizontal = 8.dp),
+                            modifier = Modifier.padding(vertical = 9.dp, horizontal = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = if (isStopped) "⏹ Stopped ✓" else "⏹ Stopped",
-                                fontSize = 12.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = when {
-                                    isStopped -> TvTimePalette.OnYellow
-                                    canStop -> Color.White
-                                    else -> TvTimePalette.TextSecondary
-                                },
+                                color = if (isStopped) TvTimePalette.OnYellow else Color.White,
                                 maxLines = 1
                             )
                         }
                     }
                 }
 
-                // Separate Watchlist Button (Only allowed when 0 episodes are watched; clicking when in Watchlist removes it)
-                val canSetWatchlist = watchedSet.isEmpty()
+                // Separate Watchlist Button (Hidden once any episode is watched or show is completed)
+                val canSetWatchlist = watchedSet.isEmpty() && effectiveStatus != "completed"
                 val isInWatchlist = effectiveStatus == "interested" && watchedSet.isEmpty()
-                Surface(
-                    onClick = {
-                        if (isInWatchlist) {
-                            scope.launch {
-                                dao.deleteShow(show.id)
-                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                onDismiss()
+                if (canSetWatchlist) {
+                    Surface(
+                        onClick = {
+                            if (isInWatchlist && persistedShowId != 0L) {
+                                scope.launch {
+                                    dao.deleteShow(persistedShowId)
+                                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                    onDismiss()
+                                }
+                            } else {
+                                userStatus = "interested"
+                                persistUpdatedShow(nextWatchedSet = emptySet(), nextStatus = "interested")
                             }
-                        } else if (canSetWatchlist) {
-                            userStatus = "interested"
-                            persistUpdatedShow(nextWatchedSet = emptySet(), nextStatus = "interested")
-                        }
-                    },
-                    shape = RoundedCornerShape(50),
-                    color = when {
-                        isInWatchlist -> TvTimePalette.Yellow
-                        canSetWatchlist -> TvTimePalette.SurfacePill
-                        else -> Color(0xFF1A1A20)
-                    },
-                    border = BorderStroke(
-                        1.dp,
-                        if (isInWatchlist) TvTimePalette.Yellow else Color.White.copy(alpha = 0.08f)
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Box(
-                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp),
-                        contentAlignment = Alignment.Center
+                        },
+                        shape = RoundedCornerShape(50),
+                        color = if (isInWatchlist) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
+                        border = BorderStroke(
+                            1.dp,
+                            if (isInWatchlist) TvTimePalette.Yellow else Color.White.copy(alpha = 0.08f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        val contentTint = when {
-                            isInWatchlist -> TvTimePalette.OnYellow
-                            canSetWatchlist -> TvTimePalette.Yellow
-                            else -> TvTimePalette.TextSecondary
-                        }
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        Box(
+                            modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            WatchlistBookmarkIcon(tint = contentTint, size = 14.dp, filled = true)
-                            Text(
-                                text = when {
-                                    isInWatchlist -> "In Watchlist"
-                                    canSetWatchlist -> "Add to Watchlist"
-                                    else -> "Watchlist (Only for unwatched series)"
-                                },
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = when {
-                                    isInWatchlist -> TvTimePalette.OnYellow
-                                    canSetWatchlist -> Color.White
-                                    else -> TvTimePalette.TextSecondary
-                                },
-                                maxLines = 1
-                            )
+                            val contentTint = if (isInWatchlist) TvTimePalette.OnYellow else TvTimePalette.Yellow
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                WatchlistBookmarkIcon(tint = contentTint, size = 14.dp, filled = true)
+                                Text(
+                                    text = if (isInWatchlist) "In Watchlist" else "Add to Watchlist",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isInWatchlist) TvTimePalette.OnYellow else Color.White,
+                                    maxLines = 1
+                                )
+                            }
                         }
                     }
                 }
@@ -502,12 +557,13 @@ fun ShowDetailBottomSheet(
                                                 )
                                                 .clickable {
                                                     val nextSet = watchedSet.toMutableSet()
+                                                    val baseStatus = if (!allSeasonWatched && userStatus == "stopped") "in_progress" else userStatus
                                                     if (allSeasonWatched) {
                                                         seasonEps.forEach { nextSet.remove(it.code.uppercase()) }
                                                     } else {
                                                         seasonEps.forEach { nextSet.add(it.code.uppercase()) }
                                                     }
-                                                    val nextStat = deriveStatusFromWatched(episodes, nextSet, userStatus)
+                                                    val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
                                                     watchedSet = nextSet
                                                     userStatus = nextStat
                                                     persistUpdatedShow(nextWatchedSet = nextSet, nextStatus = nextStat)
@@ -548,9 +604,10 @@ fun ShowDetailBottomSheet(
 
                                 val toggleSingleEpisode = {
                                     val nextSet = watchedSet.toMutableSet()
+                                    val baseStatus = if (!isWatched && userStatus == "stopped") "in_progress" else userStatus
                                     if (isWatched) nextSet.remove(epCodeUpper)
                                     else nextSet.add(epCodeUpper)
-                                    val nextStat = deriveStatusFromWatched(episodes, nextSet, userStatus)
+                                    val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
                                     watchedSet = nextSet
                                     userStatus = nextStat
                                     persistUpdatedShow(nextWatchedSet = nextSet, nextStatus = nextStat)
@@ -623,6 +680,7 @@ fun MovieDetailBottomSheet(
     onDismiss: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    var persistedMovieId by remember(movie.id) { mutableLongStateOf(movie.id) }
     var isWatched by remember(movie.id, movie.watched) { mutableStateOf(movie.watched) }
     var streamingService by remember(movie.id, movie.streamingService) { mutableStateOf(movie.streamingService) }
     var runtimeMins by remember(movie.id, movie.runtimeMins) { mutableIntStateOf(movie.runtimeMins) }
@@ -654,9 +712,10 @@ fun MovieDetailBottomSheet(
                     castCsv = enriched.castCsv
                     changed = true
                 }
-                if (changed) {
+                if (changed && persistedMovieId != 0L) {
                     dao.updateMovie(
                         movie.copy(
+                            id = persistedMovieId,
                             watched = isWatched,
                             streamingService = streamingService,
                             runtimeMins = runtimeMins,
@@ -671,8 +730,11 @@ fun MovieDetailBottomSheet(
     }
 
     fun persistMovie(nextWatched: Boolean = isWatched) {
+        val todayIso = java.time.LocalDate.now().toString()
         val updated = movie.copy(
+            id = persistedMovieId,
             watched = nextWatched,
+            watchedAt = if (nextWatched) (movie.watchedAt.ifBlank { todayIso }) else "",
             streamingService = streamingService,
             runtimeMins = runtimeMins,
             director = director,
@@ -681,7 +743,11 @@ fun MovieDetailBottomSheet(
             reaction = ""
         )
         scope.launch {
-            dao.updateMovie(updated)
+            if (persistedMovieId == 0L) {
+                persistedMovieId = dao.insertMovie(updated.copy(id = 0L))
+            } else {
+                dao.updateMovie(updated)
+            }
             FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
         }
     }
@@ -773,32 +839,42 @@ fun MovieDetailBottomSheet(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            if (!isWatched) {
+                            if (!isWatched && persistedMovieId != 0L) {
                                 WatchlistBookmarkIcon(tint = TvTimePalette.Yellow, size = 13.dp, filled = true)
                             }
                             Text(
-                                text = if (isWatched) "✓ Watched" else "Watchlist",
+                                text = when {
+                                    isWatched -> "✓ Watched"
+                                    persistedMovieId == 0L -> "Not in library yet"
+                                    else -> "Watchlist"
+                                },
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
-                                color = if (isWatched) Color(0xFF4ADE80) else TvTimePalette.Yellow
+                                color = when {
+                                    isWatched -> Color(0xFF4ADE80)
+                                    persistedMovieId == 0L -> TvTimePalette.TextSecondary
+                                    else -> TvTimePalette.Yellow
+                                }
                             )
                         }
-                        TextButton(
-                            onClick = {
-                                scope.launch {
-                                    dao.deleteMovie(movie.id)
-                                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                    onDismiss()
-                                }
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = "✕ Not Watched (Remove)",
-                                color = TvTimePalette.Error,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1
-                            )
+                        if (persistedMovieId != 0L) {
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        dao.deleteMovie(persistedMovieId)
+                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                        onDismiss()
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "✕ Not Watched (Remove)",
+                                    color = TvTimePalette.Error,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
+                                )
+                            }
                         }
                     }
 
@@ -806,52 +882,63 @@ fun MovieDetailBottomSheet(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Surface(
-                            onClick = {
-                                if (!isWatched) {
-                                    scope.launch {
-                                        dao.deleteMovie(movie.id)
-                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                        onDismiss()
+                        if (!isWatched) {
+                            val isInWatchlist = !isWatched && persistedMovieId != 0L
+                            Surface(
+                                onClick = {
+                                    if (isInWatchlist) {
+                                        scope.launch {
+                                            dao.deleteMovie(persistedMovieId)
+                                            FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                            onDismiss()
+                                        }
+                                    } else {
+                                        isWatched = false
+                                        persistMovie(nextWatched = false)
                                     }
-                                } else {
-                                    isWatched = false
-                                    persistMovie(nextWatched = false)
-                                }
-                            },
-                            shape = RoundedCornerShape(50),
-                            color = if (!isWatched) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Box(
-                                modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
-                                contentAlignment = Alignment.Center
+                                },
+                                shape = RoundedCornerShape(50),
+                                color = if (isInWatchlist) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                Box(
+                                    modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    WatchlistBookmarkIcon(
-                                        tint = if (!isWatched) TvTimePalette.OnYellow else TvTimePalette.Yellow,
-                                        size = 14.dp,
-                                        filled = true
-                                    )
-                                    Text(
-                                        text = "Watchlist",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (!isWatched) TvTimePalette.OnYellow else Color.White,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        WatchlistBookmarkIcon(
+                                            tint = if (isInWatchlist) TvTimePalette.OnYellow else TvTimePalette.Yellow,
+                                            size = 14.dp,
+                                            filled = true
+                                        )
+                                        Text(
+                                            text = if (isInWatchlist) "In Watchlist" else "Add to Watchlist",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isInWatchlist) TvTimePalette.OnYellow else Color.White,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
 
                         Surface(
                             onClick = {
-                                isWatched = true
-                                persistMovie(nextWatched = true)
+                                if (isWatched && persistedMovieId != 0L) {
+                                    scope.launch {
+                                        dao.deleteMovie(persistedMovieId)
+                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                        onDismiss()
+                                    }
+                                } else {
+                                    isWatched = true
+                                    persistMovie(nextWatched = true)
+                                }
                             },
                             shape = RoundedCornerShape(50),
                             color = if (isWatched) TvTimePalette.Yellow else TvTimePalette.SurfacePill,

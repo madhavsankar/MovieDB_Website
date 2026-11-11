@@ -73,6 +73,38 @@ object FirestoreSyncService {
         return socialCache[sanitizeUserId(userId)] ?: SocialFriendsState()
     }
 
+    private fun isSyntheticEpisodeList(eps: List<EpisodeModel>): Boolean {
+        if (eps.isEmpty()) return true
+        val synthRegex = Regex("^Episode \\d+$", RegexOption.IGNORE_CASE)
+        return eps.all { it.title.isBlank() || synthRegex.matches(it.title.trim()) }
+    }
+
+    private fun compactEpisodesJsonArray(rawJson: String, minimalForCompleted: Boolean = false): JSONArray {
+        val out = JSONArray()
+        try {
+            val arr = JSONArray(rawJson)
+            for (i in 0 until arr.length()) {
+                val ep = arr.optJSONObject(i) ?: continue
+                val obj = JSONObject().apply {
+                    put("code", ep.optString("code", "S01E01"))
+                    put("season", ep.optInt("season", 1))
+                    put("number", ep.optInt("number", i + 1))
+                    if (!minimalForCompleted) {
+                        val title = ep.optString("title", "")
+                        if (title.isNotEmpty()) put("title", title)
+                        val airDate = ep.optString("airDate", "")
+                        if (airDate.isNotEmpty()) put("airDate", airDate)
+                    }
+                    val rt = ep.optInt("runtimeMins", 0)
+                    if (rt > 0) put("runtimeMins", rt)
+                }
+                out.put(obj)
+            }
+        } catch (_: Exception) {
+        }
+        return out
+    }
+
     fun deduplicateShows(shows: List<ShowEntity>): List<ShowEntity> {
         val byKey = LinkedHashMap<String, ShowEntity>()
         fun statusRank(st: String): Int = when (st.lowercase()) {
@@ -86,17 +118,44 @@ object FirestoreSyncService {
             val key = if (titleKey.isNotEmpty()) "title:$titleKey" else s.externalId.ifBlank { "id:${s.id}" }
             val existing = byKey[key]
             if (existing == null) {
-                byKey[key] = s
+                val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
+                var watched = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
+                if (s.userStatus.equals("completed", ignoreCase = true) && eps.isNotEmpty() && watched.size < eps.size) {
+                    watched = eps.map { it.code.uppercase() }.toSet()
+                } else if (eps.isNotEmpty() && !isSyntheticEpisodeList(eps) && watched.size > eps.size) {
+                    val validCodes = eps.map { it.code.uppercase() }.toSet()
+                    val filtered = watched.filter { validCodes.contains(it) }.toSet()
+                    if (filtered.isNotEmpty()) watched = filtered
+                }
+                byKey[key] = s.copy(
+                    watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(watched)
+                )
             } else {
-                val mergedWatched = TvTimeProgressCalculator.parseWatchedSet(existing.watchedCodesCsv) +
-                    TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
                 val existingEps = TvTimeProgressCalculator.parseEpisodeList(existing.episodesJson)
                 val newEps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
-                val bestEpsJson = if (newEps.size > existingEps.size) s.episodesJson else existing.episodesJson
+                val existingSynth = isSyntheticEpisodeList(existingEps)
+                val newSynth = isSyntheticEpisodeList(newEps)
+                val (bestEps, bestEpsJson) = when {
+                    existingSynth && !newSynth && newEps.isNotEmpty() -> newEps to s.episodesJson
+                    !existingSynth && newSynth && existingEps.isNotEmpty() -> existingEps to existing.episodesJson
+                    newEps.size > existingEps.size -> newEps to s.episodesJson
+                    else -> existingEps to existing.episodesJson
+                }
                 val bestStatus = if (statusRank(s.userStatus) > statusRank(existing.userStatus)) s.userStatus else existing.userStatus
+                var mergedWatched = TvTimeProgressCalculator.parseWatchedSet(existing.watchedCodesCsv) +
+                    TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
+                if (bestStatus.equals("completed", ignoreCase = true) && bestEps.isNotEmpty()) {
+                    mergedWatched = bestEps.map { it.code.uppercase() }.toSet()
+                } else if (bestEps.isNotEmpty() && !isSyntheticEpisodeList(bestEps)) {
+                    val validCodes = bestEps.map { it.code.uppercase() }.toSet()
+                    val filtered = mergedWatched.filter { validCodes.contains(it) }.toSet()
+                    if (filtered.isNotEmpty()) mergedWatched = filtered
+                }
                 byKey[key] = existing.copy(
                     tvmazeId = if (existing.tvmazeId != 0) existing.tvmazeId else s.tvmazeId,
                     tmdbId = if (existing.tmdbId != 0) existing.tmdbId else s.tmdbId,
+                    posterUrl = existing.posterUrl.ifBlank { s.posterUrl },
+                    overview = existing.overview.ifBlank { s.overview },
                     network = if (existing.network.isNotBlank() && existing.network != "Streaming") existing.network else s.network,
                     castCsv = existing.castCsv.ifBlank { s.castCsv },
                     userStatus = bestStatus,
@@ -119,6 +178,8 @@ object FirestoreSyncService {
             } else {
                 byKey[key] = existing.copy(
                     tmdbId = if (existing.tmdbId != 0) existing.tmdbId else m.tmdbId,
+                    posterUrl = existing.posterUrl.ifBlank { m.posterUrl },
+                    overview = existing.overview.ifBlank { m.overview },
                     watched = existing.watched || m.watched,
                     watchedAt = existing.watchedAt.ifBlank { m.watchedAt },
                     streamingService = if (existing.streamingService.isNotBlank() && existing.streamingService != "Streaming") {
@@ -184,36 +245,42 @@ object FirestoreSyncService {
                 val movies = deduplicateMovies(dao.getMoviesForUser(cleanUser))
                 val actors = dao.getActorsForUser(cleanUser)
 
-                val showsArr = JSONArray()
-                for (s in shows) {
-                    val watchedArr = JSONArray(TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv).toList())
-                    val epsArr = try { JSONArray(s.episodesJson) } catch (_: Exception) { JSONArray() }
-                    showsArr.put(
-                        JSONObject().apply {
-                            put("id", s.externalId)
-                            put("tvmazeId", s.tvmazeId)
-                            put("tmdbId", s.tmdbId)
-                            put("title", s.title)
-                            put("year", s.year)
-                            put("network", s.network)
-                            put("status", s.status)
-                            put("runtimeMins", s.runtimeMins)
-                            put("genres", JSONArray(s.genresCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
-                            put("cast", JSONArray(s.castCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
-                            put("rating", s.rating)
-                            put("posterUrl", s.posterUrl)
-                            put("overview", s.overview)
-                            put("userStatus", s.userStatus)
-                            put("userRating", s.userRating)
-                            put("reaction", s.reaction)
-                            put("isFavorite", s.isFavorite)
-                            put("rewatchCount", s.rewatchCount)
-                            put("watchedEpisodes", watchedArr)
-                            put("episodes", epsArr)
-                            put("lastWatchedAt", s.lastWatchedAt)
-                        }
-                    )
+                fun buildShowsArray(minimalCompleted: Boolean): JSONArray {
+                    val arr = JSONArray()
+                    for (s in shows) {
+                        val watchedArr = JSONArray(TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv).toList())
+                        val isComp = s.userStatus.equals("completed", ignoreCase = true)
+                        val epsArr = compactEpisodesJsonArray(s.episodesJson, minimalCompleted && isComp)
+                        arr.put(
+                            JSONObject().apply {
+                                put("id", s.externalId)
+                                put("tvmazeId", s.tvmazeId)
+                                put("tmdbId", s.tmdbId)
+                                put("title", s.title)
+                                put("year", s.year)
+                                put("network", s.network)
+                                put("status", s.status)
+                                put("runtimeMins", s.runtimeMins)
+                                put("genres", JSONArray(s.genresCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
+                                put("cast", JSONArray(s.castCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
+                                put("rating", s.rating)
+                                put("posterUrl", s.posterUrl)
+                                put("overview", s.overview)
+                                put("userStatus", s.userStatus)
+                                put("userRating", s.userRating)
+                                put("reaction", s.reaction)
+                                put("isFavorite", s.isFavorite)
+                                put("rewatchCount", s.rewatchCount)
+                                put("watchedEpisodes", watchedArr)
+                                put("episodes", epsArr)
+                                put("lastWatchedAt", s.lastWatchedAt)
+                            }
+                        )
+                    }
+                    return arr
                 }
+
+                val showsArr = buildShowsArray(minimalCompleted = false)
 
                 val moviesArr = JSONArray()
                 for (m in movies) {
@@ -280,13 +347,19 @@ object FirestoreSyncService {
                     put("updatedAt", Instant.now().toString())
                 }
 
+                var payloadStr = payloadObj.toString()
+                if (payloadStr.length > 750_000) {
+                    payloadObj.put("shows", buildShowsArray(minimalCompleted = true))
+                    payloadStr = payloadObj.toString()
+                }
+
                 val firestoreBody = JSONObject().apply {
                     put(
                         "fields",
                         JSONObject().apply {
                             put("userId", JSONObject().put("stringValue", cleanUser))
                             put("email", JSONObject().put("stringValue", displayUserLabel(cleanUser)))
-                            put("payload", JSONObject().put("stringValue", payloadObj.toString()))
+                            put("payload", JSONObject().put("stringValue", payloadStr))
                             put("showCount", JSONObject().put("integerValue", shows.size.toString()))
                             put("movieCount", JSONObject().put("integerValue", movies.size.toString()))
                             put("actorCount", JSONObject().put("integerValue", actors.size.toString()))
@@ -386,8 +459,14 @@ object FirestoreSyncService {
                             )
                         )
                     }
+                    val existingLocalShows = dao.getShowsForUser(cleanUser)
+                    val combinedShows = if (existingLocalShows.size > parsedShows.size) {
+                        deduplicateShows(existingLocalShows + parsedShows)
+                    } else {
+                        deduplicateShows(parsedShows)
+                    }
                     dao.deleteAllShowsForUser(cleanUser)
-                    for (showEntity in deduplicateShows(parsedShows)) {
+                    for (showEntity in combinedShows) {
                         dao.insertShow(showEntity)
                     }
                 }
@@ -425,8 +504,14 @@ object FirestoreSyncService {
                             )
                         )
                     }
+                    val existingLocalMovies = dao.getMoviesForUser(cleanUser)
+                    val combinedMovies = if (existingLocalMovies.size > parsedMovies.size) {
+                        deduplicateMovies(existingLocalMovies + parsedMovies)
+                    } else {
+                        deduplicateMovies(parsedMovies)
+                    }
                     dao.deleteAllMoviesForUser(cleanUser)
-                    for (movieEntity in deduplicateMovies(parsedMovies)) {
+                    for (movieEntity in combinedMovies) {
                         dao.insertMovie(movieEntity)
                     }
                 }

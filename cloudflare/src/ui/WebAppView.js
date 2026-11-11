@@ -342,7 +342,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       <div class="tv-card rounded-3xl p-5 space-y-3">
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-extrabold text-white">Recently watched <span id="label-recent-series-count" class="font-normal text-zinc-400">Series</span></h3>
-          <button onclick="app.switchTab('home'); app.setHomeSegment('shows'); app.setMediaFilter('in_progress');" class="text-xs font-semibold tv-yellow-text">See all</button>
+          <button onclick="app.switchTab('home'); app.setHomeSegment('shows'); app.setMediaFilter('completed');" class="text-xs font-semibold tv-yellow-text">See all</button>
         </div>
         <div id="carousel-recent-series" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
       </div>
@@ -354,6 +354,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           <button onclick="app.switchTab('home'); app.setHomeSegment('movies'); app.setMediaFilter('completed');" class="text-xs font-semibold tv-yellow-text">See all</button>
         </div>
         <div id="carousel-recent-movies" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
+      </div>
+
+      <!-- Full Scrollable Completed Series List -->
+      <div class="space-y-3">
+        <div class="flex items-center justify-between px-1">
+          <h3 class="text-sm font-extrabold text-white">Completed Series <span id="label-completed-series-full-count" class="font-normal text-zinc-400">(0)</span></h3>
+        </div>
+        <div id="recent-completed-series-list" class="space-y-2.5"></div>
       </div>
     </section>
 
@@ -435,10 +443,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             <p class="text-xs text-zinc-400">Profile, cloud sync &amp; library backup</p>
           </div>
         </div>
-        <button onclick="app.loadState(true)" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold tv-yellow-text flex items-center gap-1 border border-zinc-800">
+        <button id="settings-sync-btn" onclick="app.syncNow()" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold tv-yellow-text flex items-center gap-1 border border-zinc-800">
           ↻ Sync
         </button>
       </div>
+
+      <div id="settings-sync-status" class="hidden text-xs font-semibold px-3.5 py-2.5 rounded-2xl border"></div>
 
       <!-- Top Profile Card (Avatar, Name, Email & Import/Export) -->
       <div class="tv-card rounded-3xl p-4 space-y-3.5">
@@ -485,10 +495,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             <p class="text-xs text-zinc-400">Search by username, send requests &amp; view each other&apos;s series &amp; movies</p>
           </div>
         </div>
-        <button onclick="app.loadState(true)" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold tv-yellow-text flex items-center gap-1 border border-zinc-800">
+        <button id="settings-sync-btn" onclick="app.syncNow()" class="tv-pill-bar px-3.5 py-2 rounded-full text-xs font-semibold tv-yellow-text flex items-center gap-1 border border-zinc-800">
           ↻ Sync
         </button>
       </div>
+
+      <div id="settings-sync-status" class="hidden text-xs font-semibold px-3.5 py-2.5 rounded-2xl border"></div>
 
       <!-- Search / Add Friend by Username Card -->
       <div class="tv-card rounded-3xl p-4 space-y-3">
@@ -950,7 +962,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.initOutsideDropdownDismiss();
 
         document.addEventListener("visibilitychange", () => {
-          if (!document.hidden && this.googleIdToken) {
+          if (!document.hidden && this.googleIdToken && !this._isImporting) {
             this.loadState(false);
           }
         });
@@ -1295,6 +1307,24 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         window.location.reload();
       }
 
+      isSyntheticEpisodeList(eps) {
+        if (!Array.isArray(eps) || eps.length === 0) return true;
+        return eps.every((e) => !e || !e.title || /^Episode [0-9]+$/i.test(String(e.title).trim()));
+      }
+
+      compactEpisode(ep) {
+        if (!ep || typeof ep !== "object") return ep;
+        const out = {
+          code: String(ep.code || "S01E01"),
+          season: Number(ep.season) || 1,
+          number: Number(ep.number) || 1,
+        };
+        if (ep.title) out.title = String(ep.title);
+        if (ep.airDate) out.airDate = String(ep.airDate);
+        if (ep.runtimeMins) out.runtimeMins = Number(ep.runtimeMins);
+        return out;
+      }
+
       deduplicateState() {
         if (!this.state) return;
         const statusRank = { completed: 4, in_progress: 3, watching: 3, stopped: 2, interested: 1 };
@@ -1305,33 +1335,67 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             const titleKey = String(s.title || "").trim().toLowerCase();
             const idKey = String(s.id || "").trim();
             const key = titleKey ? "title:" + titleKey : idKey || "idx:" + byKey.size;
+            const incomingEps = (Array.isArray(s.episodes) ? s.episodes : []).map((e) =>
+              this.compactEpisode(e)
+            );
             if (!byKey.has(key)) {
+              let watched = Array.from(
+                new Set(Array.isArray(s.watchedEpisodes) ? s.watchedEpisodes : [])
+              ).sort();
+              if (s.userStatus === "completed" && incomingEps.length > 0 && watched.length < incomingEps.length) {
+                watched = incomingEps.map((e) => e.code).sort();
+              } else if (
+                incomingEps.length > 0 &&
+                !this.isSyntheticEpisodeList(incomingEps) &&
+                watched.length > incomingEps.length
+              ) {
+                const validCodes = new Set(incomingEps.map((e) => e.code));
+                const filtered = watched.filter((c) => validCodes.has(c));
+                if (filtered.length > 0) watched = filtered.sort();
+              }
               byKey.set(key, {
                 ...s,
-                watchedEpisodes: Array.from(new Set(Array.isArray(s.watchedEpisodes) ? s.watchedEpisodes : [])).sort(),
-                episodes: Array.isArray(s.episodes) ? s.episodes : [],
+                watchedEpisodes: watched,
+                episodes: incomingEps,
               });
             } else {
               const existing = byKey.get(key);
-              const mergedWatched = Array.from(
+              const existingEps = Array.isArray(existing.episodes) ? existing.episodes : [];
+              const existingSynth = this.isSyntheticEpisodeList(existingEps);
+              const newSynth = this.isSyntheticEpisodeList(incomingEps);
+              let bestEps = existingEps;
+              if (existingSynth && !newSynth && incomingEps.length > 0) {
+                bestEps = incomingEps;
+              } else if (!existingSynth && newSynth && existingEps.length > 0) {
+                bestEps = existingEps;
+              } else if (incomingEps.length > existingEps.length) {
+                bestEps = incomingEps;
+              }
+              const bestStatus =
+                (statusRank[s.userStatus] || 0) > (statusRank[existing.userStatus] || 0)
+                  ? s.userStatus
+                  : existing.userStatus;
+              let mergedWatched = Array.from(
                 new Set([
                   ...(Array.isArray(existing.watchedEpisodes) ? existing.watchedEpisodes : []),
                   ...(Array.isArray(s.watchedEpisodes) ? s.watchedEpisodes : []),
                 ])
               ).sort();
-              const existingEps = Array.isArray(existing.episodes) ? existing.episodes : [];
-              const newEps = Array.isArray(s.episodes) ? s.episodes : [];
-              const bestEps = newEps.length > existingEps.length ? newEps : existingEps;
-              const bestStatus =
-                (statusRank[s.userStatus] || 0) > (statusRank[existing.userStatus] || 0)
-                  ? s.userStatus
-                  : existing.userStatus;
+              if (bestStatus === "completed" && bestEps.length > 0) {
+                mergedWatched = bestEps.map((e) => e.code).sort();
+              } else if (bestEps.length > 0 && !this.isSyntheticEpisodeList(bestEps)) {
+                const validCodes = new Set(bestEps.map((e) => e.code));
+                const filtered = mergedWatched.filter((c) => validCodes.has(c));
+                if (filtered.length > 0) mergedWatched = filtered.sort();
+              }
               byKey.set(key, {
                 ...existing,
                 ...s,
                 id: existing.id || s.id,
                 tvmazeId: existing.tvmazeId || s.tvmazeId || 0,
                 tmdbId: existing.tmdbId || s.tmdbId || 0,
+                posterUrl: existing.posterUrl || s.posterUrl || "",
+                overview: existing.overview || s.overview || "",
                 network:
                   existing.network && existing.network !== "Streaming"
                     ? existing.network
@@ -1361,6 +1425,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 ...m,
                 id: existing.id || m.id,
                 tmdbId: existing.tmdbId || m.tmdbId || 0,
+                posterUrl: existing.posterUrl || m.posterUrl || "",
+                overview: existing.overview || m.overview || "",
                 watched: Boolean(existing.watched || m.watched),
                 watchedAt: existing.watchedAt || m.watchedAt || "",
                 streamingService:
@@ -1407,7 +1473,51 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         return h;
       }
 
-      async loadState(showToast = false) {
+      showSyncStatus(msg, isError = false) {
+        const el = document.getElementById("settings-sync-status");
+        if (el) {
+          el.textContent = msg;
+          el.className =
+            "text-xs font-semibold px-3.5 py-2.5 rounded-2xl border " +
+            (isError
+              ? "bg-rose-500/10 text-rose-400 border-rose-500/30"
+              : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30");
+          el.classList.remove("hidden");
+          if (this._syncStatusTimer) clearTimeout(this._syncStatusTimer);
+          this._syncStatusTimer = setTimeout(() => {
+            el.classList.add("hidden");
+          }, 5000);
+        }
+      }
+
+      async syncNow() {
+        const sBtn = document.getElementById("settings-sync-btn");
+        const fBtn = document.getElementById("friends-sync-btn");
+        if (sBtn) sBtn.textContent = "↻ Syncing...";
+        if (fBtn) fBtn.textContent = "↻ Syncing...";
+        this.showSyncStatus("↻ Syncing library with Cloud Firestore...", false);
+        try {
+          const localShows = Array.isArray(this.state.shows) ? [...this.state.shows] : [];
+          const localMovies = Array.isArray(this.state.movies) ? [...this.state.movies] : [];
+          const localDecided = Array.isArray(this.state.decidedIds) ? [...this.state.decidedIds] : [];
+          await this.loadState(true, { localShows, localMovies, localDecided });
+          if (this.activeTab === "friends") {
+            await this.searchFriendsOnServer(this.friendSearchQuery);
+          }
+          if (sBtn) sBtn.textContent = "✓ Synced";
+          if (fBtn) fBtn.textContent = "✓ Synced";
+          setTimeout(() => {
+            if (sBtn) sBtn.textContent = "↻ Sync";
+            if (fBtn) fBtn.textContent = "↻ Sync";
+          }, 2000);
+        } catch (_) {
+          this.showSyncStatus("Could not reach sync server. Saved locally.", true);
+          if (sBtn) sBtn.textContent = "↻ Sync";
+          if (fBtn) fBtn.textContent = "↻ Sync";
+        }
+      }
+
+      async loadState(showToast = false, mergeLocal = null) {
         try {
           const res = await fetch("/api/state", {
             headers: this.getHeaders(),
@@ -1423,7 +1533,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             await this.ensureGoogleSignIn(
               errBody.error || "Please sign in with an allowlisted Google account."
             );
-            return this.loadState(showToast);
+            return this.loadState(showToast, mergeLocal);
           }
           if (res.ok) {
             const data = await res.json();
@@ -1431,6 +1541,15 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             if (!Array.isArray(data.friends)) data.friends = [];
             if (!Array.isArray(data.incomingFriendRequests)) data.incomingFriendRequests = [];
             if (!Array.isArray(data.outgoingFriendRequests)) data.outgoingFriendRequests = [];
+            const remoteShowCount = Array.isArray(data.shows) ? data.shows.length : 0;
+            const remoteMovieCount = Array.isArray(data.movies) ? data.movies.length : 0;
+            if (mergeLocal) {
+              data.shows = [...(mergeLocal.localShows || []), ...(data.shows || [])];
+              data.movies = [...(mergeLocal.localMovies || []), ...(data.movies || [])];
+              data.decidedIds = Array.from(
+                new Set([...(mergeLocal.localDecided || []), ...(data.decidedIds || [])])
+              );
+            }
             this.state = data;
             this.deduplicateState();
             if (data.sessionToken || data.email) {
@@ -1440,11 +1559,34 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             }
             this.saveLocalCache();
             this.render();
+            if (
+              mergeLocal &&
+              ((this.state.shows || []).length !== remoteShowCount ||
+                (this.state.movies || []).length !== remoteMovieCount)
+            ) {
+              await this.persistState();
+            }
+            if (showToast) {
+              this.showSyncStatus(
+                "✓ Synced with Cloud Firestore (" +
+                  (this.state.shows || []).length +
+                  " series, " +
+                  (this.state.movies || []).length +
+                  " movies)",
+                false
+              );
+            }
             if (this.recPool.length === 0) {
               this.loadRecommendations(false);
             }
+          } else if (showToast) {
+            this.showSyncStatus("Sync failed (HTTP " + res.status + ").", true);
           }
-        } catch (_) {}
+        } catch (_) {
+          if (showToast) {
+            this.showSyncStatus("Network error while syncing.", true);
+          }
+        }
       }
 
       async persistState() {
@@ -1476,8 +1618,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 data.userId || this.userId
               );
             }
+            return Boolean(!data || data.ok !== false);
           }
         } catch (_) {}
+        return false;
       }
 
       initBackNavigation() {
@@ -1606,9 +1750,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             statusSelect.value = this.mediaFilter;
           }
         } else if (seg === "shows") {
-          if (!["in_progress", "interested", "completed", "stopped"].includes(this.mediaFilter)) {
-            this.mediaFilter = "in_progress";
-          }
+          this.mediaFilter = "in_progress";
           if (statusSelect) {
             statusSelect.innerHTML =
               '<option value="in_progress">In progress</option>' +
@@ -1639,10 +1781,24 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const watchedCount = watchedSet.size;
         const leftCount = Math.max(0, total - watchedCount);
         let nextEp = null;
+        let lastWatchedEp = null;
         for (const ep of episodes) {
-          if (!watchedSet.has(ep.code)) {
+          if (watchedSet.has(ep.code)) {
+            lastWatchedEp = ep;
+          } else if (!nextEp) {
             nextEp = ep;
-            break;
+          }
+        }
+        if (!lastWatchedEp && watchedCount > 0) {
+          const sortedCodes = Array.from(watchedSet).sort();
+          const lastCode = sortedCodes[sortedCodes.length - 1];
+          const m = /^S([0-9]+)E([0-9]+)$/i.exec(String(lastCode || ""));
+          if (m) {
+            lastWatchedEp = {
+              code: String(lastCode).toUpperCase(),
+              season: Number(m[1]),
+              number: Number(m[2]),
+            };
           }
         }
         if (!nextEp && leftCount > 0) {
@@ -1661,6 +1817,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           watchedCount,
           leftCount,
           nextEp,
+          lastWatchedEp,
           pct,
           isCompleted: total > 0 && leftCount === 0,
           hasStarted: watchedCount > 0,
@@ -1834,19 +1991,31 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             prog.total +
             " episodes watched</span></div>";
           actionBtnHtml =
-            '<button title="Toggle full series watched / unwatched" onclick="event.stopPropagation(); app.toggleShowWatched(&quot;' +
+            '<button title="Mark series unwatched" onclick="event.stopPropagation(); app.toggleShowWatched(&quot;' +
             escapeHtml(show.id) +
             '&quot;)" class="tv-check-btn">' +
             CHECK_SVG +
             "</button>";
         } else if (effStatus === "stopped") {
+          const stoppedTillLabel = prog.lastWatchedEp
+            ? "S" +
+              String(prog.lastWatchedEp.season).padStart(2, "0") +
+              "·E" +
+              String(prog.lastWatchedEp.number).padStart(2, "0")
+            : "";
           statusLineHtml =
             '<div class="text-[11px] font-bold text-rose-400">TV Show · Stopped</div>' +
-            '<div class="text-xs text-zinc-400">Stopped watching (' +
-            prog.watchedCount +
-            "/" +
-            prog.total +
-            " watched)</div>";
+            '<div class="text-xs text-zinc-400">' +
+            (stoppedTillLabel
+              ? 'Watched till <span class="font-extrabold text-rose-300">' +
+                escapeHtml(stoppedTillLabel) +
+                "</span> (" +
+                prog.watchedCount +
+                "/" +
+                prog.total +
+                " watched)"
+              : "Stopped watching (" + prog.watchedCount + "/" + prog.total + " watched)") +
+            "</div>";
           actionBtnHtml =
             '<button title="Mark full series watched" onclick="event.stopPropagation(); app.toggleShowWatched(&quot;' +
             escapeHtml(show.id) +
@@ -2099,7 +2268,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               if (res.ok) {
                 const full = await res.json();
                 if (full && Array.isArray(full.episodes) && full.episodes.length > eps.length) {
-                  s.episodes = full.episodes;
+                  s.episodes = full.episodes.map((e) => this.compactEpisode(e));
+                  if (s.userStatus === "completed") {
+                    s.watchedEpisodes = s.episodes.map((e) => e.code).sort();
+                  }
                   if (full.status) s.status = full.status;
                   updatedAny = true;
                 }
@@ -2191,7 +2363,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (!show) return;
         const eff = this.getEffectiveShowStatus(show);
         if (eff === "completed") {
-          await this.setShowStatus(showId, "interested");
+          await this.removeItemFromLibrary(showId);
         } else {
           const lookupKey = show.tvmazeId || show.id;
           if (lookupKey && (!show.episodes || show.episodes.length <= 1)) {
@@ -2227,15 +2399,43 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       async toggleMovieWatched(movieId) {
         const movie = (this.state.movies || []).find((m) => m.id === movieId);
         if (!movie) return;
-        movie.watched = !movie.watched;
-        movie.watchedAt = movie.watched ? new Date().toISOString().slice(0, 10) : "";
+        if (movie.watched) {
+          await this.removeItemFromLibrary(movieId);
+          return;
+        }
+        movie.watched = true;
+        movie.watchedAt = new Date().toISOString().slice(0, 10);
         await this.persistState();
       }
 
+      ensureDetailShowInLibrary(showId) {
+        let show = (this.state.shows || []).find((s) => s.id === showId);
+        if (!show && this.detailItem && this.detailItem.id === showId) {
+          delete this.detailItem._isPreview;
+          if (this.detailItem.userStatus === "preview") {
+            this.detailItem.userStatus = "interested";
+          }
+          this.state.shows = [this.detailItem, ...(this.state.shows || [])];
+          show = this.detailItem;
+        }
+        return show;
+      }
+
       async setMovieStatus(movieId, isWatched) {
-        const movie = (this.state.movies || []).find((m) => m.id === movieId);
+        let movie = (this.state.movies || []).find((m) => m.id === movieId);
+        let wasPreview = false;
+        if (!movie && this.detailItem && this.detailItem.id === movieId) {
+          wasPreview = true;
+          delete this.detailItem._isPreview;
+          this.state.movies = [this.detailItem, ...(this.state.movies || [])];
+          movie = this.detailItem;
+        }
         if (!movie) return;
-        if (!isWatched && !movie.watched) {
+        if (!wasPreview && !isWatched && !movie.watched) {
+          await this.removeItemFromLibrary(movieId);
+          return;
+        }
+        if (!wasPreview && isWatched && movie.watched) {
           await this.removeItemFromLibrary(movieId);
           return;
         }
@@ -2245,24 +2445,33 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       async setShowStatus(showId, status) {
-        const show = (this.state.shows || []).find((s) => s.id === showId);
+        const wasInLib = (this.state.shows || []).some((s) => s.id === showId);
+        const show = this.ensureDetailShowInLibrary(showId);
         if (!show) return;
         const eps = Array.isArray(show.episodes) ? show.episodes : [];
-        const eff = this.getEffectiveShowStatus(show);
+        const eff = wasInLib ? this.getEffectiveShowStatus(show) : "preview";
         if (status === "completed") {
           if (eff === "completed") {
-            show.watchedEpisodes = [];
-            show.userStatus = "interested";
-          } else {
-            show.watchedEpisodes = eps.map((e) => e.code).sort();
-            show.userStatus = "completed";
+            await this.removeItemFromLibrary(showId);
+            return;
           }
+          show.watchedEpisodes = eps.map((e) => e.code).sort();
+          show.userStatus = "completed";
           this.openSeasons = new Set();
+        } else if (status === "in_progress") {
+          if ((show.watchedEpisodes || []).length === 0 && eps.length > 0) {
+            show.watchedEpisodes = [eps[0].code];
+          } else if (eff === "completed" && eps.length > 1) {
+            show.watchedEpisodes = eps.slice(0, eps.length - 1).map((e) => e.code);
+          }
+          show.userStatus = "in_progress";
         } else if (status === "stopped") {
-          if (eff === "completed") return;
           if (eff === "stopped") {
             show.userStatus = (show.watchedEpisodes || []).length > 0 ? "in_progress" : "interested";
           } else {
+            if (eff === "completed" && eps.length > 1) {
+              show.watchedEpisodes = eps.slice(0, eps.length - 1).map((e) => e.code);
+            }
             show.userStatus = "stopped";
           }
         } else if (status === "interested") {
@@ -2365,13 +2574,17 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               const isCompleted =
                 (existingShow && showStatus === "completed") ||
                 (existingMovie && Boolean(existingMovie.watched));
+              const hasWatched =
+                isCompleted ||
+                (existingShow &&
+                  (showStatus === "in_progress" || (existingShow.watchedEpisodes || []).length > 0));
 
               const badgeClass = item.mediaType === "movie" ? "text-sky-400" : "tv-yellow-text";
               const badgeLabel = item.mediaType === "movie" ? "Movie" : "TV Show";
               const subtitle =
                 item.overview ||
                 (item.director && item.director !== item.streamingService ? item.director : "") ||
-                "Tap + for Watchlist or ✓ to mark Completed";
+                "Tap for Info, + for Watchlist, or ✓ to mark Completed";
               const poster =
                 item.posterUrl ||
                 "https://via.placeholder.com/200x300/1c1c22/facc15?text=" + encodeURIComponent(item.title || "Item");
@@ -2383,19 +2596,23 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 ? "w-10 h-10 rounded-full bg-emerald-500 border border-emerald-500 text-white flex items-center justify-center shrink-0 transition active:scale-95"
                 : "w-10 h-10 rounded-full bg-[#232329] border border-zinc-700 text-zinc-400 flex items-center justify-center shrink-0 transition hover:border-emerald-500/60 hover:text-white active:scale-95";
 
+              const watchlistQuickBtn = !hasWatched
+                ? '<button title="' +
+                  (isInWatchlist ? "In Watchlist (Tap to remove)" : "Add to Watchlist") +
+                  '" onclick="event.stopPropagation(); app.quickToggleSearchWatchlist(&quot;' +
+                  escapeHtml(item.id) +
+                  '&quot;)" class="' +
+                  watchlistBtnClass +
+                  '">' +
+                  (isInWatchlist ? WATCHLIST_SVG : PLUS_SVG) +
+                  "</button>"
+                : "";
+
               const rightBtns =
                 '<div class="flex items-center gap-2 shrink-0">' +
+                watchlistQuickBtn +
                 '<button title="' +
-                (isInWatchlist ? "In Watchlist (Tap to remove)" : "Add to Watchlist") +
-                '" onclick="event.stopPropagation(); app.quickToggleSearchWatchlist(&quot;' +
-                escapeHtml(item.id) +
-                '&quot;)" class="' +
-                watchlistBtnClass +
-                '">' +
-                (isInWatchlist ? WATCHLIST_SVG : PLUS_SVG) +
-                "</button>" +
-                '<button title="' +
-                (isCompleted ? "Completed (Tap to move to Watchlist)" : "Mark as Completed") +
+                (isCompleted ? "Completed (Tap to mark unwatched)" : "Mark as Completed") +
                 '" onclick="event.stopPropagation(); app.quickMarkSearchCompleted(&quot;' +
                 escapeHtml(item.id) +
                 '&quot;)" class="' +
@@ -2458,8 +2675,6 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (existingMovie) {
           if (!existingMovie.watched) {
             await this.removeItemFromLibrary(itemId);
-          } else {
-            await this.setMovieStatus(itemId, false);
           }
           return;
         }
@@ -2471,7 +2686,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (existingShow) {
           const eff = this.getEffectiveShowStatus(existingShow);
           if (eff === "completed") {
-            await this.setShowStatus(itemId, "interested");
+            await this.removeItemFromLibrary(itemId);
           } else {
             await this.setShowStatus(itemId, "completed");
           }
@@ -2479,7 +2694,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
         const existingMovie = (this.state.movies || []).find((m) => m.id === itemId);
         if (existingMovie) {
-          await this.setMovieStatus(itemId, !existingMovie.watched);
+          if (existingMovie.watched) {
+            await this.removeItemFromLibrary(itemId);
+          } else {
+            await this.setMovieStatus(itemId, true);
+          }
           return;
         }
         await this.addSearchResult(itemId);
@@ -2540,7 +2759,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               changed = true;
             }
             if (changed) {
-              this.persistState();
+              if ((this.state.movies || []).some((m) => m.id === movie.id)) {
+                this.persistState();
+              }
               if (this.detailItem && this.detailItem.id === movie.id) {
                 this.renderDetailSheet();
               }
@@ -2599,8 +2820,86 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       async addOrOpenSearchResult(itemId) {
-        await this.addSearchResult(itemId);
-        this.openItemById(itemId);
+        const existingShow = (this.state.shows || []).find((s) => s.id === itemId);
+        const existingMovie = (this.state.movies || []).find((m) => m.id === itemId);
+        if (existingShow || existingMovie) {
+          await this.openItemById(itemId);
+          this.detailTab = "info";
+          this.renderDetailSheet();
+          return;
+        }
+        const item = (this.searchResults || []).find((r) => r.id === itemId);
+        if (!item) return;
+
+        if (item.mediaType === "movie" || String(item.id || "").startsWith("movie_")) {
+          const previewMovie = {
+            ...item,
+            watched: false,
+            watchedAt: "",
+            userRating: 0,
+            reaction: "",
+            rewatchCount: 0,
+            isFavorite: false,
+            _isPreview: true,
+          };
+          this.detailItem = previewMovie;
+          this.detailType = "movie";
+          this.detailTab = "info";
+          this.enrichMovieStreamingIfNeeded(previewMovie);
+          this.showDetailSheetModal();
+          return;
+        }
+
+        const previewShow = {
+          ...item,
+          userStatus: "preview",
+          userRating: 0,
+          reaction: "",
+          isFavorite: false,
+          rewatchCount: 0,
+          watchedEpisodes: [],
+          episodes:
+            Array.isArray(item.episodes) && item.episodes.length > 0
+              ? item.episodes
+              : [
+                  {
+                    code: "S01E01",
+                    season: 1,
+                    number: 1,
+                    title: "Pilot",
+                    airDate: String(item.year || 2024) + "-01-01",
+                    runtimeMins: item.runtimeMins || 45,
+                  },
+                ],
+          _isPreview: true,
+        };
+        this.detailItem = previewShow;
+        this.detailType = "show";
+        this.detailTab = "info";
+        this.openSeasons = new Set();
+        this.pendingScrollSeason = null;
+        this.showDetailSheetModal();
+
+        const lookupKey = item.tvmazeId || item.id;
+        if (lookupKey) {
+          fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey))
+            .then((r) => (r.ok ? r.json() : null))
+            .then((full) => {
+              if (!full) return;
+              if (Array.isArray(full.episodes) && full.episodes.length > 0) {
+                previewShow.episodes = full.episodes;
+              }
+              if (full.network && !this.isGenericStreamingLabel(full.network)) {
+                previewShow.network = full.network;
+              }
+              if (full.cast?.length) previewShow.cast = full.cast;
+              if (full.overview && !previewShow.overview) previewShow.overview = full.overview;
+              if (this.detailItem && this.detailItem.id === previewShow.id) {
+                this.renderDetailSheet();
+              }
+            })
+            .catch(() => {});
+        }
       }
 
       // =========================================================
@@ -2647,15 +2946,21 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           applyInitialSeasons(show);
           // Lazily enrich episodes & streaming network from TMDB or TVMaze if needed
           const lookupKey = show.tvmazeId || show.id;
-          if (lookupKey && (!show.episodes || show.episodes.length <= 1 || this.isGenericStreamingLabel(show.network))) {
+          if (
+            lookupKey &&
+            (!show.episodes ||
+              show.episodes.length <= 1 ||
+              this.isSyntheticEpisodeList(show.episodes) ||
+              this.isGenericStreamingLabel(show.network))
+          ) {
             fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey))
               .then((r) => (r.ok ? r.json() : null))
               .then((full) => {
                 if (full) {
                   if (Array.isArray(full.episodes) && full.episodes.length > 0) {
-                    show.episodes = full.episodes;
+                    show.episodes = full.episodes.map((e) => this.compactEpisode(e));
                     if (show.userStatus === "completed") {
-                      show.watchedEpisodes = full.episodes.map((e) => e.code).sort();
+                      show.watchedEpisodes = show.episodes.map((e) => e.code).sort();
                     }
                   }
                   if (full.network && !this.isGenericStreamingLabel(full.network)) {
@@ -2713,13 +3018,17 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       async toggleEpisodeCode(showId, epCode) {
-        const show = (this.state.shows || []).find((s) => s.id === showId);
+        const show = this.ensureDetailShowInLibrary(showId);
         if (!show) return;
         const set = new Set(show.watchedEpisodes || []);
-        if (set.has(epCode)) {
-          set.delete(epCode);
-        } else {
+        const isAdding = !set.has(epCode);
+        if (isAdding) {
           set.add(epCode);
+          if (show.userStatus === "stopped") {
+            show.userStatus = "in_progress";
+          }
+        } else {
+          set.delete(epCode);
         }
         show.watchedEpisodes = Array.from(set).sort();
         show.userStatus = this.getEffectiveShowStatus(show);
@@ -2728,7 +3037,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       async toggleSeasonWatched(showId, seasonNum) {
-        const show = (this.state.shows || []).find((s) => s.id === showId);
+        const show = this.ensureDetailShowInLibrary(showId);
         if (!show) return;
         const seasonEps = (show.episodes || []).filter((e) => Number(e.season) === Number(seasonNum));
         const set = new Set(show.watchedEpisodes || []);
@@ -2736,6 +3045,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         for (const e of seasonEps) {
           if (allWatched) set.delete(e.code);
           else set.add(e.code);
+        }
+        if (!allWatched && show.userStatus === "stopped") {
+          show.userStatus = "in_progress";
         }
         show.watchedEpisodes = Array.from(set).sort();
         show.userStatus = this.getEffectiveShowStatus(show);
@@ -2765,16 +3077,23 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       renderShowStatusHeaderHtml(show) {
-        const eff = this.getEffectiveShowStatus(show);
+        const inLibrary = (this.state.shows || []).some((s) => s.id === show.id);
+        const eff = inLibrary ? this.getEffectiveShowStatus(show) : "preview";
         const prog = this.computeShowProgress(show);
         const isCompleted = eff === "completed";
+        const isInProgress = eff === "in_progress";
         const isStopped = eff === "stopped";
-        const canStop = !isCompleted;
-        const canSetWatchlist = prog.watchedCount === 0;
-        const isInWatchlist = eff === "interested" && prog.watchedCount === 0;
+        const canSetWatchlist = prog.watchedCount === 0 && !isCompleted;
+        const isInWatchlist = inLibrary && eff === "interested" && prog.watchedCount === 0;
 
-        let badgeHtml = '<span class="text-xs font-extrabold tv-yellow-text">' + WATCHLIST_INLINE_SVG + "Watchlist</span>";
-        if (eff === "completed") {
+        let badgeHtml =
+          '<span class="text-xs font-extrabold text-zinc-400">Not in Library</span>';
+        if (isInWatchlist) {
+          badgeHtml =
+            '<span class="text-xs font-extrabold tv-yellow-text">' +
+            WATCHLIST_INLINE_SVG +
+            "Watchlist</span>";
+        } else if (eff === "completed") {
           badgeHtml = '<span class="text-xs font-extrabold text-emerald-400">✓ Completed</span>';
         } else if (eff === "in_progress") {
           badgeHtml =
@@ -2784,66 +3103,73 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             prog.total +
             " watched)</span>";
         } else if (eff === "stopped") {
+          const stoppedTillLabel = prog.lastWatchedEp
+            ? "S" +
+              String(prog.lastWatchedEp.season).padStart(2, "0") +
+              "·E" +
+              String(prog.lastWatchedEp.number).padStart(2, "0")
+            : "";
           badgeHtml =
-            '<span class="text-xs font-extrabold text-rose-400">⏹ Stopped (' +
+            '<span class="text-xs font-extrabold text-rose-400">⏹ Stopped' +
+            (stoppedTillLabel ? " · Watched till " + escapeHtml(stoppedTillLabel) : "") +
+            " (" +
             prog.watchedCount +
             "/" +
             prog.total +
             " watched)</span>";
         }
 
+        const inProgressBtnHtml =
+          '<button onclick="app.setShowStatus(&quot;' +
+          escapeHtml(show.id) +
+          '&quot;, &quot;in_progress&quot;)" class="px-2.5 py-2 rounded-full text-xs font-extrabold transition ' +
+          (isInProgress ? "tv-yellow-bg" : "bg-zinc-800 text-zinc-200 hover:text-white") +
+          '">▶ In Progress</button>';
+
         const completedBtnHtml =
           '<button onclick="app.setShowStatus(&quot;' +
           escapeHtml(show.id) +
-          '&quot;, &quot;completed&quot;)" class="px-3 py-2 rounded-full text-xs font-extrabold transition ' +
+          '&quot;, &quot;completed&quot;)" class="px-2.5 py-2 rounded-full text-xs font-extrabold transition ' +
           (isCompleted ? "tv-yellow-bg" : "bg-zinc-800 text-zinc-200 hover:text-white") +
           '">✓ Completed</button>';
 
         const stoppedBtnHtml =
-          '<button ' +
-          (canStop
-            ? 'onclick="app.setShowStatus(&quot;' + escapeHtml(show.id) + '&quot;, &quot;stopped&quot;)" '
-            : "disabled ") +
-          'class="px-3 py-2 rounded-full text-xs font-extrabold transition ' +
-          (isStopped
-            ? "tv-yellow-bg"
-            : canStop
-            ? "bg-zinc-800 text-zinc-200 hover:text-white"
-            : "bg-zinc-900 text-zinc-600 cursor-not-allowed") +
+          '<button onclick="app.setShowStatus(&quot;' +
+          escapeHtml(show.id) +
+          '&quot;, &quot;stopped&quot;)" class="px-2.5 py-2 rounded-full text-xs font-extrabold transition ' +
+          (isStopped ? "tv-yellow-bg" : "bg-zinc-800 text-zinc-200 hover:text-white") +
           '">' +
           (isStopped ? "⏹ Stopped ✓" : "⏹ Stopped") +
           "</button>";
 
-        const watchlistBtnHtml =
-          '<button ' +
-          (isInWatchlist
-            ? 'onclick="app.removeItemFromLibrary(&quot;' + escapeHtml(show.id) + '&quot;)" '
-            : canSetWatchlist
-            ? 'onclick="app.setShowStatus(&quot;' + escapeHtml(show.id) + '&quot;, &quot;interested&quot;)" '
-            : "disabled ") +
-          'class="w-full py-2 px-3 rounded-full text-xs font-extrabold transition border ' +
-          (isInWatchlist
-            ? "tv-yellow-bg border-yellow-400"
-            : canSetWatchlist
-            ? "bg-zinc-800 text-zinc-200 border-zinc-700 hover:text-white"
-            : "bg-zinc-900 text-zinc-500 border-zinc-800 cursor-not-allowed") +
-          '">' +
-          (isInWatchlist
-            ? WATCHLIST_INLINE_SVG + "In Watchlist"
-            : canSetWatchlist
-            ? WATCHLIST_INLINE_SVG + "Add to Watchlist"
-            : WATCHLIST_INLINE_SVG + "Watchlist (Only for unwatched series)") +
-          "</button>";
+        const watchlistBtnHtml = canSetWatchlist
+          ? '<button ' +
+            (isInWatchlist
+              ? 'onclick="app.removeItemFromLibrary(&quot;' + escapeHtml(show.id) + '&quot;)" '
+              : 'onclick="app.setShowStatus(&quot;' + escapeHtml(show.id) + '&quot;, &quot;interested&quot;)" ') +
+            'class="w-full py-2 px-3 rounded-full text-xs font-extrabold transition border ' +
+            (isInWatchlist
+              ? "tv-yellow-bg border-yellow-400"
+              : "bg-zinc-800 text-zinc-200 border-zinc-700 hover:text-white") +
+            '">' +
+            (isInWatchlist
+              ? WATCHLIST_INLINE_SVG + "In Watchlist"
+              : WATCHLIST_INLINE_SVG + "Add to Watchlist") +
+            "</button>"
+          : "";
 
         return (
           '<div class="tv-card rounded-2xl p-3 space-y-2.5 mb-3">' +
           '<div class="flex items-center justify-between gap-2">' +
           badgeHtml +
-          '<button onclick="app.removeItemFromLibrary(&quot;' +
-          escapeHtml(show.id) +
-          '&quot;)" class="text-[11px] font-bold text-rose-400 hover:underline">✕ Not Watched (Remove)</button>' +
+          (inLibrary
+            ? '<button onclick="app.removeItemFromLibrary(&quot;' +
+              escapeHtml(show.id) +
+              '&quot;)" class="text-[11px] font-bold text-rose-400 hover:underline">✕ Not Watched (Remove)</button>'
+            : "") +
           "</div>" +
-          '<div class="grid grid-cols-2 gap-2">' +
+          '<div class="grid grid-cols-3 gap-2">' +
+          inProgressBtnHtml +
           completedBtnHtml +
           stoppedBtnHtml +
           "</div>" +
@@ -2853,27 +3179,43 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       renderMovieStatusHeaderHtml(movie) {
+        const inLibrary = (this.state.movies || []).some((m) => m.id === movie.id);
+        const isWatched = inLibrary && Boolean(movie.watched);
+        const isInWatchlist = inLibrary && !movie.watched;
+
+        const watchlistBtnHtml = !isWatched
+          ? '<button onclick="app.setMovieStatus(&quot;' +
+            escapeHtml(movie.id) +
+            '&quot;, false)" class="py-2.5 rounded-full text-xs font-extrabold transition ' +
+            (isInWatchlist ? "tv-yellow-bg" : "bg-zinc-800 text-zinc-300 hover:text-white") +
+            '">' +
+            WATCHLIST_INLINE_SVG +
+            (isInWatchlist ? "In Watchlist" : "Add to Watchlist") +
+            "</button>"
+          : "";
+
+        const watchedBtnHtml =
+          '<button onclick="app.setMovieStatus(&quot;' +
+          escapeHtml(movie.id) +
+          '&quot;, true)" class="py-2.5 rounded-full text-xs font-extrabold transition ' +
+          (isWatched ? "tv-yellow-bg" : "bg-zinc-800 text-zinc-300 hover:text-white") +
+          '">✓ Watched</button>';
+
         return (
           '<div class="tv-card rounded-2xl p-3 space-y-2 mb-3">' +
           '<div class="flex items-center justify-between">' +
           '<span class="text-[11px] font-bold uppercase text-zinc-400">Movie Status</span>' +
-          '<button onclick="app.removeItemFromLibrary(&quot;' +
-          escapeHtml(movie.id) +
-          '&quot;)" class="text-[11px] font-bold text-rose-400 hover:underline">✕ Not Watched (Remove)</button>' +
+          (inLibrary
+            ? '<button onclick="app.removeItemFromLibrary(&quot;' +
+              escapeHtml(movie.id) +
+              '&quot;)" class="text-[11px] font-bold text-rose-400 hover:underline">✕ Not Watched (Remove)</button>'
+            : "") +
           "</div>" +
-          '<div class="grid grid-cols-2 gap-2">' +
-          '<button onclick="app.setMovieStatus(&quot;' +
-          escapeHtml(movie.id) +
-          '&quot;, false)" class="py-2.5 rounded-full text-xs font-extrabold transition ' +
-          (!movie.watched ? "tv-yellow-bg" : "bg-zinc-800 text-zinc-300 hover:text-white") +
-          '">' +
-          WATCHLIST_INLINE_SVG +
-          "Watchlist</button>" +
-          '<button onclick="app.setMovieStatus(&quot;' +
-          escapeHtml(movie.id) +
-          '&quot;, true)" class="py-2.5 rounded-full text-xs font-extrabold transition ' +
-          (movie.watched ? "tv-yellow-bg" : "bg-zinc-800 text-zinc-300 hover:text-white") +
-          '">✓ Watched</button>' +
+          '<div class="grid ' +
+          (isWatched ? "grid-cols-1" : "grid-cols-2") +
+          ' gap-2">' +
+          watchlistBtnHtml +
+          watchedBtnHtml +
           "</div>" +
           "</div>"
         );
@@ -3176,6 +3518,18 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   "</div>"
               )
               .join("") || '<p class="text-xs text-zinc-400 py-2">No watched movies yet.</p>';
+        }
+
+        // 5. Full Scrollable Completed Series List
+        const compFullCountEl = document.getElementById("label-completed-series-full-count");
+        if (compFullCountEl) {
+          compFullCountEl.textContent = "(" + completedShows.length + ")";
+        }
+        const compListEl = document.getElementById("recent-completed-series-list");
+        if (compListEl) {
+          compListEl.innerHTML =
+            completedShows.map((s) => this.renderShowCard(s)).join("") ||
+            '<p class="text-xs text-zinc-400 py-2">No completed series yet.</p>';
         }
       }
 
@@ -3865,45 +4219,61 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           }
         }
 
+        const prevShowCount = Array.isArray(this.state.shows) ? this.state.shows.length : 0;
+        const prevMovieCount = Array.isArray(this.state.movies) ? this.state.movies.length : 0;
         this.state.shows = [...importedShows, ...(this.state.shows || [])];
         this.state.movies = [...importedMovies, ...(this.state.movies || [])];
         this.deduplicateState();
-        return { showsAdded, moviesAdded };
+        const newShowsAdded = Math.max(0, (this.state.shows || []).length - prevShowCount);
+        const newMoviesAdded = Math.max(0, (this.state.movies || []).length - prevMovieCount);
+        return { showsAdded, moviesAdded, newShowsAdded, newMoviesAdded };
       }
 
       async enrichImportedShowsInBackground() {
-        const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
-        let changed = false;
-        let count = 0;
-        for (const s of shows) {
-          if (count >= 25) break;
-          if (s.posterUrl && s.tvmazeId) continue;
-          count++;
-          try {
-            const res = await fetch("/api/search?q=" + encodeURIComponent(s.title));
-            if (res.ok) {
-              const data = await res.json();
-              const match = (data.results || []).find((it) => it.mediaType === "show") || (data.results || [])[0];
-              if (match) {
-                if (!s.posterUrl && match.posterUrl) s.posterUrl = match.posterUrl;
-                if (!s.tvmazeId && match.tvmazeId) s.tvmazeId = match.tvmazeId;
-                if (!s.tmdbId && match.tmdbId) s.tmdbId = match.tmdbId;
-                if (match.year) s.year = match.year;
-                if (match.rating) s.rating = match.rating;
-                if ((!s.network || s.network === "Streaming") && match.network) s.network = match.network;
-                changed = true;
+        if (this._enrichingImported) return;
+        this._enrichingImported = true;
+        try {
+          const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
+          let batchChanged = false;
+          let batchCount = 0;
+          for (const s of shows) {
+            if (s.posterUrl && s.tvmazeId) continue;
+            try {
+              const res = await fetch("/api/search?q=" + encodeURIComponent(s.title));
+              if (res.ok) {
+                const data = await res.json();
+                const match =
+                  (data.results || []).find((it) => it.mediaType === "show") || (data.results || [])[0];
+                if (match) {
+                  if (!s.posterUrl && match.posterUrl) s.posterUrl = match.posterUrl;
+                  if (!s.tvmazeId && match.tvmazeId) s.tvmazeId = match.tvmazeId;
+                  if (!s.tmdbId && match.tmdbId) s.tmdbId = match.tmdbId;
+                  if (match.year) s.year = match.year;
+                  if (match.rating) s.rating = match.rating;
+                  if ((!s.network || s.network === "Streaming") && match.network) s.network = match.network;
+                  batchChanged = true;
+                  batchCount++;
+                }
               }
+            } catch (_) {}
+            if (batchCount >= 20) {
+              await this.persistState();
+              batchChanged = false;
+              batchCount = 0;
             }
-          } catch (_) {}
-        }
-        if (changed) {
-          await this.persistState();
+          }
+          if (batchChanged) {
+            await this.persistState();
+          }
+        } finally {
+          this._enrichingImported = false;
         }
       }
 
       async handleImportFile(event) {
         const file = event?.target?.files?.[0];
         if (!file) return;
+        this._isImporting = true;
         try {
           const text = (await file.text()).trim();
           if (text.startsWith("{")) {
@@ -3922,19 +4292,31 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             await this.persistState();
             alert("Imported TV Time JSON backup (" + this.state.shows.length + " shows, " + this.state.movies.length + " movies)!");
           } else {
-            const { showsAdded, moviesAdded } = this.importFromCsvText(text);
+            const { showsAdded, moviesAdded, newShowsAdded, newMoviesAdded } = this.importFromCsvText(text);
             if (showsAdded === 0 && moviesAdded === 0) {
               alert("No valid shows or movies found in CSV file.");
               return;
             }
             this.closeImportModal();
             await this.persistState();
-            alert("Imported " + showsAdded + " shows and " + moviesAdded + " movies from CSV!");
+            const totalShows = (this.state.shows || []).length;
+            alert(
+              "Imported " +
+                showsAdded +
+                " shows (" +
+                newShowsAdded +
+                " new, " +
+                totalShows +
+                " total in library) and " +
+                moviesAdded +
+                " movies from CSV!"
+            );
             this.enrichImportedShowsInBackground();
           }
         } catch (_) {
           alert("Could not parse import file. Please select a valid TV Time CSV or JSON file.");
         } finally {
+          this._isImporting = false;
           if (event && event.target) event.target.value = "";
         }
       }
@@ -4540,17 +4922,35 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               const statusBadge = m.watched
                 ? '<span class="text-[11px] font-bold text-emerald-400">✓ Watched</span>'
                 : '<span class="text-[11px] font-bold tv-yellow-text">Watchlist</span>';
-              const inMyLib = (this.state.movies || []).some(
+              const myMovie = (this.state.movies || []).find(
                 (myM) =>
                   myM.id === m.id ||
                   String(myM.title || "").trim().toLowerCase() ===
                     String(m.title || "").trim().toLowerCase()
               );
-              const addBtn = inMyLib
-                ? '<span class="px-2.5 py-1 rounded-full bg-zinc-800 text-zinc-400 text-[11px] font-bold shrink-0">In Library</span>'
-                : '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;movie&quot;, &quot;' +
+              let addBtn = "";
+              if (!myMovie) {
+                addBtn =
+                  '<div class="flex items-center gap-1.5 shrink-0">' +
+                  '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;movie&quot;, &quot;' +
                   escapeHtml(m.id) +
-                  '&quot;)" class="px-3 py-1.5 rounded-full tv-pill-bar border border-yellow-400/60 tv-yellow-text hover:bg-yellow-400 hover:text-black text-xs font-extrabold shrink-0 transition">+ Watchlist</button>';
+                  '&quot;, &quot;interested&quot;)" class="px-2.5 py-1.5 rounded-full tv-pill-bar border border-yellow-400/60 tv-yellow-text hover:bg-yellow-400 hover:text-black text-[11px] font-extrabold shrink-0 transition">+ Watchlist</button>' +
+                  '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;movie&quot;, &quot;' +
+                  escapeHtml(m.id) +
+                  '&quot;, &quot;completed&quot;)" class="px-2.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500 hover:text-white text-[11px] font-extrabold shrink-0 transition">✓ Watched</button>' +
+                  "</div>";
+              } else if (!myMovie.watched) {
+                addBtn =
+                  '<div class="flex items-center gap-1.5 shrink-0">' +
+                  '<span class="px-2 py-1 rounded-full bg-zinc-800 text-zinc-400 text-[10px] font-bold">In Watchlist</span>' +
+                  '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;movie&quot;, &quot;' +
+                  escapeHtml(m.id) +
+                  '&quot;, &quot;completed&quot;)" class="px-2.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500 hover:text-white text-[11px] font-extrabold shrink-0 transition">✓ Watched</button>' +
+                  "</div>";
+              } else {
+                addBtn =
+                  '<span class="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[11px] font-bold shrink-0">✓ In Watched</span>';
+              }
               return (
                 '<div class="tv-pill-bar rounded-2xl p-2.5 flex items-center justify-between gap-3 border border-zinc-800/80">' +
                 '<div class="flex items-center gap-3 min-w-0">' +
@@ -4606,17 +5006,38 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 : eff === "in_progress"
                 ? "tv-yellow-text"
                 : "text-zinc-400";
-            const inMyLib = (this.state.shows || []).some(
+            const myShow = (this.state.shows || []).find(
               (myS) =>
                 myS.id === s.id ||
                 String(myS.title || "").trim().toLowerCase() ===
                   String(s.title || "").trim().toLowerCase()
             );
-            const addBtn = inMyLib
-              ? '<span class="px-2.5 py-1 rounded-full bg-zinc-800 text-zinc-400 text-[11px] font-bold shrink-0">In Library</span>'
-              : '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;show&quot;, &quot;' +
+            const myEff = myShow ? this.getEffectiveShowStatus(myShow) : "";
+            let addBtn = "";
+            if (!myShow) {
+              addBtn =
+                '<div class="flex items-center gap-1.5 shrink-0">' +
+                '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;show&quot;, &quot;' +
                 escapeHtml(s.id) +
-                '&quot;)" class="px-3 py-1.5 rounded-full tv-pill-bar border border-yellow-400/60 tv-yellow-text hover:bg-yellow-400 hover:text-black text-xs font-extrabold shrink-0 transition">+ Watchlist</button>';
+                '&quot;, &quot;interested&quot;)" class="px-2.5 py-1.5 rounded-full tv-pill-bar border border-yellow-400/60 tv-yellow-text hover:bg-yellow-400 hover:text-black text-[11px] font-extrabold shrink-0 transition">+ Watchlist</button>' +
+                '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;show&quot;, &quot;' +
+                escapeHtml(s.id) +
+                '&quot;, &quot;completed&quot;)" class="px-2.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500 hover:text-white text-[11px] font-extrabold shrink-0 transition">✓ Completed</button>' +
+                "</div>";
+            } else if (myEff !== "completed") {
+              addBtn =
+                '<div class="flex items-center gap-1.5 shrink-0">' +
+                '<span class="px-2 py-1 rounded-full bg-zinc-800 text-zinc-400 text-[10px] font-bold">' +
+                (myEff === "in_progress" ? "Watching" : "In Watchlist") +
+                "</span>" +
+                '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;show&quot;, &quot;' +
+                escapeHtml(s.id) +
+                '&quot;, &quot;completed&quot;)" class="px-2.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500 hover:text-white text-[11px] font-extrabold shrink-0 transition">✓ Completed</button>' +
+                "</div>";
+            } else {
+              addBtn =
+                '<span class="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[11px] font-bold shrink-0">✓ Completed</span>';
+            }
             return (
               '<div class="tv-pill-bar rounded-2xl p-2.5 flex items-center justify-between gap-3 border border-zinc-800/80">' +
               '<div class="flex items-center gap-3 min-w-0">' +
@@ -4645,39 +5066,85 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           .join("");
       }
 
-      async addFromFriendLibrary(mediaType, itemId) {
+      async addFromFriendLibrary(mediaType, itemId, targetStatus = "interested") {
         const lib = this.selectedFriendLibrary;
         if (!lib) return;
+        const markCompleted = targetStatus === "completed";
         if (mediaType === "movie") {
           const found = (lib.movies || []).find((m) => m.id === itemId);
           if (!found) return;
-          this.state.movies = [
-            {
-              ...found,
-              watched: false,
-              watchedAt: "",
-              userRating: 0,
-              reaction: "",
-              rewatchCount: 0,
-              isFavorite: false,
-            },
-            ...(this.state.movies || []),
-          ];
+          const existing = (this.state.movies || []).find(
+            (m) =>
+              m.id === found.id ||
+              String(m.title || "").trim().toLowerCase() ===
+                String(found.title || "").trim().toLowerCase()
+          );
+          if (existing) {
+            if (markCompleted) {
+              existing.watched = true;
+              existing.watchedAt = new Date().toISOString().slice(0, 10);
+            }
+          } else {
+            this.state.movies = [
+              {
+                ...found,
+                watched: markCompleted,
+                watchedAt: markCompleted ? new Date().toISOString().slice(0, 10) : "",
+                userRating: 0,
+                reaction: "",
+                rewatchCount: 0,
+                isFavorite: false,
+              },
+              ...(this.state.movies || []),
+            ];
+          }
         } else {
           const found = (lib.shows || []).find((s) => s.id === itemId);
           if (!found) return;
-          this.state.shows = [
-            {
-              ...found,
-              userStatus: "interested",
-              watchedEpisodes: [],
-              userRating: 0,
-              reaction: "",
-              rewatchCount: 0,
-              isFavorite: false,
-            },
-            ...(this.state.shows || []),
-          ];
+          const eps =
+            Array.isArray(found.episodes) && found.episodes.length > 0
+              ? found.episodes.map((e) => this.compactEpisode(e))
+              : [
+                  {
+                    code: "S01E01",
+                    season: 1,
+                    number: 1,
+                    title: "Pilot",
+                    airDate: String(found.year || 2024) + "-01-01",
+                    runtimeMins: found.runtimeMins || 45,
+                  },
+                ];
+          const existing = (this.state.shows || []).find(
+            (s) =>
+              s.id === found.id ||
+              String(s.title || "").trim().toLowerCase() ===
+                String(found.title || "").trim().toLowerCase()
+          );
+          if (existing) {
+            if (markCompleted) {
+              if (!Array.isArray(existing.episodes) || existing.episodes.length < eps.length) {
+                existing.episodes = eps;
+              }
+              existing.watchedEpisodes = (existing.episodes || eps).map((e) => e.code).sort();
+              existing.userStatus = "completed";
+              existing.lastWatchedAt = new Date().toISOString();
+            }
+          } else {
+            this.state.shows = [
+              {
+                ...found,
+                episodes: eps,
+                userStatus: markCompleted ? "completed" : "interested",
+                watchedEpisodes: markCompleted ? eps.map((e) => e.code).sort() : [],
+                userRating: 0,
+                reaction: "",
+                rewatchCount: 0,
+                isFavorite: false,
+                lastWatchedAt: new Date().toISOString(),
+              },
+              ...(this.state.shows || []),
+            ];
+          }
         }
         await this.persistState();
         this.renderFriendLibrary();

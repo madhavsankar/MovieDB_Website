@@ -417,8 +417,8 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
 
         # 3. Scrollable detail sheets & Watchlist toggle-removal in TvTimeDialogs.kt
         self.assertIn("verticalScroll(rememberScrollState())", dialogs)
-        self.assertIn("dao.deleteShow(show.id)", dialogs)
-        self.assertIn("dao.deleteMovie(movie.id)", dialogs)
+        self.assertIn("dao.deleteShow(", dialogs)
+        self.assertIn("dao.deleteMovie(", dialogs)
 
     def test_local_python_server_helpers(self):
         import server

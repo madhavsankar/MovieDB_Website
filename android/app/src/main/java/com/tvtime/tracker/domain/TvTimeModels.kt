@@ -58,7 +58,8 @@ data class ShowProgressSummary(
     val nextEpisode: EpisodeModel?,
     val progressFraction: Float,
     val isCompleted: Boolean,
-    val hasStarted: Boolean
+    val hasStarted: Boolean,
+    val lastWatchedEpisode: EpisodeModel? = null
 )
 
 data class WatchStatsSummary(
@@ -164,6 +165,21 @@ object TvTimeProgressCalculator {
                 )
             } else null
 
+        val lastWatchedEp = episodes.lastOrNull { watchedCodes.contains(it.code.uppercase()) }
+            ?: watchedCodes.maxOrNull()?.let { code ->
+                val match = Regex("^S(\\d+)E(\\d+)$", RegexOption.IGNORE_CASE).find(code)
+                if (match != null) {
+                    val s = match.groupValues[1].toIntOrNull() ?: 1
+                    val n = match.groupValues[2].toIntOrNull() ?: 1
+                    EpisodeModel(
+                        code = code.uppercase(),
+                        season = s,
+                        number = n,
+                        title = "Episode $n"
+                    )
+                } else null
+            }
+
         val fraction = if (total > 0) {
             (watchedCount.toFloat() / total.toFloat()).coerceIn(0f, 1f)
         } else 0f
@@ -175,7 +191,8 @@ object TvTimeProgressCalculator {
             nextEpisode = nextEp,
             progressFraction = fraction,
             isCompleted = total > 0 && leftCount == 0,
-            hasStarted = watchedCount > 0
+            hasStarted = watchedCount > 0,
+            lastWatchedEpisode = lastWatchedEp
         )
     }
 

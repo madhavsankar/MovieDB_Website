@@ -178,6 +178,40 @@ fun TvTimeMainScreen(
     var isRefreshing by remember { mutableStateOf(false) }
     var pullOffsetPx by remember { mutableFloatStateOf(0f) }
 
+    // Background poster/metadata enrichment for CSV-imported shows without posters
+    LaunchedEffect(shows.size, currentUserId) {
+        val missingPosters = shows.filter { it.posterUrl.isBlank() && it.title.isNotBlank() }
+        if (missingPosters.isNotEmpty()) {
+            var batchCount = 0
+            for (s in missingPosters) {
+                val results = LiveMediaCatalogService.searchMulti(s.title)
+                val match = results.firstOrNull { it.mediaType == "show" } ?: results.firstOrNull()
+                if (match != null && match.posterUrl.isNotBlank()) {
+                    dao.updateShow(
+                        s.copy(
+                            posterUrl = match.posterUrl,
+                            tvmazeId = if (s.tvmazeId != 0) s.tvmazeId else match.tvmazeId,
+                            tmdbId = if (s.tmdbId != 0) s.tmdbId else match.tmdbId,
+                            year = if (match.year > 0) match.year else s.year,
+                            rating = if (match.rating > 0.0) match.rating else s.rating,
+                            network = if (s.network.isBlank() || s.network == "Streaming") match.networkOrDirector.ifBlank { s.network } else s.network
+                        )
+                    )
+                    batchCount++
+                    if (batchCount >= 15) {
+                        if (FirestoreSyncService.isUserAllowed(currentUserId)) {
+                            FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                        }
+                        batchCount = 0
+                    }
+                }
+            }
+            if (batchCount > 0 && FirestoreSyncService.isUserAllowed(currentUserId)) {
+                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+            }
+        }
+    }
+
     // When switching to Upcoming, refresh episode lists for running/stub series so newly announced future air dates appear
     LaunchedEffect(homeTopSegment, shows.size, refreshTrigger) {
         if (homeTopSegment == "upcoming") {
@@ -198,9 +232,15 @@ fun TvTimeMainScreen(
                     if (fetchedEps.size > currentEps.size ||
                         TvTimeProgressCalculator.findNextUpcomingEpisode(fetchedEps) != null
                     ) {
+                        val updatedWatchedCsv = if (s.userStatus.equals("completed", ignoreCase = true)) {
+                            TvTimeProgressCalculator.serializeWatchedSet(fetchedEps.map { it.code })
+                        } else {
+                            s.watchedCodesCsv
+                        }
                         dao.updateShow(
                             s.copy(
                                 episodesJson = TvTimeProgressCalculator.serializeEpisodeList(fetchedEps),
+                                watchedCodesCsv = updatedWatchedCsv,
                                 castCsv = if (s.castCsv.isBlank() && fetchedCast.isNotEmpty()) {
                                     fetchedCast.joinToString(", ")
                                 } else s.castCsv
@@ -419,9 +459,7 @@ fun TvTimeMainScreen(
                                     mediaSubFilter = "interested"
                                 }
                             } else if (seg == "shows") {
-                                if (mediaSubFilter != "in_progress" && mediaSubFilter != "interested" && mediaSubFilter != "completed" && mediaSubFilter != "stopped") {
-                                    mediaSubFilter = "in_progress"
-                                }
+                                mediaSubFilter = "in_progress"
                             }
                         },
                         mediaFilter = mediaSubFilter,
@@ -451,29 +489,29 @@ fun TvTimeMainScreen(
                                 val watched = TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv)
                                 val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
                                 val isAlreadyCompleted = show.userStatus == "completed" || prog.isCompleted
-                                val updatedShow = if (isAlreadyCompleted) {
-                                    show.copy(
-                                        watchedCodesCsv = "",
-                                        userStatus = "interested",
-                                        episodesJson = TvTimeProgressCalculator.serializeEpisodeList(eps),
-                                        castCsv = castCsv
-                                    )
+                                if (isAlreadyCompleted) {
+                                    dao.deleteShow(show.id)
                                 } else {
                                     val allCodes = eps.map { it.code.uppercase() }.toSet()
-                                    show.copy(
+                                    val updatedShow = show.copy(
                                         watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(allCodes),
                                         userStatus = "completed",
                                         episodesJson = TvTimeProgressCalculator.serializeEpisodeList(eps),
                                         castCsv = castCsv
                                     )
+                                    dao.updateShow(updatedShow)
                                 }
-                                dao.updateShow(updatedShow)
                                 FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
                             }
                         },
                         onToggleMovieWatched = { movie ->
                             scope.launch {
-                                dao.updateMovie(movie.copy(watched = !movie.watched))
+                                if (movie.watched) {
+                                    dao.deleteMovie(movie.id)
+                                } else {
+                                    val todayIso = java.time.LocalDate.now().toString()
+                                    dao.updateMovie(movie.copy(watched = true, watchedAt = todayIso))
+                                }
                                 FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
                             }
                         }
@@ -501,6 +539,17 @@ fun TvTimeMainScreen(
                         val movieCompleted = movies.filter { it.watched }.map { it.externalId }
                         (showCompleted + movieCompleted).toSet()
                     }
+                    val watchedOrStartedExternalIds = remember(shows, movies) {
+                        val showWatchedOrStarted = shows.filter { s ->
+                            val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
+                            val watched = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
+                            val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
+                            val eff = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus)
+                            watched.isNotEmpty() || eff == "completed"
+                        }.map { it.externalId }
+                        val movieWatched = movies.filter { it.watched }.map { it.externalId }
+                        (showWatchedOrStarted + movieWatched).toSet()
+                    }
 
                     SearchTabScreen(
                         query = searchQuery,
@@ -513,16 +562,21 @@ fun TvTimeMainScreen(
                         isSearching = isSearching,
                         watchlistExternalIds = watchlistExternalIds,
                         completedExternalIds = completedExternalIds,
+                        watchedOrStartedExternalIds = watchedOrStartedExternalIds,
                         onAddOrOpenResult = { item ->
                             scope.launch {
                                 val isMovieItem = item.mediaType.equals("movie", ignoreCase = true) ||
                                     item.externalId.startsWith("movie_")
                                 if (isMovieItem) {
-                                    val existingMovie = movies.firstOrNull { it.externalId == item.externalId }
+                                    val existingMovie = movies.firstOrNull {
+                                        it.externalId == item.externalId ||
+                                            it.title.equals(item.title, ignoreCase = true)
+                                    }
                                     if (existingMovie != null) {
                                         selectedMovieForDetail = existingMovie
                                     } else {
-                                        val newMovie = MovieEntity(
+                                        selectedMovieForDetail = MovieEntity(
+                                            id = 0L,
                                             userId = currentUserId,
                                             externalId = item.externalId,
                                             tmdbId = item.tmdbId,
@@ -537,12 +591,12 @@ fun TvTimeMainScreen(
                                             overview = item.overview,
                                             watched = false
                                         )
-                                        val newId = dao.insertMovie(newMovie)
-                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                        selectedMovieForDetail = newMovie.copy(id = newId)
                                     }
                                 } else {
-                                    val existing = shows.firstOrNull { it.externalId == item.externalId }
+                                    val existing = shows.firstOrNull {
+                                        it.externalId == item.externalId ||
+                                            it.title.equals(item.title, ignoreCase = true)
+                                    }
                                     if (existing != null) {
                                         selectedShowForDetail = existing
                                     } else {
@@ -555,7 +609,8 @@ fun TvTimeMainScreen(
                                         val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else listOf(
                                             EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
                                         )
-                                        val newShow = ShowEntity(
+                                        selectedShowForDetail = ShowEntity(
+                                            id = 0L,
                                             userId = currentUserId,
                                             externalId = item.externalId,
                                             tvmazeId = item.tvmazeId,
@@ -570,12 +625,9 @@ fun TvTimeMainScreen(
                                             rating = item.rating,
                                             posterUrl = item.posterUrl,
                                             overview = item.overview,
-                                            userStatus = "interested",
+                                            userStatus = "preview",
                                             episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
                                         )
-                                        val newId = dao.insertShow(newShow)
-                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                        selectedShowForDetail = newShow.copy(id = newId)
                                     }
                                 }
                             }
@@ -588,8 +640,6 @@ fun TvTimeMainScreen(
                                     if (existingMovie != null) {
                                         if (!existingMovie.watched) {
                                             dao.deleteMovie(existingMovie.id)
-                                        } else {
-                                            dao.updateMovie(existingMovie.copy(watched = false, watchedAt = ""))
                                         }
                                     } else {
                                         val newMovie = MovieEntity(
@@ -619,7 +669,7 @@ fun TvTimeMainScreen(
                                         val eff = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, existing.userStatus)
                                         if (eff == "interested") {
                                             dao.deleteShow(existing.id)
-                                        } else {
+                                        } else if (watched.isEmpty()) {
                                             dao.updateShow(existing.copy(userStatus = "interested", watchedCodesCsv = ""))
                                         }
                                     } else {
@@ -663,13 +713,16 @@ fun TvTimeMainScreen(
                                     val existingMovie = movies.firstOrNull { it.externalId == item.externalId }
                                     val todayIso = java.time.LocalDate.now().toString()
                                     if (existingMovie != null) {
-                                        val nextWatched = !existingMovie.watched
-                                        dao.updateMovie(
-                                            existingMovie.copy(
-                                                watched = nextWatched,
-                                                watchedAt = if (nextWatched) todayIso else ""
+                                        if (existingMovie.watched) {
+                                            dao.deleteMovie(existingMovie.id)
+                                        } else {
+                                            dao.updateMovie(
+                                                existingMovie.copy(
+                                                    watched = true,
+                                                    watchedAt = todayIso
+                                                )
                                             )
-                                        )
+                                        }
                                     } else {
                                         val newMovie = MovieEntity(
                                             userId = currentUserId,
@@ -698,7 +751,7 @@ fun TvTimeMainScreen(
                                         val prog = TvTimeProgressCalculator.computeShowProgress(eps, watched)
                                         val eff = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, existing.userStatus)
                                         if (eff == "completed") {
-                                            dao.updateShow(existing.copy(userStatus = "interested", watchedCodesCsv = ""))
+                                            dao.deleteShow(existing.id)
                                         } else {
                                             val allCodes = eps.map { it.code }.toSet()
                                             dao.updateShow(
@@ -1197,7 +1250,10 @@ fun TvTimeMainScreen(
 
     // Show Detail Bottom Sheet
     selectedShowForDetail?.let { activeShow ->
-        val latestFromList = shows.firstOrNull { it.id == activeShow.id } ?: activeShow
+        val latestFromList = shows.firstOrNull {
+            (activeShow.id != 0L && it.id == activeShow.id) ||
+                it.externalId == activeShow.externalId
+        } ?: activeShow
         ShowDetailBottomSheet(
             show = latestFromList,
             dao = dao,
@@ -1208,7 +1264,10 @@ fun TvTimeMainScreen(
 
     // Movie Detail Bottom Sheet
     selectedMovieForDetail?.let { activeMovie ->
-        val latestMovie = movies.firstOrNull { it.id == activeMovie.id } ?: activeMovie
+        val latestMovie = movies.firstOrNull {
+            (activeMovie.id != 0L && it.id == activeMovie.id) ||
+                it.externalId == activeMovie.externalId
+        } ?: activeMovie
         MovieDetailBottomSheet(
             movie = latestMovie,
             dao = dao,
@@ -2055,6 +2114,7 @@ private fun SearchTabScreen(
     isSearching: Boolean,
     watchlistExternalIds: Set<String>,
     completedExternalIds: Set<String>,
+    watchedOrStartedExternalIds: Set<String>,
     onAddOrOpenResult: (SearchResultItem) -> Unit,
     onQuickWatchlistToggle: (SearchResultItem) -> Unit,
     onQuickCompletedToggle: (SearchResultItem) -> Unit
@@ -2166,10 +2226,12 @@ private fun SearchTabScreen(
         items(sortedResults, key = { it.externalId }) { item ->
             val isInWatchlist = watchlistExternalIds.contains(item.externalId)
             val isCompleted = completedExternalIds.contains(item.externalId)
+            val canShowWatchlist = !watchedOrStartedExternalIds.contains(item.externalId)
             TvSearchResultCard(
                 item = item,
                 isInWatchlist = isInWatchlist,
                 isCompleted = isCompleted,
+                canShowWatchlist = canShowWatchlist,
                 onCardClick = { onAddOrOpenResult(item) },
                 onWatchlistClick = { onQuickWatchlistToggle(item) },
                 onCompletedClick = { onQuickCompletedToggle(item) }
@@ -2919,14 +2981,26 @@ private fun SettingsFullPageScreen(
                         )
                     }
                 }
+                var isSyncingNow by remember { mutableStateOf(false) }
                 Surface(
-                    onClick = onSyncNow,
+                    onClick = {
+                        if (!isSyncingNow) {
+                            isSyncingNow = true
+                            onSyncNow()
+                        }
+                    },
                     shape = RoundedCornerShape(50),
                     color = TvTimePalette.SurfacePill,
                     border = BorderStroke(1.dp, TvTimePalette.Border)
                 ) {
+                    LaunchedEffect(isSyncingNow) {
+                        if (isSyncingNow) {
+                            delay(1500)
+                            isSyncingNow = false
+                        }
+                    }
                     Text(
-                        text = "↻ Sync",
+                        text = if (isSyncingNow) "↻ Syncing..." else "↻ Sync",
                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                         color = TvTimePalette.Yellow,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
@@ -3242,6 +3316,28 @@ private fun RecentlyWatchedFullPageScreen(
                     }
                 }
             }
+        }
+
+        // 3. Full Scrollable Completed Series List
+        val completedSeriesList = watchedOrInProgressShows.filter { s ->
+            val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
+            val w = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
+            val prog = TvTimeProgressCalculator.computeShowProgress(eps, w)
+            TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus) == "completed"
+        }
+        item(key = "completed_series_full_header") {
+            Text(
+                text = "Completed Series (${completedSeriesList.size})",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                color = Color.White
+            )
+        }
+        items(completedSeriesList, key = { "comp_full_${it.id}_${it.externalId}" }) { show ->
+            TvShowWatchCard(
+                show = show,
+                onCardClick = { onOpenShow(show) },
+                onEyeClick = { onOpenShow(show) }
+            )
         }
     }
 }
@@ -3747,17 +3843,65 @@ private fun FriendsFullPageScreen(
                         }
 
                         val lib = selectedFriendLibrary
+                        var friendFilter by rememberSaveable { mutableStateOf("all") }
                         if (!isLoadingLibrary && lib != null) {
+                            val filterOptions = if (librarySegment == "movies") {
+                                listOf(
+                                    "all" to "All (${lib.movies.size})",
+                                    "interested" to "Watchlist (${lib.movies.count { !it.watched }})",
+                                    "completed" to "Watched (${lib.movies.count { it.watched }})"
+                                )
+                            } else {
+                                val statuses = lib.shows.map { s ->
+                                    val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
+                                    val w = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
+                                    val prog = TvTimeProgressCalculator.computeShowProgress(eps, w)
+                                    s to TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus)
+                                }
+                                listOf(
+                                    "all" to "All (${lib.shows.size})",
+                                    "in_progress" to "In Progress (${statuses.count { it.second == "in_progress" }})",
+                                    "interested" to "Watchlist (${statuses.count { it.second == "interested" }})",
+                                    "completed" to "Completed (${statuses.count { it.second == "completed" }})"
+                                )
+                            }
+
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(filterOptions, key = { it.first }) { (fKey, fLabel) ->
+                                    val isSel = friendFilter == fKey
+                                    Surface(
+                                        onClick = { friendFilter = fKey },
+                                        shape = RoundedCornerShape(50),
+                                        color = if (isSel) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
+                                        border = BorderStroke(1.dp, if (isSel) TvTimePalette.Yellow else TvTimePalette.Border)
+                                    ) {
+                                        Text(
+                                            text = fLabel,
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = if (isSel) TvTimePalette.OnYellow else TvTimePalette.TextSecondary,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                }
+                            }
+
                             if (librarySegment == "movies") {
-                                if (lib.movies.isEmpty()) {
+                                val filteredFriendMovies = lib.movies.filter { m ->
+                                    when (friendFilter) {
+                                        "completed" -> m.watched
+                                        "interested" -> !m.watched
+                                        else -> true
+                                    }
+                                }
+                                if (filteredFriendMovies.isEmpty()) {
                                     Text(
-                                        text = "No movies in @$selectedFriendId's library yet.",
+                                        text = "No movies in this category.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = TvTimePalette.TextSecondary
                                     )
                                 } else {
-                                    lib.movies.forEach { m ->
-                                        val alreadyHave = myMovies.any {
+                                    filteredFriendMovies.forEach { m ->
+                                        val myMovie = myMovies.firstOrNull {
                                             it.externalId == m.externalId || it.title.equals(m.title, ignoreCase = true)
                                         }
                                         Row(
@@ -3794,43 +3938,103 @@ private fun FriendsFullPageScreen(
                                                     )
                                                 }
                                             }
-                                            if (!alreadyHave) {
-                                                TextButton(
-                                                    onClick = {
-                                                        scope.launch {
-                                                            dao.insertMovie(
-                                                                m.copy(
-                                                                    id = 0,
-                                                                    userId = currentUserId,
-                                                                    watched = false,
-                                                                    watchedAt = ""
+                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                if (myMovie == null) {
+                                                    TextButton(
+                                                        onClick = {
+                                                            scope.launch {
+                                                                dao.insertMovie(
+                                                                    m.copy(
+                                                                        id = 0,
+                                                                        userId = currentUserId,
+                                                                        watched = false,
+                                                                        watchedAt = ""
+                                                                    )
                                                                 )
-                                                            )
-                                                            FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                                            Toast.makeText(context, "Added ${m.title} to Watchlist!", Toast.LENGTH_SHORT).show()
+                                                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                                                Toast.makeText(context, "Added ${m.title} to Watchlist!", Toast.LENGTH_SHORT).show()
+                                                            }
                                                         }
+                                                    ) {
+                                                        Text("+ Watchlist", color = TvTimePalette.Yellow, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                                     }
-                                                ) {
-                                                    Text("+ Watchlist", color = TvTimePalette.Yellow, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                                    TextButton(
+                                                        onClick = {
+                                                            scope.launch {
+                                                                dao.insertMovie(
+                                                                    m.copy(
+                                                                        id = 0,
+                                                                        userId = currentUserId,
+                                                                        watched = true,
+                                                                        watchedAt = java.time.LocalDate.now().toString()
+                                                                    )
+                                                                )
+                                                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                                                Toast.makeText(context, "Marked ${m.title} as Watched!", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        }
+                                                    ) {
+                                                        Text("✓ Watched", color = Color(0xFF4ADE80), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                                    }
+                                                } else if (!myMovie.watched) {
+                                                    TextButton(
+                                                        onClick = {
+                                                            scope.launch {
+                                                                dao.updateMovie(
+                                                                    myMovie.copy(
+                                                                        watched = true,
+                                                                        watchedAt = java.time.LocalDate.now().toString()
+                                                                    )
+                                                                )
+                                                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                                                Toast.makeText(context, "Marked ${m.title} as Watched!", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        }
+                                                    ) {
+                                                        Text("✓ Watched", color = Color(0xFF4ADE80), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                                    }
+                                                } else {
+                                                    Text(
+                                                        text = "✓ Watched",
+                                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                        color = Color(0xFF4ADE80),
+                                                        modifier = Modifier.padding(horizontal = 8.dp)
+                                                    )
                                                 }
                                             }
                                         }
                                     }
                                 }
                             } else {
-                                if (lib.shows.isEmpty()) {
+                                val filteredFriendShows = lib.shows.filter { s ->
+                                    if (friendFilter == "all") true
+                                    else {
+                                        val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
+                                        val w = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
+                                        val prog = TvTimeProgressCalculator.computeShowProgress(eps, w)
+                                        TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus) == friendFilter
+                                    }
+                                }
+                                if (filteredFriendShows.isEmpty()) {
                                     Text(
-                                        text = "No series in @$selectedFriendId's library yet.",
+                                        text = "No series in this category.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = TvTimePalette.TextSecondary
                                     )
                                 } else {
-                                    lib.shows.forEach { s ->
-                                        val alreadyHave = myShows.any {
+                                    filteredFriendShows.forEach { s ->
+                                        val myShow = myShows.firstOrNull {
                                             it.externalId == s.externalId || it.title.equals(s.title, ignoreCase = true)
                                         }
+                                        val myEff = myShow?.let { ms ->
+                                            val eps = TvTimeProgressCalculator.parseEpisodeList(ms.episodesJson)
+                                            val w = TvTimeProgressCalculator.parseWatchedSet(ms.watchedCodesCsv)
+                                            val prog = TvTimeProgressCalculator.computeShowProgress(eps, w)
+                                            TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, ms.userStatus)
+                                        } ?: ""
+                                        val sEps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
                                         val watchedCount = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv).size
-                                        val totalCount = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson).size.coerceAtLeast(1)
+                                        val totalCount = sEps.size.coerceAtLeast(1)
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -3865,24 +4069,71 @@ private fun FriendsFullPageScreen(
                                                     )
                                                 }
                                             }
-                                            if (!alreadyHave) {
-                                                TextButton(
-                                                    onClick = {
-                                                        scope.launch {
-                                                            dao.insertShow(
-                                                                s.copy(
-                                                                    id = 0,
-                                                                    userId = currentUserId,
-                                                                    userStatus = "interested",
-                                                                    watchedCodesCsv = ""
+                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                if (myShow == null) {
+                                                    TextButton(
+                                                        onClick = {
+                                                            scope.launch {
+                                                                dao.insertShow(
+                                                                    s.copy(
+                                                                        id = 0,
+                                                                        userId = currentUserId,
+                                                                        userStatus = "interested",
+                                                                        watchedCodesCsv = ""
+                                                                    )
                                                                 )
-                                                            )
-                                                            FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                                            Toast.makeText(context, "Added ${s.title} to Watchlist!", Toast.LENGTH_SHORT).show()
+                                                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                                                Toast.makeText(context, "Added ${s.title} to Watchlist!", Toast.LENGTH_SHORT).show()
+                                                            }
                                                         }
+                                                    ) {
+                                                        Text("+ Watchlist", color = TvTimePalette.Yellow, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                                     }
-                                                ) {
-                                                    Text("+ Watchlist", color = TvTimePalette.Yellow, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                                    TextButton(
+                                                        onClick = {
+                                                            scope.launch {
+                                                                val allCodes = sEps.map { it.code }.ifEmpty { listOf("S01E01") }
+                                                                dao.insertShow(
+                                                                    s.copy(
+                                                                        id = 0,
+                                                                        userId = currentUserId,
+                                                                        userStatus = "completed",
+                                                                        watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(allCodes)
+                                                                    )
+                                                                )
+                                                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                                                Toast.makeText(context, "Added ${s.title} to Completed!", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        }
+                                                    ) {
+                                                        Text("✓ Completed", color = Color(0xFF4ADE80), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                                    }
+                                                } else if (myEff != "completed") {
+                                                    TextButton(
+                                                        onClick = {
+                                                            scope.launch {
+                                                                val myEps = TvTimeProgressCalculator.parseEpisodeList(myShow.episodesJson).ifEmpty { sEps }
+                                                                val allCodes = myEps.map { it.code }.ifEmpty { listOf("S01E01") }
+                                                                dao.updateShow(
+                                                                    myShow.copy(
+                                                                        userStatus = "completed",
+                                                                        watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(allCodes)
+                                                                    )
+                                                                )
+                                                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                                                Toast.makeText(context, "Marked ${s.title} Completed!", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        }
+                                                    ) {
+                                                        Text("✓ Completed", color = Color(0xFF4ADE80), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                                    }
+                                                } else {
+                                                    Text(
+                                                        text = "✓ Completed",
+                                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                        color = Color(0xFF4ADE80),
+                                                        modifier = Modifier.padding(horizontal = 8.dp)
+                                                    )
                                                 }
                                             }
                                         }
