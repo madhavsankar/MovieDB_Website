@@ -1346,12 +1346,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 watched = incomingEps.map((e) => e.code).sort();
               } else if (
                 incomingEps.length > 0 &&
-                !this.isSyntheticEpisodeList(incomingEps) &&
-                watched.length > incomingEps.length
+                !this.isSyntheticEpisodeList(incomingEps)
               ) {
                 const validCodes = new Set(incomingEps.map((e) => e.code));
-                const filtered = watched.filter((c) => validCodes.has(c));
-                if (filtered.length > 0) watched = filtered.sort();
+                watched = watched.filter((c) => validCodes.has(c)).sort();
               }
               byKey.set(key, {
                 ...s,
@@ -1439,6 +1437,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             }
           }
           this.state.movies = Array.from(byKey.values());
+        }
+        if (this.detailItem && !this.detailItem._isPreview) {
+          const liveShow = (this.state.shows || []).find((s) => s.id === this.detailItem.id);
+          const liveMovie = !liveShow
+            ? (this.state.movies || []).find((m) => m.id === this.detailItem.id)
+            : null;
+          if (liveShow) this.detailItem = liveShow;
+          else if (liveMovie) this.detailItem = liveMovie;
         }
       }
 
@@ -1776,14 +1782,20 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
       computeShowProgress(show) {
         const episodes = Array.isArray(show.episodes) ? show.episodes : [];
-        const watchedSet = new Set(show.watchedEpisodes || []);
+        const watchedSet = new Set(
+          (show.watchedEpisodes || []).map((c) => String(c || "").trim().toUpperCase()).filter(Boolean)
+        );
         const total = episodes.length || 10;
-        const watchedCount = watchedSet.size;
+        const watchedCount =
+          episodes.length > 0
+            ? episodes.filter((ep) => watchedSet.has(String(ep.code || "").trim().toUpperCase())).length
+            : watchedSet.size;
         const leftCount = Math.max(0, total - watchedCount);
         let nextEp = null;
         let lastWatchedEp = null;
         for (const ep of episodes) {
-          if (watchedSet.has(ep.code)) {
+          const codeUpper = String(ep.code || "").trim().toUpperCase();
+          if (watchedSet.has(codeUpper)) {
             lastWatchedEp = ep;
           } else if (!nextEp) {
             nextEp = ep;
@@ -3085,15 +3097,38 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       async toggleEpisodeCode(showId, epCode) {
         const show = this.ensureDetailShowInLibrary(showId);
         if (!show) return;
-        const set = new Set(show.watchedEpisodes || []);
-        const isAdding = !set.has(epCode);
+        this.detailItem = show;
+        const eps = Array.isArray(show.episodes) ? show.episodes : [];
+        const validCodes =
+          eps.length > 0
+            ? new Set(eps.map((e) => String(e.code || "").trim().toUpperCase()).filter(Boolean))
+            : null;
+        const set = new Set(
+          (show.watchedEpisodes || [])
+            .map((c) => String(c || "").trim().toUpperCase())
+            .filter((c) => c && (!validCodes || validCodes.has(c)))
+        );
+        const normCode = String(epCode || "").trim().toUpperCase();
+        const isAdding = !set.has(normCode);
         if (isAdding) {
-          set.add(epCode);
+          set.add(normCode);
           if (show.userStatus === "stopped") {
             show.userStatus = "in_progress";
           }
         } else {
-          set.delete(epCode);
+          set.delete(normCode);
+          if (show.userStatus === "completed") {
+            show.userStatus = "in_progress";
+          }
+          if (set.size === 0 && show.userStatus !== "stopped") {
+            this.state.shows = (this.state.shows || []).filter((s) => s.id !== showId);
+            show.watchedEpisodes = [];
+            show.userStatus = "preview";
+            show._isPreview = true;
+            this.detailItem = show;
+            await this.persistState();
+            return;
+          }
         }
         show.watchedEpisodes = Array.from(set).sort();
         show.userStatus = this.getEffectiveShowStatus(show);
@@ -3104,14 +3139,40 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       async toggleSeasonWatched(showId, seasonNum) {
         const show = this.ensureDetailShowInLibrary(showId);
         if (!show) return;
-        const seasonEps = (show.episodes || []).filter((e) => Number(e.season) === Number(seasonNum));
-        const set = new Set(show.watchedEpisodes || []);
-        const allWatched = seasonEps.length > 0 && seasonEps.every((e) => set.has(e.code));
+        this.detailItem = show;
+        const eps = Array.isArray(show.episodes) ? show.episodes : [];
+        const validCodes =
+          eps.length > 0
+            ? new Set(eps.map((e) => String(e.code || "").trim().toUpperCase()).filter(Boolean))
+            : null;
+        const seasonEps = eps.filter((e) => Number(e.season) === Number(seasonNum));
+        const set = new Set(
+          (show.watchedEpisodes || [])
+            .map((c) => String(c || "").trim().toUpperCase())
+            .filter((c) => c && (!validCodes || validCodes.has(c)))
+        );
+        const allWatched =
+          seasonEps.length > 0 &&
+          seasonEps.every((e) => set.has(String(e.code || "").trim().toUpperCase()));
         for (const e of seasonEps) {
-          if (allWatched) set.delete(e.code);
-          else set.add(e.code);
+          const c = String(e.code || "").trim().toUpperCase();
+          if (allWatched) set.delete(c);
+          else set.add(c);
         }
-        if (!allWatched && show.userStatus === "stopped") {
+        if (allWatched) {
+          if (show.userStatus === "completed") {
+            show.userStatus = "in_progress";
+          }
+          if (set.size === 0 && show.userStatus !== "stopped") {
+            this.state.shows = (this.state.shows || []).filter((s) => s.id !== showId);
+            show.watchedEpisodes = [];
+            show.userStatus = "preview";
+            show._isPreview = true;
+            this.detailItem = show;
+            await this.persistState();
+            return;
+          }
+        } else if (show.userStatus === "stopped") {
           show.userStatus = "in_progress";
         }
         show.watchedEpisodes = Array.from(set).sort();
@@ -3287,6 +3348,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       renderDetailSheet() {
+        if (this.detailItem && !this.detailItem._isPreview) {
+          const liveShow = (this.state.shows || []).find((s) => s.id === this.detailItem.id);
+          const liveMovie = !liveShow
+            ? (this.state.movies || []).find((m) => m.id === this.detailItem.id)
+            : null;
+          if (liveShow) this.detailItem = liveShow;
+          else if (liveMovie) this.detailItem = liveMovie;
+        }
         const item = this.detailItem;
         const bodyEl = document.getElementById("detail-body");
         const tabsBar = document.getElementById("detail-tabs-bar");
@@ -3368,7 +3437,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
         // Episodes Tab (Season Accordions + Episode Thumbnails + Yellow Check / Gray Eye)
         const episodes = Array.isArray(item.episodes) ? item.episodes : [];
-        const watchedSet = new Set(item.watchedEpisodes || []);
+        const watchedSet = new Set(
+          (item.watchedEpisodes || []).map((c) => String(c || "").trim().toUpperCase()).filter(Boolean)
+        );
         const bySeason = new Map();
         for (const ep of episodes) {
           const sNum = Number(ep.season) || 1;
@@ -3379,7 +3450,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         let html = statusHeader;
         for (const [seasonNum, sEps] of bySeason.entries()) {
           const isOpen = this.openSeasons.has(seasonNum);
-          const watchedInSeason = sEps.filter((e) => watchedSet.has(e.code)).length;
+          const watchedInSeason = sEps.filter((e) =>
+            watchedSet.has(String(e.code || "").trim().toUpperCase())
+          ).length;
           const allSeasonWatched = sEps.length > 0 && watchedInSeason === sEps.length;
           html +=
             '<div id="detail-season-' +
@@ -3389,7 +3462,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             seasonNum +
             ')" class="p-3.5 flex items-center justify-between cursor-pointer hover:bg-zinc-800/40">' +
             '<div class="flex items-center gap-3">' +
-            '<button title="Mark entire season watched or unwatched" onclick="event.stopPropagation(); app.toggleSeasonWatched(&quot;' +
+            '<button type="button" title="Mark entire season watched or unwatched" onclick="event.stopPropagation(); app.toggleSeasonWatched(&quot;' +
             escapeHtml(item.id) +
             '&quot;, ' +
             seasonNum +
@@ -3414,7 +3487,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           if (isOpen) {
             html += '<div class="divide-y divide-zinc-800/70 px-3 pb-2">';
             for (const ep of sEps) {
-              const isWatched = watchedSet.has(ep.code);
+              const isWatched = watchedSet.has(String(ep.code || "").trim().toUpperCase());
               const thumb =
                 ep.imageUrl ||
                 item.posterUrl ||
@@ -3438,7 +3511,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 escapeHtml(ep.airDate || "Aired") +
                 "</div>" +
                 "</div>" +
-                '<button class="' +
+                '<button type="button" title="' +
+                (isWatched ? "Mark episode unwatched" : "Mark episode watched") +
+                '" onclick="event.stopPropagation(); app.toggleEpisodeCode(&quot;' +
+                escapeHtml(item.id) +
+                '&quot;, &quot;' +
+                escapeHtml(ep.code) +
+                '&quot;)" class="' +
                 (isWatched ? "tv-check-btn !w-10 !h-10" : "tv-gray-eye-btn") +
                 '">' +
                 (isWatched ? CHECK_SVG : EYE_SVG) +

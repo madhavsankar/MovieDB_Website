@@ -151,10 +151,15 @@ object TvTimeProgressCalculator {
         episodes: List<EpisodeModel>,
         watchedCodes: Set<String>
     ): ShowProgressSummary {
+        val normWatched = watchedCodes.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
         val total = if (episodes.isNotEmpty()) episodes.size else 10
-        val watchedCount = watchedCodes.size
+        val watchedCount = if (episodes.isNotEmpty()) {
+            episodes.count { normWatched.contains(it.code.trim().uppercase()) }
+        } else {
+            normWatched.size
+        }
         val leftCount = (total - watchedCount).coerceAtLeast(0)
-        val nextEp = episodes.firstOrNull { !watchedCodes.contains(it.code.uppercase()) }
+        val nextEp = episodes.firstOrNull { !normWatched.contains(it.code.trim().uppercase()) }
             ?: if (leftCount > 0) {
                 val nextNum = watchedCount + 1
                 EpisodeModel(
@@ -165,8 +170,8 @@ object TvTimeProgressCalculator {
                 )
             } else null
 
-        val lastWatchedEp = episodes.lastOrNull { watchedCodes.contains(it.code.uppercase()) }
-            ?: watchedCodes.maxOrNull()?.let { code ->
+        val lastWatchedEp = episodes.lastOrNull { normWatched.contains(it.code.trim().uppercase()) }
+            ?: normWatched.maxOrNull()?.let { code ->
                 val match = Regex("^S(\\d+)E(\\d+)$", RegexOption.IGNORE_CASE).find(code)
                 if (match != null) {
                     val s = match.groupValues[1].toIntOrNull() ?: 1

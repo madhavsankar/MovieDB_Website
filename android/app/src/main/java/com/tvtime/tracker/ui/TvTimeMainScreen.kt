@@ -954,6 +954,12 @@ fun TvTimeMainScreen(
                         shows = shows,
                         movies = movies,
                         onOpenShow = { selectedShowForDetail = it },
+                        onUnwatchShow = { show ->
+                            scope.launch {
+                                dao.deleteShow(show.id)
+                                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                            }
+                        },
                         onOpenMovie = { selectedMovieForDetail = it },
                         onBack = navigateBack
                     )
@@ -3193,6 +3199,7 @@ private fun RecentlyWatchedFullPageScreen(
     shows: List<ShowEntity>,
     movies: List<MovieEntity>,
     onOpenShow: (ShowEntity) -> Unit,
+    onUnwatchShow: (ShowEntity) -> Unit,
     onOpenMovie: (MovieEntity) -> Unit,
     onBack: () -> Unit
 ) {
@@ -3379,7 +3386,7 @@ private fun RecentlyWatchedFullPageScreen(
             TvShowWatchCard(
                 show = show,
                 onCardClick = { onOpenShow(show) },
-                onEyeClick = { onOpenShow(show) }
+                onEyeClick = { onUnwatchShow(show) }
             )
         }
     }

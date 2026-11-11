@@ -67,12 +67,10 @@ export class FirestoreRepository {
           watched = incomingEps.map((e) => e.code).sort();
         } else if (
           incomingEps.length > 0 &&
-          !FirestoreRepository.isSyntheticEpisodeList(incomingEps) &&
-          watched.length > incomingEps.length
+          !FirestoreRepository.isSyntheticEpisodeList(incomingEps)
         ) {
           const validCodes = new Set(incomingEps.map((e) => e.code));
-          const filtered = watched.filter((c) => validCodes.has(c));
-          if (filtered.length > 0) watched = filtered.sort();
+          watched = watched.filter((c) => validCodes.has(c)).sort();
         }
         byKey.set(key, {
           ...s,

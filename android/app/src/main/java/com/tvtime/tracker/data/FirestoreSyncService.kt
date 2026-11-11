@@ -122,10 +122,9 @@ object FirestoreSyncService {
                 var watched = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
                 if (s.userStatus.equals("completed", ignoreCase = true) && eps.isNotEmpty() && watched.size < eps.size) {
                     watched = eps.map { it.code.uppercase() }.toSet()
-                } else if (eps.isNotEmpty() && !isSyntheticEpisodeList(eps) && watched.size > eps.size) {
+                } else if (eps.isNotEmpty() && !isSyntheticEpisodeList(eps)) {
                     val validCodes = eps.map { it.code.uppercase() }.toSet()
-                    val filtered = watched.filter { validCodes.contains(it) }.toSet()
-                    if (filtered.isNotEmpty()) watched = filtered
+                    watched = watched.filter { validCodes.contains(it) }.toSet()
                 }
                 byKey[key] = s.copy(
                     watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(watched)

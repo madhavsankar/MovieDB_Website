@@ -131,10 +131,11 @@ fun ShowDetailBottomSheet(
             episodes = fetchedEps
             val mergedCast = if (fetchedCast.isNotEmpty()) fetchedCast.joinToString(", ") else castCsv
             castCsv = mergedCast
-            val nextWatched = if (show.userStatus.equals("completed", ignoreCase = true)) {
-                fetchedEps.map { it.code.uppercase() }.toSet()
+            val validFetchedCodes = fetchedEps.map { it.code.trim().uppercase() }.toSet()
+            val nextWatched = if (userStatus.equals("completed", ignoreCase = true)) {
+                validFetchedCodes
             } else {
-                watchedSet
+                watchedSet.filter { validFetchedCodes.contains(it.trim().uppercase()) }.toSet()
             }
             val nextProg = TvTimeProgressCalculator.computeShowProgress(fetchedEps, nextWatched)
             val nextEff = if (persistedShowId == 0L && userStatus == "preview") {
@@ -556,17 +557,39 @@ fun ShowDetailBottomSheet(
                                                     if (allSeasonWatched) TvTimePalette.GreenProgress else Color(0xFF232329)
                                                 )
                                                 .clickable {
-                                                    val nextSet = watchedSet.toMutableSet()
-                                                    val baseStatus = if (!allSeasonWatched && userStatus == "stopped") "in_progress" else userStatus
+                                                    val validCodes = episodes.map { it.code.trim().uppercase() }.toSet()
+                                                    val nextSet = watchedSet
+                                                        .map { it.trim().uppercase() }
+                                                        .filter { validCodes.isEmpty() || validCodes.contains(it) }
+                                                        .toMutableSet()
                                                     if (allSeasonWatched) {
-                                                        seasonEps.forEach { nextSet.remove(it.code.uppercase()) }
+                                                        seasonEps.forEach { nextSet.remove(it.code.trim().uppercase()) }
+                                                        val baseStatus = if (userStatus == "completed") "in_progress" else userStatus
+                                                        if (nextSet.isEmpty() && baseStatus != "stopped") {
+                                                            val toDeleteId = persistedShowId
+                                                            persistedShowId = 0L
+                                                            watchedSet = emptySet()
+                                                            userStatus = "preview"
+                                                            if (toDeleteId != 0L) {
+                                                                scope.launch {
+                                                                    dao.deleteShow(toDeleteId)
+                                                                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                                                }
+                                                            }
+                                                        } else {
+                                                            val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
+                                                            watchedSet = nextSet
+                                                            userStatus = nextStat
+                                                            persistUpdatedShow(nextWatchedSet = nextSet, nextStatus = nextStat)
+                                                        }
                                                     } else {
-                                                        seasonEps.forEach { nextSet.add(it.code.uppercase()) }
+                                                        val baseStatus = if (userStatus == "stopped") "in_progress" else userStatus
+                                                        seasonEps.forEach { nextSet.add(it.code.trim().uppercase()) }
+                                                        val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
+                                                        watchedSet = nextSet
+                                                        userStatus = nextStat
+                                                        persistUpdatedShow(nextWatchedSet = nextSet, nextStatus = nextStat)
                                                     }
-                                                    val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
-                                                    watchedSet = nextSet
-                                                    userStatus = nextStat
-                                                    persistUpdatedShow(nextWatchedSet = nextSet, nextStatus = nextStat)
                                                 },
                                             contentAlignment = Alignment.Center
                                         ) {
@@ -599,18 +622,43 @@ fun ShowDetailBottomSheet(
 
                         if (isSeasonOpen) {
                             items(seasonEps, key = { "ep_${it.code}" }) { ep ->
-                                val epCodeUpper = ep.code.uppercase()
+                                val epCodeUpper = ep.code.trim().uppercase()
                                 val isWatched = watchedSet.contains(epCodeUpper)
 
                                 val toggleSingleEpisode = {
-                                    val nextSet = watchedSet.toMutableSet()
-                                    val baseStatus = if (!isWatched && userStatus == "stopped") "in_progress" else userStatus
-                                    if (isWatched) nextSet.remove(epCodeUpper)
-                                    else nextSet.add(epCodeUpper)
-                                    val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
-                                    watchedSet = nextSet
-                                    userStatus = nextStat
-                                    persistUpdatedShow(nextWatchedSet = nextSet, nextStatus = nextStat)
+                                    val validCodes = episodes.map { it.code.trim().uppercase() }.toSet()
+                                    val nextSet = watchedSet
+                                        .map { it.trim().uppercase() }
+                                        .filter { validCodes.isEmpty() || validCodes.contains(it) }
+                                        .toMutableSet()
+                                    if (isWatched) {
+                                        nextSet.remove(epCodeUpper)
+                                        val baseStatus = if (userStatus == "completed") "in_progress" else userStatus
+                                        if (nextSet.isEmpty() && baseStatus != "stopped") {
+                                            val toDeleteId = persistedShowId
+                                            persistedShowId = 0L
+                                            watchedSet = emptySet()
+                                            userStatus = "preview"
+                                            if (toDeleteId != 0L) {
+                                                scope.launch {
+                                                    dao.deleteShow(toDeleteId)
+                                                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                                }
+                                            }
+                                        } else {
+                                            val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
+                                            watchedSet = nextSet
+                                            userStatus = nextStat
+                                            persistUpdatedShow(nextWatchedSet = nextSet, nextStatus = nextStat)
+                                        }
+                                    } else {
+                                        val baseStatus = if (userStatus == "stopped") "in_progress" else userStatus
+                                        nextSet.add(epCodeUpper)
+                                        val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
+                                        watchedSet = nextSet
+                                        userStatus = nextStat
+                                        persistUpdatedShow(nextWatchedSet = nextSet, nextStatus = nextStat)
+                                    }
                                 }
 
                                 Row(
