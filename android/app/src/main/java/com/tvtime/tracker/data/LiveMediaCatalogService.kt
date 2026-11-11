@@ -349,77 +349,105 @@ object LiveMediaCatalogService {
         val tmdbKey = BuildConfig.TMDB_API_KEY.trim()
         if (tmdbToken.isNotEmpty() || tmdbKey.isNotEmpty()) {
             try {
-                val tmdbUrl = if (tmdbToken.isNotEmpty()) {
-                    "https://api.themoviedb.org/3/search/multi?query=$encoded&include_adult=false&language=en-US&page=1"
-                } else {
-                    "https://api.themoviedb.org/3/search/multi?query=$encoded&include_adult=false&language=en-US&page=1&api_key=$tmdbKey"
-                }
-                val conn = (URL(tmdbUrl).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    setRequestProperty("Accept", "application/json")
-                    if (tmdbToken.isNotEmpty()) {
-                        setRequestProperty("Authorization", "Bearer $tmdbToken")
+                fun fetchTmdbJson(path: String): JSONObject? {
+                    val sep = if (path.contains("?")) "&" else "?"
+                    val url = if (tmdbToken.isNotEmpty()) {
+                        "https://api.themoviedb.org/3$path"
+                    } else {
+                        "https://api.themoviedb.org/3$path${sep}api_key=$tmdbKey"
                     }
-                    connectTimeout = 5000
-                    readTimeout = 5000
-                }
-                if (conn.responseCode in 200..299) {
-                    val text = conn.inputStream.bufferedReader().use { it.readText() }
-                    val arr = JSONObject(text).optJSONArray("results") ?: JSONArray()
-                    for (i in 0 until minOf(16, arr.length())) {
-                        val item = arr.optJSONObject(i) ?: continue
-                        val id = item.optInt("id", 0)
-                        if (id <= 0) continue
-                        val mType = item.optString("media_type", "").lowercase()
-                        if (mType == "movie") {
-                            val title = item.optString("title", item.optString("original_title", "Untitled Movie"))
-                            val year = item.optString("release_date", "").take(4).toIntOrNull() ?: 2024
-                            val key = "${title.lowercase()}_$year"
-                            if (!seenMovies.add(key)) continue
-                            val posterPath = item.optString("poster_path", "")
-                            val poster = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else ""
-                            val rating = (item.optDouble("vote_average", 7.8).takeIf { !it.isNaN() && it > 0 } ?: 7.8)
-                            results.add(
-                                SearchResultItem(
-                                    externalId = "movie_$id",
-                                    tmdbId = id,
-                                    mediaType = "movie",
-                                    title = title,
-                                    year = year,
-                                    networkOrDirector = "TMDB Feature Film",
-                                    status = "Released",
-                                    runtimeMins = 125,
-                                    genresCsv = "Movie",
-                                    rating = Math.round(rating * 10.0) / 10.0,
-                                    posterUrl = poster,
-                                    overview = stripHtml(item.optString("overview", ""))
-                                )
-                            )
-                        } else if (mType == "tv") {
-                            val title = item.optString("name", item.optString("original_name", "Untitled Show"))
-                            if (!seenShows.add(title.lowercase())) continue
-                            val year = item.optString("first_air_date", "").take(4).toIntOrNull() ?: 2024
-                            val posterPath = item.optString("poster_path", "")
-                            val poster = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else ""
-                            val rating = (item.optDouble("vote_average", 8.0).takeIf { !it.isNaN() && it > 0 } ?: 8.0)
-                            results.add(
-                                SearchResultItem(
-                                    externalId = "tmdb_tv_$id",
-                                    tvmazeId = 0,
-                                    tmdbId = id,
-                                    mediaType = "show",
-                                    title = title,
-                                    year = year,
-                                    networkOrDirector = "Streaming",
-                                    status = "Running",
-                                    runtimeMins = 45,
-                                    genresCsv = "TV Series",
-                                    rating = Math.round(rating * 10.0) / 10.0,
-                                    posterUrl = poster,
-                                    overview = stripHtml(item.optString("overview", ""))
-                                )
-                            )
+                    val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        setRequestProperty("Accept", "application/json")
+                        if (tmdbToken.isNotEmpty()) {
+                            setRequestProperty("Authorization", "Bearer $tmdbToken")
                         }
+                        connectTimeout = 5000
+                        readTimeout = 5000
+                    }
+                    if (conn.responseCode !in 200..299) return null
+                    return JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                }
+
+                fun normTitleKey(raw: String): String =
+                    raw.lowercase().replace("&", " and ").replace(Regex("[^a-z0-9]+"), " ").trim()
+
+                val normQ = normTitleKey(q)
+                val combinedItems = mutableListOf<JSONObject>()
+                if (Regex("\\band\\b", RegexOption.IGNORE_CASE).containsMatchIn(q)) {
+                    val ampEncoded = URLEncoder.encode(q.replace(Regex("\\band\\b", RegexOption.IGNORE_CASE), "&"), "UTF-8")
+                    val ampRoot = fetchTmdbJson("/search/tv?query=$ampEncoded&include_adult=false&language=en-US&page=1")
+                    val ampArr = ampRoot?.optJSONArray("results") ?: JSONArray()
+                    for (i in 0 until minOf(10, ampArr.length())) {
+                        val tvObj = ampArr.optJSONObject(i) ?: continue
+                        combinedItems.add(JSONObject(tvObj.toString()).put("media_type", "tv"))
+                    }
+                }
+                val multiRoot = fetchTmdbJson("/search/multi?query=$encoded&include_adult=false&language=en-US&page=1")
+                val multiArr = multiRoot?.optJSONArray("results") ?: JSONArray()
+                for (i in 0 until minOf(16, multiArr.length())) {
+                    val item = multiArr.optJSONObject(i) ?: continue
+                    combinedItems.add(item)
+                }
+                combinedItems.sortByDescending { item ->
+                    val rawTitle = item.optString("name", item.optString("title", ""))
+                    val tKey = normTitleKey(rawTitle)
+                    val startsBonus = if (normQ.isNotEmpty() && (tKey == normQ || tKey.startsWith("$normQ "))) 80.0 else 0.0
+                    item.optDouble("popularity", 0.0) + minOf(200.0, item.optDouble("vote_count", 0.0) / 10.0) + startsBonus
+                }
+
+                for (item in combinedItems) {
+                    val id = item.optInt("id", 0)
+                    if (id <= 0) continue
+                    val mType = item.optString("media_type", "").lowercase()
+                    if (mType == "movie") {
+                        val title = item.optString("title", item.optString("original_title", "Untitled Movie"))
+                        val year = item.optString("release_date", "").take(4).toIntOrNull() ?: 2024
+                        val key = "${normTitleKey(title)}_$year"
+                        if (!seenMovies.add(key)) continue
+                        val posterPath = item.optString("poster_path", "")
+                        val poster = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else ""
+                        val rating = (item.optDouble("vote_average", 7.8).takeIf { !it.isNaN() && it > 0 } ?: 7.8)
+                        results.add(
+                            SearchResultItem(
+                                externalId = "movie_$id",
+                                tmdbId = id,
+                                mediaType = "movie",
+                                title = title,
+                                year = year,
+                                networkOrDirector = "TMDB Feature Film",
+                                status = "Released",
+                                runtimeMins = 125,
+                                genresCsv = "Movie",
+                                rating = Math.round(rating * 10.0) / 10.0,
+                                posterUrl = poster,
+                                overview = stripHtml(item.optString("overview", ""))
+                            )
+                        )
+                    } else if (mType == "tv") {
+                        val title = item.optString("name", item.optString("original_name", "Untitled Show"))
+                        if (!seenShows.add(normTitleKey(title))) continue
+                        val year = item.optString("first_air_date", "").take(4).toIntOrNull() ?: 2024
+                        val posterPath = item.optString("poster_path", "")
+                        val poster = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else ""
+                        val rating = (item.optDouble("vote_average", 8.0).takeIf { !it.isNaN() && it > 0 } ?: 8.0)
+                        results.add(
+                            SearchResultItem(
+                                externalId = "tmdb_tv_$id",
+                                tvmazeId = 0,
+                                tmdbId = id,
+                                mediaType = "show",
+                                title = title,
+                                year = year,
+                                networkOrDirector = "Streaming",
+                                status = "Running",
+                                runtimeMins = 45,
+                                genresCsv = "TV Series",
+                                rating = Math.round(rating * 10.0) / 10.0,
+                                posterUrl = poster,
+                                overview = stripHtml(item.optString("overview", ""))
+                            )
+                        )
                     }
                 }
             } catch (_: Exception) {}
@@ -637,32 +665,62 @@ object LiveMediaCatalogService {
                     }
 
                     val episodes = mutableListOf<EpisodeModel>()
-                    for (sNum in seasonNums.takeLast(12)) {
+                    val seenCodes = mutableSetOf<String>()
+                    fun appendEpisodesArray(sNum: Int, epsArr: JSONArray) {
+                        for (j in 0 until epsArr.length()) {
+                            val ep = epsArr.optJSONObject(j) ?: continue
+                            val eNum = ep.optInt("episode_number", j + 1).coerceAtLeast(1)
+                            val code = EpisodeModel.formatCode(sNum, eNum)
+                            if (!seenCodes.add(code.uppercase())) continue
+                            val stillPath = ep.optString("still_path", "")
+                            val thumb = if (stillPath.isNotBlank() && stillPath != "null") {
+                                "https://image.tmdb.org/t/p/w300$stillPath"
+                            } else ""
+                            episodes.add(
+                                EpisodeModel(
+                                    code = code,
+                                    season = sNum,
+                                    number = eNum,
+                                    title = ep.optString("name", "Episode $eNum"),
+                                    airDate = ep.optString("air_date", ""),
+                                    runtimeMins = ep.optInt("runtime", defaultRuntime).coerceAtLeast(15),
+                                    imageUrl = thumb,
+                                    overview = stripHtml(ep.optString("overview", ""))
+                                )
+                            )
+                        }
+                    }
+
+                    val sortedSeasons = seasonNums.distinct().sorted()
+                    val missingSeasons = mutableListOf<Int>()
+                    for (chunk in sortedSeasons.chunked(20)) {
+                        var batchJson: JSONObject? = null
+                        try {
+                            val appendSeasons = chunk.joinToString(",") { "season/$it" }
+                            val bConn = openTmdb("/tv/$resolvedTmdbId?append_to_response=$appendSeasons&language=en-US")
+                            if (bConn.responseCode in 200..299) {
+                                batchJson = JSONObject(bConn.inputStream.bufferedReader().use { it.readText() })
+                            }
+                        } catch (_: Exception) {}
+
+                        for (sNum in chunk) {
+                            val sJson = batchJson?.optJSONObject("season/$sNum")
+                            val epsArr = sJson?.optJSONArray("episodes")
+                            if (epsArr != null) {
+                                appendEpisodesArray(sNum, epsArr)
+                            } else {
+                                missingSeasons.add(sNum)
+                            }
+                        }
+                    }
+
+                    for (sNum in missingSeasons.take(20)) {
                         try {
                             val sConn = openTmdb("/tv/$resolvedTmdbId/season/$sNum?language=en-US")
                             if (sConn.responseCode in 200..299) {
                                 val sJson = JSONObject(sConn.inputStream.bufferedReader().use { it.readText() })
                                 val epsArr = sJson.optJSONArray("episodes") ?: JSONArray()
-                                for (j in 0 until epsArr.length()) {
-                                    val ep = epsArr.optJSONObject(j) ?: continue
-                                    val eNum = ep.optInt("episode_number", j + 1).coerceAtLeast(1)
-                                    val stillPath = ep.optString("still_path", "")
-                                    val thumb = if (stillPath.isNotBlank() && stillPath != "null") {
-                                        "https://image.tmdb.org/t/p/w300$stillPath"
-                                    } else ""
-                                    episodes.add(
-                                        EpisodeModel(
-                                            code = EpisodeModel.formatCode(sNum, eNum),
-                                            season = sNum,
-                                            number = eNum,
-                                            title = ep.optString("name", "Episode $eNum"),
-                                            airDate = ep.optString("air_date", ""),
-                                            runtimeMins = ep.optInt("runtime", defaultRuntime).coerceAtLeast(15),
-                                            imageUrl = thumb,
-                                            overview = stripHtml(ep.optString("overview", ""))
-                                        )
-                                    )
-                                }
+                                appendEpisodesArray(sNum, epsArr)
                             }
                         } catch (_: Exception) {}
                     }
@@ -691,7 +749,7 @@ object LiveMediaCatalogService {
                         }
                     }
                     if (episodes.isNotEmpty()) {
-                        return@withContext episodes to castNames
+                        return@withContext episodes.sortedWith(compareBy({ it.season }, { it.number })) to castNames
                     }
                 }
             } catch (_: Exception) {}

@@ -127,17 +127,20 @@ fun ShowDetailBottomSheet(
             title = show.title,
             externalId = show.externalId
         )
-        if (fetchedEps.isNotEmpty() && fetchedEps.size > episodes.size) {
-            episodes = fetchedEps
+        val hadSeasonOne = episodes.any { it.season == 1 }
+        val fetchedHasSeasonOne = fetchedEps.any { it.season == 1 }
+        if (fetchedEps.isNotEmpty() && (fetchedEps.size > episodes.size || (!hadSeasonOne && fetchedHasSeasonOne))) {
+            val sortedFetched = fetchedEps.sortedWith(compareBy({ it.season }, { it.number }))
+            episodes = sortedFetched
             val mergedCast = if (fetchedCast.isNotEmpty()) fetchedCast.joinToString(", ") else castCsv
             castCsv = mergedCast
-            val validFetchedCodes = fetchedEps.map { it.code.trim().uppercase() }.toSet()
+            val validFetchedCodes = sortedFetched.map { it.code.trim().uppercase() }.toSet()
             val nextWatched = if (userStatus.equals("completed", ignoreCase = true)) {
                 validFetchedCodes
             } else {
                 watchedSet.filter { validFetchedCodes.contains(it.trim().uppercase()) }.toSet()
             }
-            val nextProg = TvTimeProgressCalculator.computeShowProgress(fetchedEps, nextWatched)
+            val nextProg = TvTimeProgressCalculator.computeShowProgress(sortedFetched, nextWatched)
             val nextEff = if (persistedShowId == 0L && userStatus == "preview") {
                 "preview"
             } else {
@@ -152,7 +155,7 @@ fun ShowDetailBottomSheet(
             }
             if (persistedShowId != 0L) {
                 persistUpdatedShow(
-                    nextEpisodes = fetchedEps,
+                    nextEpisodes = sortedFetched,
                     nextWatchedSet = nextWatched,
                     nextStatus = nextEff,
                     nextCastCsv = mergedCast
@@ -499,7 +502,10 @@ fun ShowDetailBottomSheet(
             } else {
                 // Episodes Tab: Grouped by Season with Accordions + Season & Episode Watch Toggles
                 val groupedBySeason = remember(episodes) {
-                    episodes.groupBy { it.season }.toSortedMap()
+                    episodes
+                        .sortedWith(compareBy({ it.season }, { it.number }))
+                        .groupBy { it.season }
+                        .toSortedMap()
                 }
                 val listState = rememberLazyListState()
 

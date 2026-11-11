@@ -278,13 +278,29 @@ export class LiveCatalogService {
     const results = [];
     const seenShowTitles = new Set();
     const seenMovieTitles = new Set();
+    const normalizeSearchTitle = (s) =>
+      String(s || "")
+        .toLowerCase()
+        .replace(/&/g, " and ")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+    const normQuery = normalizeSearchTitle(q);
+    const ampVariant = /\band\b/i.test(q) ? q.replace(/\band\b/gi, "&") : "";
+
     try {
       const tmdbReq = LiveCatalogService._buildTmdbRequest(
         `/search/multi?query=${encodeURIComponent(q)}&include_adult=false&language=en-US&page=1`,
         env
       );
-      const [tmdbRes, showsRes, imdbRes, moviesRes] = await Promise.allSettled([
+      const tmdbAmpTvReq = ampVariant
+        ? LiveCatalogService._buildTmdbRequest(
+            `/search/tv?query=${encodeURIComponent(ampVariant)}&include_adult=false&language=en-US&page=1`,
+            env
+          )
+        : null;
+      const [tmdbRes, tmdbAmpTvRes, showsRes, imdbRes, moviesRes] = await Promise.allSettled([
         tmdbReq ? fetchImpl(tmdbReq.url, { headers: tmdbReq.headers }) : Promise.resolve(null),
+        tmdbAmpTvReq ? fetchImpl(tmdbAmpTvReq.url, { headers: tmdbAmpTvReq.headers }) : Promise.resolve(null),
         fetchImpl(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(q)}`),
         fetchImpl(`https://v3.sg.media-imdb.com/suggestion/x/${encodeURIComponent(q)}.json`),
         fetchImpl(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&country=US&entity=movie&limit=10`),
@@ -298,74 +314,96 @@ export class LiveCatalogService {
         for (const entry of showsData) {
           const s = entry?.show;
           if (s?.id && s?.name) {
-            const k = String(s.name).trim().toLowerCase();
-            if (!tvmazeByTitle.has(k)) tvmazeByTitle.set(k, s);
+            const k = normalizeSearchTitle(s.name);
+            if (k && !tvmazeByTitle.has(k)) tvmazeByTitle.set(k, s);
           }
         }
       }
 
+      const combinedTmdbItems = [];
+      if (tmdbAmpTvRes.status === "fulfilled" && tmdbAmpTvRes.value && tmdbAmpTvRes.value.ok) {
+        const ampData = await tmdbAmpTvRes.value.json();
+        for (const tvItem of (ampData?.results || []).slice(0, 10)) {
+          if (tvItem && tvItem.id) {
+            combinedTmdbItems.push({ ...tvItem, media_type: "tv" });
+          }
+        }
+      }
       if (tmdbRes.status === "fulfilled" && tmdbRes.value && tmdbRes.value.ok) {
         const tmdbData = await tmdbRes.value.json();
         for (const item of (tmdbData?.results || []).slice(0, 18)) {
-          if (!item || !item.id) continue;
-          const mType = String(item.media_type || "").toLowerCase();
-          if (mType === "tv") {
-            const title = item.name || item.original_name || "Untitled Show";
-            const normTitle = String(title).trim().toLowerCase();
-            if (seenShowTitles.has(normTitle)) continue;
-            seenShowTitles.add(normTitle);
-            const firstAir = String(item.first_air_date || "");
-            const year = firstAir ? parseInt(firstAir.slice(0, 4), 10) || 2024 : 2024;
-            const matchedTvMaze = tvmazeByTitle.get(normTitle);
-            const posterUrl = item.poster_path
-              ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
-              : (matchedTvMaze?.image?.medium || "").replace(/^http:\/\//i, "https://");
-            results.push({
-              id: matchedTvMaze ? `tvmaze_${matchedTvMaze.id}` : `tmdb_tv_${item.id}`,
-              tvmazeId: matchedTvMaze ? matchedTvMaze.id : 0,
-              tmdbId: item.id,
-              mediaType: "show",
-              title,
-              year,
-              network: matchedTvMaze?.network?.name || matchedTvMaze?.webChannel?.name || "Streaming",
-              status: matchedTvMaze?.status || "Running",
-              runtimeMins: Number(matchedTvMaze?.averageRuntime || matchedTvMaze?.runtime) || 45,
-              genres: Array.isArray(matchedTvMaze?.genres) ? matchedTvMaze.genres : ["TV Series"],
-              rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 8.0,
-              posterUrl,
-              overview: stripHtml(item.overview || matchedTvMaze?.summary || ""),
-            });
-          } else if (mType === "movie") {
-            const title = item.title || item.original_title || "Untitled Movie";
-            const rel = String(item.release_date || "");
-            const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
-            const key = `${String(title).toLowerCase()}_${year}`;
-            if (seenMovieTitles.has(key)) continue;
-            seenMovieTitles.add(key);
-            const posterUrl = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : "";
-            results.push({
-              id: `movie_${item.id}`,
-              tmdbId: item.id,
-              mediaType: "movie",
-              title,
-              year,
-              director: "",
-              runtimeMins: 125,
-              genres: ["Movie"],
-              streamingService: "Theaters / Streaming",
-              rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 7.8,
-              posterUrl,
-              overview: stripHtml(item.overview || ""),
-            });
-          }
+          if (item && item.id) combinedTmdbItems.push(item);
+        }
+      }
+      combinedTmdbItems.sort((a, b) => {
+        const aTitle = normalizeSearchTitle(a.name || a.title || a.original_name || a.original_title || "");
+        const bTitle = normalizeSearchTitle(b.name || b.title || b.original_name || b.original_title || "");
+        const aStarts = normQuery && (aTitle === normQuery || aTitle.startsWith(normQuery + " ")) ? 1 : 0;
+        const bStarts = normQuery && (bTitle === normQuery || bTitle.startsWith(normQuery + " ")) ? 1 : 0;
+        const aPop = (Number(a.popularity) || 0) + Math.min(200, (Number(a.vote_count) || 0) / 10) + aStarts * 80;
+        const bPop = (Number(b.popularity) || 0) + Math.min(200, (Number(b.vote_count) || 0) / 10) + bStarts * 80;
+        return bPop - aPop;
+      });
+
+      for (const item of combinedTmdbItems) {
+        if (!item || !item.id) continue;
+        const mType = String(item.media_type || "").toLowerCase();
+        if (mType === "tv") {
+          const title = item.name || item.original_name || "Untitled Show";
+          const normTitle = normalizeSearchTitle(title);
+          if (!normTitle || seenShowTitles.has(normTitle)) continue;
+          seenShowTitles.add(normTitle);
+          const firstAir = String(item.first_air_date || "");
+          const year = firstAir ? parseInt(firstAir.slice(0, 4), 10) || 2024 : 2024;
+          const matchedTvMaze = tvmazeByTitle.get(normTitle);
+          const posterUrl = item.poster_path
+            ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
+            : (matchedTvMaze?.image?.medium || "").replace(/^http:\/\//i, "https://");
+          results.push({
+            id: `tmdb_tv_${item.id}`,
+            tvmazeId: matchedTvMaze ? matchedTvMaze.id : 0,
+            tmdbId: item.id,
+            mediaType: "show",
+            title,
+            year,
+            network: matchedTvMaze?.network?.name || matchedTvMaze?.webChannel?.name || "Streaming",
+            status: matchedTvMaze?.status || "Running",
+            runtimeMins: Number(matchedTvMaze?.averageRuntime || matchedTvMaze?.runtime) || 45,
+            genres: Array.isArray(matchedTvMaze?.genres) ? matchedTvMaze.genres : ["TV Series"],
+            rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 8.0,
+            posterUrl,
+            overview: stripHtml(item.overview || matchedTvMaze?.summary || ""),
+          });
+        } else if (mType === "movie") {
+          const title = item.title || item.original_title || "Untitled Movie";
+          const rel = String(item.release_date || "");
+          const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
+          const key = `${normalizeSearchTitle(title)}_${year}`;
+          if (seenMovieTitles.has(key)) continue;
+          seenMovieTitles.add(key);
+          const posterUrl = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : "";
+          results.push({
+            id: `movie_${item.id}`,
+            tmdbId: item.id,
+            mediaType: "movie",
+            title,
+            year,
+            director: "",
+            runtimeMins: 125,
+            genres: ["Movie"],
+            streamingService: "Theaters / Streaming",
+            rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 7.8,
+            posterUrl,
+            overview: stripHtml(item.overview || ""),
+          });
         }
       }
 
       for (const entry of showsData.slice(0, 12)) {
         const show = entry?.show;
         if (!show || !show.id) continue;
-        const normTitle = String(show.name || "").trim().toLowerCase();
-        if (seenShowTitles.has(normTitle)) continue;
+        const normTitle = normalizeSearchTitle(show.name || "");
+        if (!normTitle || seenShowTitles.has(normTitle)) continue;
         seenShowTitles.add(normTitle);
         const premiered = String(show.premiered || "");
         const year = premiered ? parseInt(premiered.slice(0, 4), 10) || 2024 : 2024;
@@ -714,8 +752,9 @@ export class LiveCatalogService {
   /**
    * Fetches full TV show details + complete episode list + cast from TMDB (`/3/tv/:id`) or TVMaze (`/shows/:id?embed[]=episodes&embed[]=cast`).
    */
-  static async fetchFullShowFromTvMaze(tvmazeId, { fetchImpl = fetch, env = null } = {}) {
-    const rawStr = String(tvmazeId || "").trim();
+  static async fetchFullShowFromTvMaze(tvmazeId, { title = "", fetchImpl = fetch, env = null } = {}) {
+    let rawStr = String(tvmazeId || "").trim();
+    const cleanTitle = String(title || "").trim();
     if (rawStr.startsWith("movie_")) {
       const tmdbId = Number(rawStr.replace(/^movie_/, "").replace(/\D/g, ""));
       const tmdbReq = LiveCatalogService._buildTmdbRequest(
@@ -757,6 +796,27 @@ export class LiveCatalogService {
       }
       return null;
     }
+
+    // Resolve non-TMDB / non-TVMaze synthetic IDs (e.g. csv_show_*) via title search on TMDB first
+    if (!rawStr.startsWith("tmdb_tv_") && !Number(rawStr.replace(/^tvmaze_/, "")) && cleanTitle) {
+      const searchTvReq = LiveCatalogService._buildTmdbRequest(
+        `/search/tv?query=${encodeURIComponent(cleanTitle)}&include_adult=false&language=en-US&page=1`,
+        env
+      );
+      if (searchTvReq) {
+        try {
+          const sResp = await fetchImpl(searchTvReq.url, { headers: searchTvReq.headers });
+          if (sResp.ok) {
+            const sData = await sResp.json();
+            const firstId = Number(sData?.results?.[0]?.id || 0);
+            if (firstId > 0) {
+              rawStr = `tmdb_tv_${firstId}`;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
     if (rawStr.startsWith("tmdb_tv_")) {
       const tmdbId = Number(rawStr.replace(/^tmdb_tv_/, ""));
       const tmdbReq = LiveCatalogService._buildTmdbRequest(
@@ -779,56 +839,98 @@ export class LiveCatalogService {
               .map((c) => c?.name)
               .filter(Boolean);
             const defaultRuntime = Number(show.episode_run_time?.[0]) || 45;
-            const seasonNums = (show.seasons || [])
-              .map((s) => Number(s.season_number))
-              .filter((n) => n >= 1)
-              .slice(-12);
-            const seasonReqs = seasonNums.map((sNum) => {
-              const sReq = LiveCatalogService._buildTmdbRequest(`/tv/${tmdbId}/season/${sNum}?language=en-US`, env);
-              return sReq ? fetchImpl(sReq.url, { headers: sReq.headers }) : Promise.resolve(null);
+            const seasonNums = Array.from(
+              new Set(
+                (show.seasons || [])
+                  .map((s) => Number(s.season_number))
+                  .filter((n) => Number.isFinite(n) && n >= 1)
+              )
+            ).sort((a, b) => a - b);
+
+            const seasonChunks = [];
+            for (let i = 0; i < seasonNums.length; i += 20) {
+              seasonChunks.push(seasonNums.slice(i, i + 20));
+            }
+            const chunkReqs = seasonChunks.map((chunk) => {
+              const appendSeasons = chunk.map((n) => `season/${n}`).join(",");
+              const bReq = LiveCatalogService._buildTmdbRequest(
+                `/tv/${tmdbId}?append_to_response=${appendSeasons}&language=en-US`,
+                env
+              );
+              return bReq ? fetchImpl(bReq.url, { headers: bReq.headers }) : Promise.resolve(null);
             });
-            const seasonResps = await Promise.allSettled(seasonReqs);
+            const chunkResps = await Promise.allSettled(chunkReqs);
             const episodes = [];
-            for (const sRes of seasonResps) {
-              if (sRes.status === "fulfilled" && sRes.value && sRes.value.ok) {
-                const sData = await sRes.value.json();
-                const sNum = Number(sData.season_number) || 1;
-                for (const ep of sData.episodes || []) {
-                  const eNum = Number(ep.episode_number) || 1;
-                  episodes.push({
-                    code: formatEpisodeCode(sNum, eNum),
-                    season: sNum,
-                    number: eNum,
-                    title: ep.name || `Episode ${eNum}`,
-                    airDate: ep.air_date || "",
-                    runtimeMins: Number(ep.runtime) || defaultRuntime,
-                    imageUrl: ep.still_path ? `https://image.tmdb.org/t/p/w300${ep.still_path}` : "",
-                    overview: stripHtml(ep.overview),
-                  });
+            const seenCodes = new Set();
+            const pushEpisode = (sNum, ep) => {
+              const eNum = Number(ep?.episode_number) || 1;
+              const code = formatEpisodeCode(sNum, eNum);
+              if (seenCodes.has(code)) return;
+              seenCodes.add(code);
+              episodes.push({
+                code,
+                season: sNum,
+                number: eNum,
+                title: ep.name || `Episode ${eNum}`,
+                airDate: ep.air_date || "",
+                runtimeMins: Number(ep.runtime) || defaultRuntime,
+                imageUrl: ep.still_path ? `https://image.tmdb.org/t/p/w300${ep.still_path}` : "",
+                overview: stripHtml(ep.overview),
+              });
+            };
+
+            const missingSeasons = [];
+            for (let cIdx = 0; cIdx < seasonChunks.length; cIdx++) {
+              const chunk = seasonChunks[cIdx];
+              const cRes = chunkResps[cIdx];
+              let batchData = null;
+              if (cRes && cRes.status === "fulfilled" && cRes.value && cRes.value.ok) {
+                try {
+                  batchData = await cRes.value.json();
+                } catch (_) {}
+              }
+              for (const sNum of chunk) {
+                const sData = batchData ? batchData[`season/${sNum}`] : null;
+                if (sData && Array.isArray(sData.episodes)) {
+                  for (const ep of sData.episodes) {
+                    pushEpisode(sNum, ep);
+                  }
+                } else {
+                  missingSeasons.push(sNum);
                 }
               }
             }
+
+            if (missingSeasons.length > 0 && missingSeasons.length <= 20) {
+              const fallbackReqs = missingSeasons.map((sNum) => {
+                const sReq = LiveCatalogService._buildTmdbRequest(`/tv/${tmdbId}/season/${sNum}?language=en-US`, env);
+                return sReq ? fetchImpl(sReq.url, { headers: sReq.headers }) : Promise.resolve(null);
+              });
+              const fallbackResps = await Promise.allSettled(fallbackReqs);
+              for (let idx = 0; idx < missingSeasons.length; idx++) {
+                const fRes = fallbackResps[idx];
+                if (fRes && fRes.status === "fulfilled" && fRes.value && fRes.value.ok) {
+                  try {
+                    const sData = await fRes.value.json();
+                    const sNum = Number(sData.season_number) || missingSeasons[idx];
+                    for (const ep of sData.episodes || []) {
+                      pushEpisode(sNum, ep);
+                    }
+                  } catch (_) {}
+                }
+              }
+            }
+
             const nextAir = show.next_episode_to_air;
             if (nextAir && typeof nextAir === "object") {
               const nextS = Number(nextAir.season_number) || 0;
               const nextE = Number(nextAir.episode_number) || 0;
               const nextDate = String(nextAir.air_date || "").trim();
               if (nextS >= 1 && nextE >= 1 && nextDate) {
-                const nextCode = formatEpisodeCode(nextS, nextE);
-                if (!episodes.some((e) => e.code === nextCode)) {
-                  episodes.push({
-                    code: nextCode,
-                    season: nextS,
-                    number: nextE,
-                    title: nextAir.name || `Episode ${nextE}`,
-                    airDate: nextDate,
-                    runtimeMins: Number(nextAir.runtime) || defaultRuntime,
-                    imageUrl: nextAir.still_path ? `https://image.tmdb.org/t/p/w300${nextAir.still_path}` : "",
-                    overview: stripHtml(nextAir.overview),
-                  });
-                }
+                pushEpisode(nextS, nextAir);
               }
             }
+            episodes.sort((a, b) => (a.season - b.season) || (a.number - b.number));
             return {
               id: `tmdb_tv_${show.id}`,
               tvmazeId: 0,
@@ -851,10 +953,13 @@ export class LiveCatalogService {
     }
 
     const cleanId = Number(rawStr.replace(/^tvmaze_/, ""));
-    if (!cleanId) return null;
+    if (!cleanId && !cleanTitle) return null;
 
     try {
-      const resp = await fetchImpl(`https://api.tvmaze.com/shows/${cleanId}?embed[]=episodes&embed[]=cast`);
+      const tvmazeUrl = cleanId
+        ? `https://api.tvmaze.com/shows/${cleanId}?embed[]=episodes&embed[]=cast`
+        : `https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(cleanTitle)}&embed[]=episodes&embed[]=cast`;
+      const resp = await fetchImpl(tvmazeUrl);
       if (!resp.ok) return null;
       const show = await resp.json();
       const premiered = String(show.premiered || "");
@@ -867,16 +972,18 @@ export class LiveCatalogService {
         .map((c) => c?.person?.name)
         .filter(Boolean);
       const rawEps = show._embedded?.episodes || [];
-      const episodes = rawEps.map((ep) => ({
-        code: formatEpisodeCode(ep.season, ep.number),
-        season: Number(ep.season) || 1,
-        number: Number(ep.number) || 1,
-        title: ep.name || `Episode ${ep.number || 1}`,
-        airDate: ep.airdate || "",
-        runtimeMins: Number(ep.runtime || show.averageRuntime || show.runtime) || 45,
-        imageUrl: (ep.image?.medium || ep.image?.original || "").replace(/^http:\/\//i, "https://"),
-        overview: stripHtml(ep.summary),
-      }));
+      const episodes = rawEps
+        .map((ep) => ({
+          code: formatEpisodeCode(ep.season, ep.number),
+          season: Number(ep.season) || 1,
+          number: Number(ep.number) || 1,
+          title: ep.name || `Episode ${ep.number || 1}`,
+          airDate: ep.airdate || "",
+          runtimeMins: Number(ep.runtime || show.averageRuntime || show.runtime) || 45,
+          imageUrl: (ep.image?.medium || ep.image?.original || "").replace(/^http:\/\//i, "https://"),
+          overview: stripHtml(ep.summary),
+        }))
+        .sort((a, b) => (a.season - b.season) || (a.number - b.number));
 
       return {
         id: `tvmaze_${show.id}`,

@@ -339,6 +339,21 @@ export class FirestoreRepository {
       });
       serializedPayload = JSON.stringify(payloadObj);
     }
+    if (serializedPayload.length > 850000) {
+      payloadObj.shows = payloadObj.shows.map((s) => {
+        const eps = Array.isArray(s.episodes) ? s.episodes : [];
+        if (eps.length <= 150) return s;
+        return {
+          ...s,
+          episodes: eps.map((ep) => ({
+            code: ep.code,
+            season: ep.season,
+            number: ep.number,
+          })),
+        };
+      });
+      serializedPayload = JSON.stringify(payloadObj);
+    }
 
     const firestoreBody = {
       fields: {

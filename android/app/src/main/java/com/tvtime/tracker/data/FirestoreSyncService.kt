@@ -244,12 +244,14 @@ object FirestoreSyncService {
                 val movies = deduplicateMovies(dao.getMoviesForUser(cleanUser))
                 val actors = dao.getActorsForUser(cleanUser)
 
-                fun buildShowsArray(minimalCompleted: Boolean): JSONArray {
+                fun buildShowsArray(minimalCompleted: Boolean, minimalLargeShows: Boolean = false): JSONArray {
                     val arr = JSONArray()
                     for (s in shows) {
                         val watchedArr = JSONArray(TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv).toList())
                         val isComp = s.userStatus.equals("completed", ignoreCase = true)
-                        val epsArr = compactEpisodesJsonArray(s.episodesJson, minimalCompleted && isComp)
+                        val parsedCount = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson).size
+                        val useMinimal = (minimalCompleted && isComp) || (minimalLargeShows && parsedCount > 150)
+                        val epsArr = compactEpisodesJsonArray(s.episodesJson, useMinimal)
                         arr.put(
                             JSONObject().apply {
                                 put("id", s.externalId)
@@ -349,6 +351,10 @@ object FirestoreSyncService {
                 var payloadStr = payloadObj.toString()
                 if (payloadStr.length > 750_000) {
                     payloadObj.put("shows", buildShowsArray(minimalCompleted = true))
+                    payloadStr = payloadObj.toString()
+                }
+                if (payloadStr.length > 850_000) {
+                    payloadObj.put("shows", buildShowsArray(minimalCompleted = true, minimalLargeShows = true))
                     payloadStr = payloadObj.toString()
                 }
 

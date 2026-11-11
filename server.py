@@ -645,12 +645,90 @@ def fetch_recommendations(tv_seeds_raw, mv_seeds_raw, page=1):
     return {"results": results}
 
 
-def fetch_full_show_from_tvmaze(tvmaze_id):
-    num_id = re.sub(r"^tvmaze_", "", str(tvmaze_id or "").strip())
-    if not num_id:
+def fetch_full_show_from_tvmaze(tvmaze_id, title=""):
+    raw_str = str(tvmaze_id or "").strip()
+    clean_title = str(title or "").strip()
+    tmdb_token = (CONFIG.get("TMDB_READ_TOKEN") or os.environ.get("TMDB_READ_TOKEN") or "").strip()
+    tmdb_key = (CONFIG.get("TMDB_API_KEY") or os.environ.get("TMDB_API_KEY") or "").strip()
+
+    if raw_str.startswith("tmdb_tv_") and (tmdb_token or tmdb_key):
+        tmdb_id = re.sub(r"^tmdb_tv_", "", raw_str)
+        if tmdb_id.isdigit():
+            try:
+                req_headers = {"User-Agent": "TVTimeTracker/1.0", "Accept": "application/json"}
+                if tmdb_token:
+                    req_headers["Authorization"] = f"Bearer {tmdb_token}"
+                key_suffix = "" if tmdb_token else f"&api_key={urllib.parse.quote(tmdb_key)}"
+                tv_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?append_to_response=credits,watch/providers&language=en-US{key_suffix}"
+                req = urllib.request.Request(tv_url, headers=req_headers)
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    show = json.loads(r.read().decode("utf-8"))
+                season_nums = sorted({
+                    int(s.get("season_number") or 0)
+                    for s in (show.get("seasons") or [])
+                    if int(s.get("season_number") or 0) >= 1
+                })
+                default_runtime = int((show.get("episode_run_time") or [45])[0] or 45)
+                episodes = []
+                for idx in range(0, len(season_nums), 20):
+                    chunk = season_nums[idx:idx + 20]
+                    append_s = ",".join(f"season/{n}" for n in chunk)
+                    b_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?append_to_response={append_s}&language=en-US{key_suffix}"
+                    b_req = urllib.request.Request(b_url, headers=req_headers)
+                    with urllib.request.urlopen(b_req, timeout=10) as br:
+                        b_data = json.loads(br.read().decode("utf-8"))
+                    for s_num in chunk:
+                        s_obj = b_data.get(f"season/{s_num}") or {}
+                        for ep in (s_obj.get("episodes") or []):
+                            e_num = int(ep.get("episode_number") or 1)
+                            still = ep.get("still_path") or ""
+                            episodes.append({
+                                "code": format_ep_code(s_num, e_num),
+                                "season": s_num,
+                                "number": e_num,
+                                "title": ep.get("name") or f"Episode {e_num}",
+                                "airDate": ep.get("air_date") or "",
+                                "runtimeMins": int(ep.get("runtime") or default_runtime),
+                                "imageUrl": f"https://image.tmdb.org/t/p/w300{still}" if still else "",
+                                "overview": strip_html(ep.get("overview") or ""),
+                            })
+                episodes.sort(key=lambda e: (e["season"], e["number"]))
+                prem = str(show.get("first_air_date") or "2020")[:4]
+                poster_path = show.get("poster_path") or ""
+                cast_names = [
+                    c.get("name")
+                    for c in ((show.get("credits") or {}).get("cast") or [])[:8]
+                    if c.get("name")
+                ]
+                return {
+                    "id": f"tmdb_tv_{show['id']}",
+                    "tvmazeId": 0,
+                    "tmdbId": show["id"],
+                    "title": show.get("name") or "Show",
+                    "year": int(prem) if prem.isdigit() else 2020,
+                    "network": ((show.get("networks") or [{}])[0].get("name")) or "Streaming",
+                    "status": show.get("status") or "Running",
+                    "runtimeMins": default_runtime,
+                    "genres": [g.get("name") for g in (show.get("genres") or []) if g.get("name")],
+                    "cast": cast_names,
+                    "rating": round(float(show.get("vote_average") or 8.0), 1),
+                    "posterUrl": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else "",
+                    "overview": strip_html(show.get("overview") or ""),
+                    "episodes": episodes,
+                }
+            except Exception:
+                pass
+
+    num_id = re.sub(r"^tvmaze_", "", raw_str)
+    if not num_id.isdigit() and not clean_title:
         return None
     try:
-        s = http_get_json(f"https://api.tvmaze.com/shows/{urllib.parse.quote(num_id)}?embed[]=episodes&embed[]=cast")
+        tvmaze_url = (
+            f"https://api.tvmaze.com/shows/{urllib.parse.quote(num_id)}?embed[]=episodes&embed[]=cast"
+            if num_id.isdigit()
+            else f"https://api.tvmaze.com/singlesearch/shows?q={urllib.parse.quote(clean_title)}&embed[]=episodes&embed[]=cast"
+        )
+        s = http_get_json(tvmaze_url)
         embedded_eps = (s.get("_embedded") or {}).get("episodes") or []
         embedded_cast = (s.get("_embedded") or {}).get("cast") or []
         episodes = []
@@ -785,7 +863,8 @@ class TvTimeHttpHandler(BaseHTTPRequestHandler):
 
         if path == "/api/show-details":
             tvmaze_id = (qs.get("tvmazeId") or [""])[0]
-            show = fetch_full_show_from_tvmaze(tvmaze_id)
+            title = (qs.get("title") or [""])[0]
+            show = fetch_full_show_from_tvmaze(tvmaze_id, title)
             if not show:
                 self._send_json({"error": "Show not found"}, 404)
                 return

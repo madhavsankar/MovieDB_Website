@@ -444,6 +444,163 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertNotIn("export const WEB_APP_HTML", html)
         self.assertGreater(stats["totalMins"], 200)
 
+    def test_all_35_seasons_batched_fetch_and_backfill(self):
+        """Verifies 35+ season shows return Seasons 1..35 via batched TMDB append_to_response and backfill previously truncated library shows."""
+        svc_path = os.path.join(ROOT_DIR, "cloudflare", "src", "services", "LiveCatalogService.js")
+        view_path = os.path.join(ROOT_DIR, "cloudflare", "src", "ui", "WebAppView.js")
+        with open(svc_path, "r", encoding="utf-8") as f:
+            svc_src = (
+                f.read()
+                .replace("export function formatEpisodeCode", "function formatEpisodeCode")
+                .replace("export class LiveCatalogService", "class LiveCatalogService")
+            )
+        with open(view_path, "r", encoding="utf-8") as f:
+            view_src = f.read().replace("export const WEB_APP_HTML", "const WEB_APP_HTML")
+
+        harness = (
+            svc_src
+            + "\n"
+            + view_src
+            + """
+            (async () => {
+              let fetchCallCount = 0;
+              const mockFetch = async (url) => {
+                fetchCallCount++;
+                const rawUrl = String(url || "");
+                const m = rawUrl.match(/append_to_response=([^&]+)/);
+                const append = m ? decodeURIComponent(m[1]) : "";
+                if (append.includes("credits")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      id: 2734,
+                      name: "Law & Order: Special Victims Unit",
+                      first_air_date: "1999-09-20",
+                      seasons: Array.from({ length: 36 }, (_, idx) => ({ season_number: idx })),
+                      episode_run_time: [43],
+                      credits: { cast: [{ name: "Mariska Hargitay" }] }
+                    })
+                  };
+                }
+                if (append.startsWith("season/")) {
+                  const obj = {};
+                  for (const part of append.split(",")) {
+                    const sNum = Number(part.split("/")[1]);
+                    obj[part] = {
+                      season_number: sNum,
+                      episodes: [{ episode_number: 1, name: "Premiere S" + sNum, air_date: "2000-01-01", runtime: 43 }]
+                    };
+                  }
+                  return { ok: true, json: async () => obj };
+                }
+                return { ok: false };
+              };
+
+              const fullShow = await LiveCatalogService.fetchFullShowFromTvMaze("tmdb_tv_2734", {
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "test_key" }
+              });
+              const seasonsReturned = Array.from(new Set(fullShow.episodes.map((e) => e.season)));
+
+              // Verify WebAppView openItemById backfills a show previously cached with only Seasons 17..35
+              const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+              const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+              const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+              const els = {};
+              const makeEl = (id) => {
+                if (!els[id]) {
+                  els[id] = {
+                    id,
+                    innerHTML: "",
+                    className: "",
+                    classList: { add: () => {}, remove: () => {}, contains: () => false }
+                  };
+                }
+                return els[id];
+              };
+              Object.defineProperty(globalThis, "window", {
+                value: { location: { search: "" }, history: { replaceState: () => {}, pushState: () => {} }, addEventListener: () => {} },
+                writable: true,
+                configurable: true
+              });
+              Object.defineProperty(globalThis, "document", {
+                value: { cookie: "", getElementById: makeEl, querySelectorAll: () => [], addEventListener: () => {} },
+                writable: true,
+                configurable: true
+              });
+              Object.defineProperty(globalThis, "localStorage", {
+                value: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+                writable: true,
+                configurable: true
+              });
+              Object.defineProperty(globalThis, "setTimeout", {
+                value: (fn) => { fn(); return 1; },
+                writable: true,
+                configurable: true
+              });
+              Object.defineProperty(globalThis, "fetch", {
+                value: async () => ({ ok: true, json: async () => fullShow }),
+                writable: true,
+                configurable: true
+              });
+
+              (new Function(clientJs))();
+              const dummy = Object.create(globalThis.TvTimeClientClass.prototype);
+              dummy.openSeasons = new Set();
+              dummy.tabHistory = [];
+              dummy.persistState = async () => {};
+              dummy.state = {
+                shows: [
+                  {
+                    id: "tmdb_tv_2734",
+                    tmdbId: 2734,
+                    title: "Law & Order: Special Victims Unit",
+                    userStatus: "in_progress",
+                    watchedEpisodes: ["S17E01"],
+                    episodes: Array.from({ length: 19 }, (_, idx) => ({
+                      code: "S" + String(17 + idx).padStart(2, "0") + "E01",
+                      season: 17 + idx,
+                      number: 1,
+                      title: "Ep 1"
+                    }))
+                  }
+                ],
+                movies: []
+              };
+
+              await dummy.openItemById("tmdb_tv_2734");
+              await Promise.resolve();
+              await Promise.resolve();
+              await Promise.resolve();
+              const backfilledSeasons = Array.from(new Set(dummy.state.shows[0].episodes.map((e) => e.season)));
+              const hasSeason1Html = makeEl("detail-body").innerHTML.includes("Season 1<");
+              const hasSeason35Html = makeEl("detail-body").innerHTML.includes("Season 35<");
+
+              const out = JSON.stringify({
+                fetchCallCount,
+                firstSeason: seasonsReturned[0],
+                lastSeason: seasonsReturned[seasonsReturned.length - 1],
+                seasonCount: seasonsReturned.length,
+                backfilledFirst: backfilledSeasons[0],
+                backfilledCount: backfilledSeasons.length,
+                hasSeason1Html,
+                hasSeason35Html
+              });
+              if (typeof console !== "undefined" && console.log) console.log(out);
+              else if (typeof print !== "undefined") print(out);
+            })();
+            """
+        )
+        out = self._run_js(harness)
+        self.assertEqual(out["fetchCallCount"], 3)
+        self.assertEqual(out["firstSeason"], 1)
+        self.assertEqual(out["lastSeason"], 35)
+        self.assertEqual(out["seasonCount"], 35)
+        self.assertEqual(out["backfilledFirst"], 1)
+        self.assertEqual(out["backfilledCount"], 35)
+        self.assertTrue(out["hasSeason1Html"])
+        self.assertTrue(out["hasSeason35Html"])
+
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""
         proc = subprocess.run(

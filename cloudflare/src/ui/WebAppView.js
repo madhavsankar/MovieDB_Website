@@ -2262,6 +2262,25 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         return best;
       }
 
+      getShowDetailsUrl(show) {
+        if (!show) return "";
+        const rawId = String(show.id || "");
+        let lookupKey = "";
+        if (rawId.startsWith("tmdb_tv_")) {
+          lookupKey = rawId;
+        } else if (show.tmdbId && Number(show.tmdbId) > 0) {
+          lookupKey = "tmdb_tv_" + Number(show.tmdbId);
+        } else if (show.tvmazeId && Number(show.tvmazeId) > 0) {
+          lookupKey = String(show.tvmazeId);
+        } else {
+          lookupKey = rawId;
+        }
+        const titleParam = show.title ? "&title=" + encodeURIComponent(show.title) : "";
+        return lookupKey
+          ? "/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey) + titleParam
+          : "";
+      }
+
       async refreshUpcomingEpisodesIfNeeded() {
         if (this._refreshingUpcoming) return;
         this._refreshingUpcoming = true;
@@ -2272,15 +2291,20 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             if (s.userStatus === "stopped") continue;
             const isEnded = String(s.status || "").toLowerCase() === "ended";
             const eps = Array.isArray(s.episodes) ? s.episodes : [];
-            if (isEnded && eps.length > 1) continue;
-            const lookupKey = s.tvmazeId || s.id;
-            if (!lookupKey) continue;
+            const hasSeasonOne = eps.some((e) => Number(e.season) === 1);
+            if (isEnded && eps.length > 1 && hasSeasonOne) continue;
+            const detailsUrl = this.getShowDetailsUrl(s);
+            if (!detailsUrl) continue;
             try {
-              const res = await fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey));
+              const res = await fetch(detailsUrl);
               if (res.ok) {
                 const full = await res.json();
-                if (full && Array.isArray(full.episodes) && full.episodes.length > eps.length) {
-                  s.episodes = full.episodes.map((e) => this.compactEpisode(e));
+                const fullEps = Array.isArray(full?.episodes) ? full.episodes : [];
+                const fullHasSeasonOne = fullEps.some((e) => Number(e.season) === 1);
+                if (full && fullEps.length > 0 && (fullEps.length > eps.length || (!hasSeasonOne && fullHasSeasonOne))) {
+                  s.episodes = fullEps
+                    .map((e) => this.compactEpisode(e))
+                    .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
                   if (s.userStatus === "completed") {
                     s.watchedEpisodes = s.episodes.map((e) => e.code).sort();
                   }
@@ -2377,14 +2401,21 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (eff === "completed") {
           await this.removeItemFromLibrary(showId);
         } else {
-          const lookupKey = show.tvmazeId || show.id;
-          if (lookupKey && (!show.episodes || show.episodes.length <= 1)) {
+          const existingEps = Array.isArray(show.episodes) ? show.episodes : [];
+          const hasSeasonOne = existingEps.some((e) => Number(e.season) === 1);
+          const detailsUrl = this.getShowDetailsUrl(show);
+          if (
+            detailsUrl &&
+            (existingEps.length <= 1 || !hasSeasonOne || this.isSyntheticEpisodeList(existingEps))
+          ) {
             try {
-              const res = await fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey));
+              const res = await fetch(detailsUrl);
               if (res.ok) {
                 const full = await res.json();
                 if (full && Array.isArray(full.episodes) && full.episodes.length > 0) {
-                  show.episodes = full.episodes;
+                  show.episodes = full.episodes
+                    .map((e) => this.compactEpisode(e))
+                    .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
                   if (full.cast?.length) show.cast = full.cast;
                 }
               }
@@ -2863,15 +2894,17 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           this.state.shows = [newShow, ...(this.state.shows || [])];
           this.render();
 
-          const lookupKey = item.tvmazeId || item.id;
-          if (lookupKey) {
+          const detailsUrl = this.getShowDetailsUrl(item);
+          if (detailsUrl) {
             try {
-              const res = await fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey));
+              const res = await fetch(detailsUrl);
               if (res.ok) {
                 const fullShow = await res.json();
                 if (fullShow) {
                   if (Array.isArray(fullShow.episodes) && fullShow.episodes.length > 0) {
-                    newShow.episodes = fullShow.episodes.map((e) => this.compactEpisode(e));
+                    newShow.episodes = fullShow.episodes
+                      .map((e) => this.compactEpisode(e))
+                      .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
                   }
                   if (fullShow.tvmazeId && !newShow.tvmazeId) newShow.tvmazeId = fullShow.tvmazeId;
                   if (fullShow.tmdbId && !newShow.tmdbId) newShow.tmdbId = fullShow.tmdbId;
@@ -2957,15 +2990,19 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.pendingScrollSeason = null;
         this.showDetailSheetModal();
 
-        const lookupKey = item.tvmazeId || item.id;
-        if (lookupKey) {
-          fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey))
+        const detailsUrl = this.getShowDetailsUrl(item);
+        if (detailsUrl) {
+          fetch(detailsUrl)
             .then((r) => (r.ok ? r.json() : null))
             .then((full) => {
               if (!full) return;
               if (Array.isArray(full.episodes) && full.episodes.length > 0) {
-                previewShow.episodes = full.episodes;
+                previewShow.episodes = [...full.episodes].sort(
+                  (a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number))
+                );
               }
+              if (full.tvmazeId && !previewShow.tvmazeId) previewShow.tvmazeId = full.tvmazeId;
+              if (full.tmdbId && !previewShow.tmdbId) previewShow.tmdbId = full.tmdbId;
               if (full.network && !this.isGenericStreamingLabel(full.network)) {
                 previewShow.network = full.network;
               }
@@ -3021,29 +3058,66 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             }
           };
           applyInitialSeasons(show);
-          // Lazily enrich episodes & streaming network from TMDB or TVMaze if needed
-          const lookupKey = show.tvmazeId || show.id;
-          if (
-            lookupKey &&
-            (!show.episodes ||
-              show.episodes.length <= 1 ||
-              this.isSyntheticEpisodeList(show.episodes) ||
-              this.isGenericStreamingLabel(show.network))
-          ) {
-            fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey))
+          // Lazily enrich or backfill missing early/new seasons & streaming network from TMDB or TVMaze
+          const detailsUrl = this.getShowDetailsUrl(show);
+          if (detailsUrl) {
+            const prevEps = Array.isArray(show.episodes) ? show.episodes : [];
+            const hadSeasonOne = prevEps.some((e) => Number(e.season) === 1);
+            const wasSynthetic = this.isSyntheticEpisodeList(prevEps);
+            const prevWatchedCount = (show.watchedEpisodes || []).length;
+            fetch(detailsUrl)
               .then((r) => (r.ok ? r.json() : null))
               .then((full) => {
-                if (full) {
-                  if (Array.isArray(full.episodes) && full.episodes.length > 0) {
-                    show.episodes = full.episodes.map((e) => this.compactEpisode(e));
-                    if (show.userStatus === "completed") {
-                      show.watchedEpisodes = show.episodes.map((e) => e.code).sort();
-                    }
+                if (!full) return;
+                let changed = false;
+                const fullEps = Array.isArray(full.episodes) ? full.episodes : [];
+                const fullHasSeasonOne = fullEps.some((e) => Number(e.season) === 1);
+                if (
+                  fullEps.length > 0 &&
+                  (fullEps.length > prevEps.length ||
+                    (!hadSeasonOne && fullHasSeasonOne) ||
+                    wasSynthetic ||
+                    prevEps.length <= 1)
+                ) {
+                  show.episodes = fullEps
+                    .map((e) => this.compactEpisode(e))
+                    .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
+                  if (show.userStatus === "completed") {
+                    show.watchedEpisodes = show.episodes.map((e) => e.code).sort();
+                  } else if (wasSynthetic && prevWatchedCount > 0) {
+                    const maxTarget =
+                      show.userStatus === "in_progress"
+                        ? Math.max(1, show.episodes.length - 1)
+                        : show.episodes.length;
+                    const keepCount = Math.min(prevWatchedCount, maxTarget);
+                    show.watchedEpisodes = show.episodes
+                      .slice(0, keepCount)
+                      .map((e) => e.code)
+                      .sort();
                   }
-                  if (full.network && !this.isGenericStreamingLabel(full.network)) {
-                    show.network = full.network;
-                  }
-                  if (full.cast?.length) show.cast = full.cast;
+                  changed = true;
+                }
+                if (full.tvmazeId && !show.tvmazeId) {
+                  show.tvmazeId = full.tvmazeId;
+                  changed = true;
+                }
+                if (full.tmdbId && !show.tmdbId) {
+                  show.tmdbId = full.tmdbId;
+                  changed = true;
+                }
+                if (full.network && !this.isGenericStreamingLabel(full.network) && this.isGenericStreamingLabel(show.network)) {
+                  show.network = full.network;
+                  changed = true;
+                }
+                if (full.cast?.length && (!Array.isArray(show.cast) || show.cast.length === 0)) {
+                  show.cast = full.cast;
+                  changed = true;
+                }
+                if (full.overview && !show.overview) {
+                  show.overview = full.overview;
+                  changed = true;
+                }
+                if (changed) {
                   show.userStatus = this.getEffectiveShowStatus(show);
                   applyInitialSeasons(show);
                   this.persistState();
@@ -3436,7 +3510,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
 
         // Episodes Tab (Season Accordions + Episode Thumbnails + Yellow Check / Gray Eye)
-        const episodes = Array.isArray(item.episodes) ? item.episodes : [];
+        const episodes = [...(Array.isArray(item.episodes) ? item.episodes : [])].sort(
+          (a, b) => (Number(a.season || 1) - Number(b.season || 1)) || (Number(a.number || 1) - Number(b.number || 1))
+        );
         const watchedSet = new Set(
           (item.watchedEpisodes || []).map((c) => String(c || "").trim().toUpperCase()).filter(Boolean)
         );
@@ -3448,7 +3524,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
 
         let html = statusHeader;
-        for (const [seasonNum, sEps] of bySeason.entries()) {
+        const sortedSeasonNums = Array.from(bySeason.keys()).sort((a, b) => a - b);
+        for (const seasonNum of sortedSeasonNums) {
+          const sEps = bySeason.get(seasonNum) || [];
           const isOpen = this.openSeasons.has(seasonNum);
           const watchedInSeason = sEps.filter((e) =>
             watchedSet.has(String(e.code || "").trim().toUpperCase())
@@ -3848,10 +3926,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             ];
           } else {
             let fullShow = null;
-            const lookupKey = item.tvmazeId || item.id;
-            if (lookupKey) {
+            const detailsUrl = this.getShowDetailsUrl(item);
+            if (detailsUrl) {
               try {
-                const res = await fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey));
+                const res = await fetch(detailsUrl);
                 if (res.ok) fullShow = await res.json();
               } catch (_) {}
             }
@@ -3885,10 +3963,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             ];
           } else {
             let fullShow = null;
-            const lookupKey = item.tvmazeId || item.id;
-            if (lookupKey) {
+            const detailsUrl = this.getShowDetailsUrl(item);
+            if (detailsUrl) {
               try {
-                const res = await fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupKey));
+                const res = await fetch(detailsUrl);
                 if (res.ok) fullShow = await res.json();
               } catch (_) {}
             }

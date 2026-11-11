@@ -379,7 +379,8 @@ export class HttpRouter {
 
     if (request.method === "GET" && path === "/api/show-details") {
       const id = url.searchParams.get("tvmazeId") || url.searchParams.get("id") || "";
-      const show = await LiveCatalogService.fetchFullShowFromTvMaze(id, { env: this.env });
+      const title = url.searchParams.get("title") || "";
+      const show = await LiveCatalogService.fetchFullShowFromTvMaze(id, { title, env: this.env });
       if (!show) return this.json({ error: "Show not found" }, 404);
       return this.json(show);
     }
