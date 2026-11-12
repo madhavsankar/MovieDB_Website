@@ -226,6 +226,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
       <!-- Search Results Cards -->
       <div id="search-results-list" class="space-y-3"></div>
+      <div id="search-infinite-status" class="hidden py-4 text-center text-xs font-semibold text-zinc-400"></div>
     </section>
 
     <!-- ========================================================= -->
@@ -915,6 +916,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.searchQuery = "";
         this.searchSort = "top"; // "top" | "newest" | "oldest"
         this.searchResults = [];
+        this.searchPage = 1;
+        this.searchHasMore = false;
+        this.isLoadingMoreSearch = false;
         this.searchTimer = null;
 
         this.detailItem = null;
@@ -935,6 +939,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.friendSearchTimer = null;
         this.selectedFriendId = "";
         this.selectedFriendLibrary = null;
+        this.friendLibraryError = "";
         this.isLoadingFriendLibrary = false;
         this.friendLibrarySegment = "shows"; // "shows" | "movies"
         this.friendLibraryFilter = "all"; // "all" | "in_progress" | "interested" | "completed"
@@ -950,9 +955,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           email: this.userEmail || this.userId,
           shows: [],
           movies: [],
-          actors: [],
           decidedIds: [],
-          followingUsers: ["partner"],
           friends: [],
           incomingFriendRequests: [],
           outgoingFriendRequests: [],
@@ -966,6 +969,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.initPullToRefresh();
         this.initBackNavigation();
         this.initOutsideDropdownDismiss();
+        this.initSearchInfiniteScroll();
 
         document.addEventListener("visibilitychange", () => {
           if (!document.hidden && this.googleIdToken && !this._isImporting) {
@@ -988,6 +992,20 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         document.addEventListener("keydown", (e) => {
           if (e.key === "Escape") closeOpenDropdowns(null);
         });
+      }
+
+      initSearchInfiniteScroll() {
+        const onScroll = () => {
+          if (this.activeTab !== "search") return;
+          if (!this.searchHasMore || this.isLoadingMoreSearch) return;
+          const scrollEl = document.scrollingElement || document.documentElement;
+          if (!scrollEl) return;
+          const remaining = scrollEl.scrollHeight - (scrollEl.scrollTop + window.innerHeight);
+          if (remaining <= 650) {
+            this.loadMoreSearchResults();
+          }
+        };
+        window.addEventListener("scroll", onScroll, { passive: true });
       }
 
       initPullToRefresh() {
@@ -1315,13 +1333,39 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
       isSyntheticEpisodeList(eps) {
         if (!Array.isArray(eps) || eps.length === 0) return true;
-        return eps.every((e) => !e || !e.title || /^Episode [0-9]+$/i.test(String(e.title).trim()));
+        if (eps.length === 1) {
+          const e0 = eps[0];
+          const t0 = String((e0 && e0.title) || "").trim();
+          return !(e0 && e0.airDate) && (!t0 || /^(Pilot|Episode 1)$/i.test(t0));
+        }
+        return eps.every(
+          (e) =>
+            (Number(e && e.season) || 1) === 1 &&
+            !(e && e.airDate) &&
+            /^Episode [0-9]+$/i.test(String((e && e.title) || "").trim())
+        );
+      }
+
+      parseSeasonFromCode(code) {
+        const m = /^S0*([0-9]+)E[0-9]+$/i.exec(String(code || "").trim());
+        return m ? Number(m[1]) || 1 : 0;
+      }
+
+      cleanMovieTmdbId(rawId, rawTmdbId) {
+        const idStr = String(rawId || "").trim();
+        const num = Number(rawTmdbId) || 0;
+        if (num <= 0) return 0;
+        if (idStr.startsWith("movie_tt") || idStr.startsWith("movie_itunes_")) {
+          const ttDigits = Number(idStr.replace(/[^0-9]/g, "")) || 0;
+          if (num === ttDigits || idStr.startsWith("movie_itunes_")) return 0;
+        }
+        return num;
       }
 
       compactEpisode(ep) {
-        if (!ep || typeof ep !== "object") return ep;
+        if (!ep || typeof ep !== "object") return null;
         const out = {
-          code: String(ep.code || "S01E01"),
+          code: String(ep.code || "S01E01").trim().toUpperCase(),
           season: Number(ep.season) || 1,
           number: Number(ep.number) || 1,
         };
@@ -1329,6 +1373,255 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (ep.airDate) out.airDate = String(ep.airDate);
         if (ep.runtimeMins) out.runtimeMins = Number(ep.runtimeMins);
         return out;
+      }
+
+      compactMovieForStorage(m) {
+        if (!m || typeof m !== "object") return null;
+        const id = String(m.id || "").trim();
+        const tmdbId = this.cleanMovieTmdbId(id, m.tmdbId);
+        const out = {
+          id: id || (tmdbId > 0 ? "movie_" + tmdbId : "movie_0"),
+          tmdbId,
+          title: String(m.title || "Untitled Movie"),
+          year: Number(m.year) || 2024,
+          runtimeMins: Number(m.runtimeMins) || 120,
+          rating: Math.round((Number(m.rating) || 8.0) * 10) / 10,
+          posterUrl: String(m.posterUrl || ""),
+          watched: Boolean(m.watched),
+        };
+        const stream = String(m.streamingService || "").trim();
+        if (stream && stream !== "Streaming") {
+          out.streamingService = stream;
+        }
+        const dir = String(m.director || "").trim();
+        if (dir && dir !== stream && dir !== "Streaming") {
+          out.director = dir;
+        }
+        if (Array.isArray(m.cast) && m.cast.length > 0) {
+          const topCast = m.cast
+            .map((c) => String(c || "").trim())
+            .filter(Boolean)
+            .slice(0, 3);
+          if (topCast.length > 0) out.cast = topCast;
+        }
+        if (out.watched && m.watchedAt) {
+          out.watchedAt = String(m.watchedAt);
+        }
+        return out;
+      }
+
+      compactShowForStorage(s) {
+        if (!s || typeof s !== "object") return null;
+        const eps = (Array.isArray(s.episodes) ? s.episodes : [])
+          .map((e) => this.compactEpisode(e))
+          .filter(Boolean)
+          .sort((a, b) => a.season - b.season || a.number - b.number);
+        const watchedSet = new Set(
+          (Array.isArray(s.watchedEpisodes) ? s.watchedEpisodes : [])
+            .map((c) => String(c || "").trim().toUpperCase())
+            .filter(Boolean)
+        );
+        const rawComp =
+          s.completedSeasons && typeof s.completedSeasons === "object" ? s.completedSeasons : {};
+        const presentSeasons = new Set(eps.map((e) => String(e.season)));
+        const completedSeasons = {};
+        let missingCompEps = 0;
+
+        for (const [sk, cnt] of Object.entries(rawComp)) {
+          const sNum = Number(sk) || 0;
+          const cNum = Math.max(0, Number(cnt) || 0);
+          if (sNum <= 0 || cNum <= 0) continue;
+          if (presentSeasons.has(String(sNum))) {
+            for (const ep of eps) {
+              if (ep.season === sNum) watchedSet.add(ep.code);
+            }
+          } else {
+            completedSeasons[String(sNum)] = cNum;
+            missingCompEps += cNum;
+          }
+        }
+
+        const watchedOutsideComp = Array.from(watchedSet)
+          .filter((code) => {
+            const sNum = this.parseSeasonFromCode(code);
+            return !sNum || !completedSeasons[String(sNum)];
+          })
+          .sort();
+
+        const nonPresentWatchedCount = watchedOutsideComp.filter((code) => {
+          const sNum = this.parseSeasonFromCode(code);
+          return !sNum || !presentSeasons.has(String(sNum));
+        }).length;
+
+        const computedTotal = Math.max(
+          Number(s.totalEpisodes) || 0,
+          eps.length + missingCompEps,
+          missingCompEps + watchedOutsideComp.length
+        );
+
+        let statusLower = String(s.userStatus || "interested").toLowerCase();
+        if (statusLower === "watching") statusLower = "in_progress";
+
+        const base = {
+          id: String(s.id || ""),
+          tvmazeId: Number(s.tvmazeId) || 0,
+          tmdbId: Number(s.tmdbId) || 0,
+          title: String(s.title || "Untitled Show"),
+          year: Number(s.year) || 2024,
+          network: String(s.network || "Streaming"),
+          status: String(s.status || "Running"),
+          runtimeMins: Number(s.runtimeMins) || 45,
+          rating: Math.round((Number(s.rating) || 8.0) * 10) / 10,
+          posterUrl: String(s.posterUrl || ""),
+          userStatus: statusLower,
+        };
+        if (s.lastWatchedAt) {
+          base.lastWatchedAt = String(s.lastWatchedAt);
+        }
+
+        if (statusLower === "completed") {
+          return {
+            ...base,
+            userStatus: "completed",
+            totalEpisodes: Math.max(1, computedTotal),
+            watchedEpisodes: [],
+            episodes: [],
+          };
+        }
+
+        if (eps.length > 0 && !this.isSyntheticEpisodeList(eps)) {
+          const bySeason = new Map();
+          for (const ep of eps) {
+            if (!bySeason.has(ep.season)) bySeason.set(ep.season, []);
+            bySeason.get(ep.season).push(ep);
+          }
+
+          if (statusLower !== "interested") {
+            for (const [sNum, sEps] of bySeason.entries()) {
+              if (sEps.length > 0 && sEps.every((ep) => watchedSet.has(ep.code))) {
+                completedSeasons[String(sNum)] = sEps.length;
+              }
+            }
+          }
+
+          let activeSeasonNum = null;
+          for (const sNum of bySeason.keys()) {
+            if (!completedSeasons[String(sNum)]) {
+              activeSeasonNum = sNum;
+              break;
+            }
+          }
+
+          const todayIso = new Date().toISOString().slice(0, 10);
+          let nextUpcomingEp = null;
+          for (const ep of eps) {
+            if (ep.airDate && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(ep.airDate) && ep.airDate >= todayIso) {
+              if (!nextUpcomingEp || ep.airDate < nextUpcomingEp.airDate) {
+                nextUpcomingEp = ep;
+              }
+            }
+          }
+
+          const keptEps = [];
+          if (activeSeasonNum !== null) {
+            for (const ep of bySeason.get(activeSeasonNum) || []) {
+              keptEps.push(ep);
+            }
+          }
+          if (
+            nextUpcomingEp &&
+            nextUpcomingEp.season !== activeSeasonNum &&
+            !keptEps.some((e) => e.code === nextUpcomingEp.code)
+          ) {
+            keptEps.push(nextUpcomingEp);
+          }
+
+          const validPresentCodes = new Set(eps.map((e) => e.code));
+          const keptWatched = Array.from(watchedSet)
+            .filter((code) => {
+              const sNum = this.parseSeasonFromCode(code);
+              if (sNum && completedSeasons[String(sNum)]) return false;
+              if (sNum && presentSeasons.has(String(sNum))) {
+                return validPresentCodes.has(code);
+              }
+              return true;
+            })
+            .sort();
+
+          const compSeasonSum = Object.values(completedSeasons).reduce(
+            (acc, n) => acc + (Number(n) || 0),
+            0
+          );
+          const finalTotal = Math.max(computedTotal, eps.length + missingCompEps + nonPresentWatchedCount);
+
+          if (
+            activeSeasonNum === null &&
+            compSeasonSum >= finalTotal &&
+            finalTotal > 0 &&
+            statusLower !== "stopped" &&
+            statusLower !== "interested"
+          ) {
+            return {
+              ...base,
+              userStatus: "completed",
+              totalEpisodes: finalTotal,
+              watchedEpisodes: [],
+              episodes: [],
+            };
+          }
+
+          const out = {
+            ...base,
+            totalEpisodes: Math.max(1, finalTotal),
+            watchedEpisodes: keptWatched,
+            episodes: keptEps,
+          };
+          if (Object.keys(completedSeasons).length > 0) {
+            out.completedSeasons = completedSeasons;
+          }
+          return out;
+        }
+
+        const out = {
+          ...base,
+          totalEpisodes: Math.max(computedTotal, eps.length),
+          watchedEpisodes: watchedOutsideComp,
+          episodes: eps,
+        };
+        if (Object.keys(completedSeasons).length > 0) {
+          out.completedSeasons = completedSeasons;
+        }
+        return out;
+      }
+
+      compactDecidedIds(decidedIds, legacyActors) {
+        const rawList = [];
+        const canonicalize = (raw) => {
+          const s = String(raw || "").trim();
+          if (!s || s.startsWith("title_")) return "";
+          if (s.startsWith("tmdb_movie_")) {
+            return "movie_" + s.slice("tmdb_movie_".length);
+          }
+          if (s.startsWith("tmdb_show_")) {
+            return "tmdb_tv_" + s.slice("tmdb_show_".length);
+          }
+          return s;
+        };
+        if (Array.isArray(decidedIds)) {
+          for (const id of decidedIds) {
+            const c = canonicalize(id);
+            if (c) rawList.push(c);
+          }
+        }
+        if (Array.isArray(legacyActors)) {
+          for (const a of legacyActors) {
+            if (a && a.role === "decided_rec" && a.id) {
+              const c = canonicalize(a.id);
+              if (c) rawList.push(c);
+            }
+          }
+        }
+        return Array.from(new Set(rawList.filter(Boolean))).slice(-2500);
       }
 
       normalizeTitleKey(raw) {
@@ -1343,39 +1636,146 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           .trim();
       }
 
+      doesMovieMatchItem(m, item, fallbackId = "") {
+        if (!m || !item) return false;
+        const itemId = String(item.id || fallbackId || "").trim();
+        if (itemId && m.id === itemId) return true;
+        const itemTmdb = this.cleanMovieTmdbId(itemId, item.tmdbId);
+        const mTmdb = this.cleanMovieTmdbId(m.id, m.tmdbId);
+        if (itemTmdb > 0 && mTmdb > 0) {
+          return itemTmdb === mTmdb;
+        }
+        const itemTitle = this.normalizeTitleKey(item.title);
+        const mTitle = this.normalizeTitleKey(m.title);
+        if (!itemTitle || itemTitle !== mTitle) return false;
+        const itemYear = Number(item.year) || 0;
+        const mYear = Number(m.year) || 0;
+        if (itemYear > 1900 && mYear > 1900 && itemYear !== mYear) return false;
+        return true;
+      }
+
+      doesShowMatchItem(s, item, fallbackId = "") {
+        if (!s || !item) return false;
+        const itemId = String(item.id || fallbackId || "").trim();
+        if (itemId && s.id === itemId) return true;
+        const itemTmdb = Number(item.tmdbId) || 0;
+        const sTmdb = Number(s.tmdbId) || 0;
+        if (itemTmdb > 0 && sTmdb > 0) {
+          return itemTmdb === sTmdb;
+        }
+        const itemMaze = Number(item.tvmazeId) || 0;
+        const sMaze = Number(s.tvmazeId) || 0;
+        if (itemMaze > 0 && sMaze > 0) {
+          return itemMaze === sMaze;
+        }
+        const itemTitle = this.normalizeTitleKey(item.title);
+        const sTitle = this.normalizeTitleKey(s.title);
+        if (!itemTitle || itemTitle !== sTitle) return false;
+        const itemYear = Number(item.year) || 0;
+        const sYear = Number(s.year) || 0;
+        if (itemYear > 1900 && sYear > 1900 && Math.abs(itemYear - sYear) > 1) return false;
+        return true;
+      }
+
       deduplicateState() {
         if (!this.state) return;
         const statusRank = { completed: 4, in_progress: 3, watching: 3, stopped: 2, interested: 1 };
+        const cleanCompMap = (raw) => {
+          const out = {};
+          if (raw && typeof raw === "object") {
+            for (const [k, v] of Object.entries(raw)) {
+              const sNum = Number(k) || 0;
+              const cNum = Math.max(0, Number(v) || 0);
+              if (sNum > 0 && cNum > 0) out[String(sNum)] = cNum;
+            }
+          }
+          return out;
+        };
+
         if (Array.isArray(this.state.shows)) {
           const byKey = new Map();
+          const titleToKeys = new Map();
           for (const s of this.state.shows) {
             if (!s || typeof s !== "object") continue;
             const titleKey = this.normalizeTitleKey(s.title);
+            const tmdbId = Number(s.tmdbId) || 0;
+            const tvmazeId = Number(s.tvmazeId) || 0;
             const idKey = String(s.id || "").trim();
-            const key = titleKey ? "title:" + titleKey : idKey || "idx:" + byKey.size;
-            const incomingEps = (Array.isArray(s.episodes) ? s.episodes : []).map((e) =>
-              this.compactEpisode(e)
-            );
-            if (!byKey.has(key)) {
+            const sYear = Number(s.year) || 0;
+
+            let matchedKey = null;
+            if (tmdbId > 0 && byKey.has("tmdb:" + tmdbId)) {
+              matchedKey = "tmdb:" + tmdbId;
+            } else if (tvmazeId > 0 && byKey.has("tvmaze:" + tvmazeId)) {
+              matchedKey = "tvmaze:" + tvmazeId;
+            } else if (titleKey && titleToKeys.has(titleKey)) {
+              for (const candKey of titleToKeys.get(titleKey)) {
+                const cand = byKey.get(candKey);
+                if (!cand) continue;
+                const cTmdb = Number(cand.tmdbId) || 0;
+                const cMaze = Number(cand.tvmazeId) || 0;
+                const cYear = Number(cand.year) || 0;
+                if (tmdbId > 0 && cTmdb > 0 && tmdbId !== cTmdb) continue;
+                if (tvmazeId > 0 && cMaze > 0 && tvmazeId !== cMaze) continue;
+                if (sYear > 1900 && cYear > 1900 && Math.abs(sYear - cYear) > 1) continue;
+                matchedKey = candKey;
+                break;
+              }
+            }
+
+            const incomingEps = (Array.isArray(s.episodes) ? s.episodes : [])
+              .map((e) => this.compactEpisode(e))
+              .filter(Boolean);
+            const incomingComp = cleanCompMap(s.completedSeasons);
+
+            if (!matchedKey) {
+              const primaryKey =
+                tmdbId > 0
+                  ? "tmdb:" + tmdbId
+                  : tvmazeId > 0
+                    ? "tvmaze:" + tvmazeId
+                    : titleKey
+                      ? "title:" + titleKey + ":" + (sYear || "")
+                      : idKey || "idx:" + byKey.size;
+
               let watched = Array.from(
-                new Set(Array.isArray(s.watchedEpisodes) ? s.watchedEpisodes : [])
+                new Set(
+                  (Array.isArray(s.watchedEpisodes) ? s.watchedEpisodes : [])
+                    .map((c) => String(c || "").trim().toUpperCase())
+                    .filter(Boolean)
+                )
               ).sort();
+              for (const ep of incomingEps) {
+                const sk = String(Number(ep.season) || 1);
+                if (incomingComp[sk]) watched.push(ep.code);
+              }
+              watched = Array.from(new Set(watched)).sort();
+              const presentS = new Set(incomingEps.map((e) => String(Number(e.season) || 1)));
+              for (const sk of presentS) delete incomingComp[sk];
               if (s.userStatus === "completed" && incomingEps.length > 0 && watched.length < incomingEps.length) {
                 watched = incomingEps.map((e) => e.code).sort();
-              } else if (
-                incomingEps.length > 0 &&
-                !this.isSyntheticEpisodeList(incomingEps)
-              ) {
-                const validCodes = new Set(incomingEps.map((e) => e.code));
-                watched = watched.filter((c) => validCodes.has(c)).sort();
               }
-              byKey.set(key, {
+              const compSum = Object.values(incomingComp).reduce((a, b) => a + b, 0);
+              const totalEpisodes = Math.max(
+                Number(s.totalEpisodes) || 0,
+                incomingEps.length + compSum,
+                compSum + watched.length
+              );
+              byKey.set(primaryKey, {
                 ...s,
+                tmdbId,
+                tvmazeId,
+                totalEpisodes,
+                completedSeasons: incomingComp,
                 watchedEpisodes: watched,
                 episodes: incomingEps,
               });
+              if (titleKey) {
+                if (!titleToKeys.has(titleKey)) titleToKeys.set(titleKey, []);
+                titleToKeys.get(titleKey).push(primaryKey);
+              }
             } else {
-              const existing = byKey.get(key);
+              const existing = byKey.get(matchedKey);
               const existingEps = Array.isArray(existing.episodes) ? existing.episodes : [];
               const existingSynth = this.isSyntheticEpisodeList(existingEps);
               const newSynth = this.isSyntheticEpisodeList(incomingEps);
@@ -1391,25 +1791,39 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 (statusRank[s.userStatus] || 0) > (statusRank[existing.userStatus] || 0)
                   ? s.userStatus
                   : existing.userStatus;
-              let mergedWatched = Array.from(
-                new Set([
-                  ...(Array.isArray(existing.watchedEpisodes) ? existing.watchedEpisodes : []),
-                  ...(Array.isArray(s.watchedEpisodes) ? s.watchedEpisodes : []),
-                ])
-              ).sort();
+              const mergedComp = {
+                ...cleanCompMap(existing.completedSeasons),
+                ...incomingComp,
+              };
+              let mergedWatched = [
+                ...(Array.isArray(existing.watchedEpisodes) ? existing.watchedEpisodes : []),
+                ...(Array.isArray(s.watchedEpisodes) ? s.watchedEpisodes : []),
+              ]
+                .map((c) => String(c || "").trim().toUpperCase())
+                .filter(Boolean);
+              for (const ep of bestEps) {
+                const sk = String(Number(ep.season) || 1);
+                if (mergedComp[sk]) mergedWatched.push(ep.code);
+              }
+              mergedWatched = Array.from(new Set(mergedWatched)).sort();
+              const presentS = new Set(bestEps.map((e) => String(Number(e.season) || 1)));
+              for (const sk of presentS) delete mergedComp[sk];
               if (bestStatus === "completed" && bestEps.length > 0) {
                 mergedWatched = bestEps.map((e) => e.code).sort();
-              } else if (bestEps.length > 0 && !this.isSyntheticEpisodeList(bestEps)) {
-                const validCodes = new Set(bestEps.map((e) => e.code));
-                const filtered = mergedWatched.filter((c) => validCodes.has(c));
-                if (filtered.length > 0) mergedWatched = filtered.sort();
               }
-              byKey.set(key, {
+              const compSum = Object.values(mergedComp).reduce((a, b) => a + b, 0);
+              const bestTotalEpisodes = Math.max(
+                Number(existing.totalEpisodes) || 0,
+                Number(s.totalEpisodes) || 0,
+                bestEps.length + compSum,
+                compSum + mergedWatched.length
+              );
+              byKey.set(matchedKey, {
                 ...existing,
                 ...s,
                 id: existing.id || s.id,
-                tvmazeId: existing.tvmazeId || s.tvmazeId || 0,
-                tmdbId: existing.tmdbId || s.tmdbId || 0,
+                tvmazeId: existing.tvmazeId || tvmazeId || 0,
+                tmdbId: existing.tmdbId || tmdbId || 0,
                 posterUrl: existing.posterUrl || s.posterUrl || "",
                 overview: existing.overview || s.overview || "",
                 network:
@@ -1417,6 +1831,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                     ? existing.network
                     : s.network || existing.network,
                 cast: Array.isArray(existing.cast) && existing.cast.length > 0 ? existing.cast : s.cast || [],
+                totalEpisodes: bestTotalEpisodes,
+                completedSeasons: mergedComp,
                 watchedEpisodes: mergedWatched,
                 episodes: bestEps,
                 userStatus: bestStatus,
@@ -1425,22 +1841,51 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           }
           this.state.shows = Array.from(byKey.values());
         }
+
         if (Array.isArray(this.state.movies)) {
           const byKey = new Map();
+          const titleYearToKeys = new Map();
           for (const m of this.state.movies) {
             if (!m || typeof m !== "object") continue;
             const titleKey = this.normalizeTitleKey(m.title);
             const idKey = String(m.id || "").trim();
-            const key = titleKey ? "title:" + titleKey + ":" + (m.year || "") : idKey || "idx:" + byKey.size;
-            if (!byKey.has(key)) {
-              byKey.set(key, { ...m, watched: Boolean(m.watched) });
+            const tmdbId = this.cleanMovieTmdbId(idKey, m.tmdbId);
+            const yearStr = String(Number(m.year) || "");
+            const tyKey = titleKey ? titleKey + ":" + yearStr : "";
+
+            let matchedKey = null;
+            if (tmdbId > 0 && byKey.has("tmdb:" + tmdbId)) {
+              matchedKey = "tmdb:" + tmdbId;
+            } else if (tyKey && titleYearToKeys.has(tyKey)) {
+              for (const candKey of titleYearToKeys.get(tyKey)) {
+                const cand = byKey.get(candKey);
+                if (!cand) continue;
+                const cTmdb = Number(cand.tmdbId) || 0;
+                if (tmdbId > 0 && cTmdb > 0 && tmdbId !== cTmdb) continue;
+                matchedKey = candKey;
+                break;
+              }
+            }
+
+            if (!matchedKey) {
+              const primaryKey =
+                tmdbId > 0
+                  ? "tmdb:" + tmdbId
+                  : tyKey
+                    ? "title:" + tyKey
+                    : idKey || "idx:" + byKey.size;
+              byKey.set(primaryKey, { ...m, tmdbId, watched: Boolean(m.watched) });
+              if (tyKey) {
+                if (!titleYearToKeys.has(tyKey)) titleYearToKeys.set(tyKey, []);
+                titleYearToKeys.get(tyKey).push(primaryKey);
+              }
             } else {
-              const existing = byKey.get(key);
-              byKey.set(key, {
+              const existing = byKey.get(matchedKey);
+              byKey.set(matchedKey, {
                 ...existing,
                 ...m,
                 id: existing.id || m.id,
-                tmdbId: existing.tmdbId || m.tmdbId || 0,
+                tmdbId: existing.tmdbId || tmdbId || 0,
                 posterUrl: existing.posterUrl || m.posterUrl || "",
                 overview: existing.overview || m.overview || "",
                 watched: Boolean(existing.watched || m.watched),
@@ -1456,6 +1901,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           }
           this.state.movies = Array.from(byKey.values());
         }
+
+        this.state.decidedIds = this.compactDecidedIds(this.state.decidedIds, this.state.actors);
+        delete this.state.actors;
+        delete this.state.followingUsers;
+
         if (this.detailItem && !this.detailItem._isPreview) {
           const liveShow = (this.state.shows || []).find((s) => s.id === this.detailItem.id);
           const liveMovie = !liveShow
@@ -1464,6 +1914,29 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           if (liveShow) this.detailItem = liveShow;
           else if (liveMovie) this.detailItem = liveMovie;
         }
+      }
+
+      buildCompactPayload() {
+        const compactShows = (Array.isArray(this.state.shows) ? this.state.shows : [])
+          .map((s) => this.compactShowForStorage(s))
+          .filter(Boolean);
+        const compactMovies = (Array.isArray(this.state.movies) ? this.state.movies : [])
+          .map((m) => this.compactMovieForStorage(m))
+          .filter(Boolean);
+        return {
+          userId: this.userId,
+          email: this.state.email || this.userId,
+          shows: compactShows,
+          movies: compactMovies,
+          decidedIds: this.compactDecidedIds(this.state.decidedIds, this.state.actors),
+          friends: Array.isArray(this.state.friends) ? this.state.friends : [],
+          incomingFriendRequests: Array.isArray(this.state.incomingFriendRequests)
+            ? this.state.incomingFriendRequests
+            : [],
+          outgoingFriendRequests: Array.isArray(this.state.outgoingFriendRequests)
+            ? this.state.outgoingFriendRequests
+            : [],
+        };
       }
 
       loadLocalCache() {
@@ -1482,7 +1955,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       saveLocalCache() {
         this.deduplicateState();
         try {
-          localStorage.setItem("tvtime_state_cache_" + this.userId, JSON.stringify(this.state));
+          localStorage.setItem(
+            "tvtime_state_cache_" + this.userId,
+            JSON.stringify(this.buildCompactPayload())
+          );
         } catch (_) {}
       }
 
@@ -1581,29 +2057,25 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             } else if (mutatedDuringFetch) {
               const curShows = Array.isArray(this.state.shows) ? this.state.shows : [];
               const curMovies = Array.isArray(this.state.movies) ? this.state.movies : [];
-              const localShowIds = new Set(curShows.map((s) => String(s.id || "")));
-              const localShowTitles = new Set(curShows.map((s) => this.normalizeTitleKey(s.title)).filter(Boolean));
-              const localMovieIds = new Set(curMovies.map((m) => String(m.id || "")));
-              const localMovieTitles = new Set(curMovies.map((m) => this.normalizeTitleKey(m.title)).filter(Boolean));
               const extraRemoteShows = (data.shows || []).filter((s) => {
                 if (!s) return false;
                 const sid = String(s.id || "");
                 const st = this.normalizeTitleKey(s.title);
                 const rem = this._sessionRemovedKeys;
-                if (rem && (rem.has(sid) || (st && rem.has("title:" + st)))) {
+                if (rem && (rem.has(sid) || (st && rem.has("title:" + st + ":" + (s.year || ""))))) {
                   return false;
                 }
-                return !localShowIds.has(sid) && (!st || !localShowTitles.has(st));
+                return !curShows.some((cs) => this.doesShowMatchItem(cs, s));
               });
               const extraRemoteMovies = (data.movies || []).filter((m) => {
                 if (!m) return false;
                 const mid = String(m.id || "");
                 const mt = this.normalizeTitleKey(m.title);
                 const rem = this._sessionRemovedKeys;
-                if (rem && (rem.has(mid) || (mt && rem.has("title:" + mt)))) {
+                if (rem && (rem.has(mid) || (mt && rem.has("title:" + mt + ":" + (m.year || ""))))) {
                   return false;
                 }
-                return !localMovieIds.has(mid) && (!mt || !localMovieTitles.has(mt));
+                return !curMovies.some((cm) => this.doesMovieMatchItem(cm, m));
               });
               data.shows = [...curShows, ...extraRemoteShows];
               data.movies = [...curMovies, ...extraRemoteMovies];
@@ -1656,18 +2128,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const res = await fetch("/api/state", {
             method: "POST",
             headers: this.getHeaders(),
-            body: JSON.stringify({
-              userId: this.userId,
-              email: this.state.email || this.userId,
-              shows: this.state.shows,
-              movies: this.state.movies,
-              actors: this.state.actors,
-              decidedIds: Array.isArray(this.state.decidedIds) ? this.state.decidedIds : [],
-              followingUsers: this.state.followingUsers,
-              friends: Array.isArray(this.state.friends) ? this.state.friends : [],
-              incomingFriendRequests: Array.isArray(this.state.incomingFriendRequests) ? this.state.incomingFriendRequests : [],
-              outgoingFriendRequests: Array.isArray(this.state.outgoingFriendRequests) ? this.state.outgoingFriendRequests : [],
-            }),
+            body: JSON.stringify(this.buildCompactPayload()),
           });
           if (res.ok) {
             const data = await res.json().catch(() => ({}));
@@ -1858,48 +2319,116 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       computeShowProgress(show) {
         const episodes = Array.isArray(show.episodes) ? show.episodes : [];
         const rawStatus = String(show.userStatus || "").toLowerCase();
+        const isMarkedCompleted = rawStatus === "completed";
         const watchedSet = new Set(
           (show.watchedEpisodes || []).map((c) => String(c || "").trim().toUpperCase()).filter(Boolean)
         );
-        const isRawCompletedEmpty = episodes.length === 0 && rawStatus === "completed";
-        const total = isRawCompletedEmpty ? Math.max(watchedSet.size, 1) : episodes.length || 10;
-        const watchedCount = isRawCompletedEmpty
-          ? total
-          : episodes.length > 0
-            ? episodes.filter((ep) => watchedSet.has(String(ep.code || "").trim().toUpperCase())).length
-            : watchedSet.size;
+        const compSeasons =
+          show.completedSeasons && typeof show.completedSeasons === "object" && !Array.isArray(show.completedSeasons)
+            ? show.completedSeasons
+            : {};
+        let compactedWatchedCount = 0;
+        const completedSeasonNums = new Set();
+        let maxCompSeason = 0;
+        let maxCompSeasonCount = 0;
+        for (const [sKey, cnt] of Object.entries(compSeasons)) {
+          const sNum = Number(sKey);
+          const cNum = Number(cnt) || 0;
+          if (Number.isFinite(sNum) && sNum > 0 && cNum > 0) {
+            completedSeasonNums.add(sNum);
+            compactedWatchedCount += cNum;
+            if (sNum > maxCompSeason) {
+              maxCompSeason = sNum;
+              maxCompSeasonCount = cNum;
+            }
+          }
+        }
+
+        const presentCodeSet = new Set();
+        let inWindowWatchedCount = 0;
+        for (const ep of episodes) {
+          const codeUpper = String(ep.code || "").trim().toUpperCase();
+          const sNum = Number(ep.season) || this.parseSeasonFromCode(codeUpper) || 1;
+          if (codeUpper) presentCodeSet.add(codeUpper);
+          if (completedSeasonNums.has(sNum)) continue;
+          if (watchedSet.has(codeUpper)) inWindowWatchedCount++;
+        }
+
+        let extraWatchedCount = 0;
+        for (const codeUpper of watchedSet) {
+          if (presentCodeSet.has(codeUpper)) continue;
+          const sNum = this.parseSeasonFromCode(codeUpper);
+          if (sNum > 0 && completedSeasonNums.has(sNum)) continue;
+          extraWatchedCount++;
+        }
+
+        const rawWatchedCount = compactedWatchedCount + inWindowWatchedCount + extraWatchedCount;
+        const storedTotal = Number(show.totalEpisodes) || 0;
+        const total = isMarkedCompleted
+          ? Math.max(storedTotal, episodes.length + compactedWatchedCount, rawWatchedCount, 1)
+          : Math.max(
+              storedTotal,
+              episodes.length + compactedWatchedCount,
+              rawWatchedCount,
+              episodes.length > 0 ? episodes.length : 10
+            );
+        const watchedCount = isMarkedCompleted ? total : Math.min(total, rawWatchedCount);
         const leftCount = Math.max(0, total - watchedCount);
+
         let nextEp = null;
         let lastWatchedEp = null;
         for (const ep of episodes) {
           const codeUpper = String(ep.code || "").trim().toUpperCase();
-          if (watchedSet.has(codeUpper)) {
+          const sNum = Number(ep.season) || this.parseSeasonFromCode(codeUpper) || 1;
+          const isEpWatched = isMarkedCompleted || completedSeasonNums.has(sNum) || watchedSet.has(codeUpper);
+          if (isEpWatched) {
             lastWatchedEp = ep;
           } else if (!nextEp) {
             nextEp = ep;
           }
         }
         if (!lastWatchedEp && watchedCount > 0) {
-          const sortedCodes = Array.from(watchedSet).sort();
-          const lastCode = sortedCodes[sortedCodes.length - 1];
-          const m = /^S([0-9]+)E([0-9]+)$/i.exec(String(lastCode || ""));
-          if (m) {
+          let bestSeason = maxCompSeason;
+          let bestEpNum = maxCompSeasonCount;
+          for (const code of watchedSet) {
+            const m = /^S([0-9]+)E([0-9]+)$/i.exec(String(code || ""));
+            if (m) {
+              const sN = Number(m[1]);
+              const eN = Number(m[2]);
+              if (sN > bestSeason || (sN === bestSeason && eN > bestEpNum)) {
+                bestSeason = sN;
+                bestEpNum = eN;
+              }
+            }
+          }
+          if (bestSeason > 0 && bestEpNum > 0) {
             lastWatchedEp = {
-              code: String(lastCode).toUpperCase(),
-              season: Number(m[1]),
-              number: Number(m[2]),
+              code: "S" + String(bestSeason).padStart(2, "0") + "E" + String(bestEpNum).padStart(2, "0"),
+              season: bestSeason,
+              number: bestEpNum,
             };
           }
         }
         if (!nextEp && leftCount > 0) {
-          const nextNum = watchedCount + 1;
-          nextEp = {
-            code: "S01E" + String(nextNum).padStart(2, "0"),
-            season: 1,
-            number: nextNum,
-            title: "Episode " + nextNum,
-            airDate: "",
-          };
+          if (maxCompSeason > 0 && episodes.length === 0) {
+            const nextSeason = maxCompSeason + 1;
+            nextEp = {
+              code: "S" + String(nextSeason).padStart(2, "0") + "E01",
+              season: nextSeason,
+              number: 1,
+              title: "Episode 1",
+              airDate: "",
+            };
+          } else {
+            const nextNum = watchedCount + 1;
+            nextEp = {
+              code: "S01E" + String(nextNum).padStart(2, "0"),
+              season: 1,
+              number: nextNum,
+              title: "Episode " + nextNum,
+              airDate: "",
+            };
+          }
         }
         const pct = total > 0 ? Math.min(100, Math.round((watchedCount / total) * 100)) : 0;
         return {
@@ -1909,18 +2438,16 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           nextEp,
           lastWatchedEp,
           pct,
-          isCompleted: (total > 0 && leftCount === 0) || isRawCompletedEmpty,
+          isCompleted: isMarkedCompleted || (total > 0 && leftCount === 0),
           hasStarted: watchedCount > 0,
         };
       }
 
       getEffectiveShowStatus(show) {
-        const prog = this.computeShowProgress(show);
         const raw = String(show.userStatus || "").toLowerCase();
+        if (raw === "completed") return "completed";
+        const prog = this.computeShowProgress(show);
         if (prog.isCompleted) return "completed";
-        if (raw === "completed" && (!Array.isArray(show.episodes) || show.episodes.length === 0)) {
-          return "completed";
-        }
         if (prog.hasStarted) return raw === "stopped" ? "stopped" : "in_progress";
         return raw === "stopped" ? "stopped" : "interested";
       }
@@ -2362,6 +2889,27 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           : "";
       }
 
+      expandCompactedWatchedSet(show, fullEps) {
+        const watchedSet = new Set(
+          (show.watchedEpisodes || []).map((c) => String(c || "").trim().toUpperCase()).filter(Boolean)
+        );
+        const compSeasons =
+          show.completedSeasons && typeof show.completedSeasons === "object" && !Array.isArray(show.completedSeasons)
+            ? show.completedSeasons
+            : {};
+        for (const [sKey, cnt] of Object.entries(compSeasons)) {
+          const sNum = Number(sKey);
+          const cNum = Number(cnt) || 0;
+          if (!Number.isFinite(sNum) || sNum <= 0 || cNum <= 0) continue;
+          const sEps = fullEps.filter((e) => Number(e.season) === sNum);
+          for (let i = 0; i < sEps.length && i < Math.max(cNum, sEps.length); i++) {
+            const c = String(sEps[i].code || "").trim().toUpperCase();
+            if (c) watchedSet.add(c);
+          }
+        }
+        return watchedSet;
+      }
+
       async refreshUpcomingEpisodesIfNeeded() {
         if (this._refreshingUpcoming) return;
         this._refreshingUpcoming = true;
@@ -2371,9 +2919,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           for (const s of shows) {
             if (s.userStatus === "stopped") continue;
             const isEnded = String(s.status || "").toLowerCase() === "ended";
+            const isCompleted = String(s.userStatus || "").toLowerCase() === "completed";
+            if (isEnded && (isCompleted || (Number(s.totalEpisodes) || 0) > 1)) continue;
+            if (isCompleted && isEnded) continue;
             const eps = Array.isArray(s.episodes) ? s.episodes : [];
-            const hasSeasonOne = eps.some((e) => Number(e.season) === 1);
-            if (isEnded && eps.length > 1 && hasSeasonOne) continue;
+            const compSeasons = s.completedSeasons && typeof s.completedSeasons === "object" ? s.completedSeasons : {};
+            const hasSeasonOne = Boolean(compSeasons["1"]) || eps.some((e) => Number(e.season) === 1);
+            const knownTotal = Math.max(Number(s.totalEpisodes) || 0, eps.length);
+            if (isEnded && knownTotal > 1 && hasSeasonOne) continue;
             const detailsUrl = this.getShowDetailsUrl(s);
             if (!detailsUrl) continue;
             try {
@@ -2382,12 +2935,29 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 const full = await res.json();
                 const fullEps = Array.isArray(full?.episodes) ? full.episodes : [];
                 const fullHasSeasonOne = fullEps.some((e) => Number(e.season) === 1);
-                if (full && fullEps.length > 0 && (fullEps.length > eps.length || (!hasSeasonOne && fullHasSeasonOne))) {
-                  s.episodes = fullEps
+                if (full && fullEps.length > 0 && (fullEps.length > knownTotal || (!hasSeasonOne && fullHasSeasonOne))) {
+                  const sortedFull = fullEps
                     .map((e) => this.compactEpisode(e))
                     .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
-                  if (s.userStatus === "completed") {
-                    s.watchedEpisodes = s.episodes.map((e) => e.code).sort();
+                  s.totalEpisodes = sortedFull.length;
+                  if (String(s.userStatus || "").toLowerCase() === "completed") {
+                    if (fullEps.length > knownTotal && knownTotal > 0 && String(full.status || "").toLowerCase() !== "ended") {
+                      // New episodes aired on a previously completed returning series
+                      const prevCount = knownTotal;
+                      s.episodes = sortedFull;
+                      s.watchedEpisodes = sortedFull.slice(0, prevCount).map((e) => e.code).sort();
+                      s.completedSeasons = {};
+                      s.userStatus = "in_progress";
+                    } else {
+                      s.episodes = sortedFull;
+                      s.watchedEpisodes = sortedFull.map((e) => e.code).sort();
+                      s.completedSeasons = {};
+                    }
+                  } else {
+                    const expandedWatched = this.expandCompactedWatchedSet(s, sortedFull);
+                    s.episodes = sortedFull;
+                    s.watchedEpisodes = Array.from(expandedWatched).sort();
+                    s.completedSeasons = {};
                   }
                   if (full.status) s.status = full.status;
                   updatedAny = true;
@@ -2483,11 +3053,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           await this.removeItemFromLibrary(showId);
         } else {
           const existingEps = Array.isArray(show.episodes) ? show.episodes : [];
-          const hasSeasonOne = existingEps.some((e) => Number(e.season) === 1);
+          const knownTotal = Math.max(Number(show.totalEpisodes) || 0, existingEps.length);
           const detailsUrl = this.getShowDetailsUrl(show);
           if (
             detailsUrl &&
-            (existingEps.length <= 1 || !hasSeasonOne || this.isSyntheticEpisodeList(existingEps))
+            (knownTotal <= 1 || this.isSyntheticEpisodeList(existingEps))
           ) {
             try {
               const res = await fetch(detailsUrl);
@@ -2497,6 +3067,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   show.episodes = full.episodes
                     .map((e) => this.compactEpisode(e))
                     .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
+                  show.totalEpisodes = show.episodes.length;
+                  show.completedSeasons = {};
                   if (full.cast?.length) show.cast = full.cast;
                 }
               }
@@ -2511,11 +3083,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (!show) return;
         const prog = this.computeShowProgress(show);
         if (!prog.nextEp) return;
-        const set = new Set(show.watchedEpisodes || []);
-        set.add(prog.nextEp.code);
+        const set = new Set((show.watchedEpisodes || []).map((c) => String(c || "").trim().toUpperCase()).filter(Boolean));
+        set.add(String(prog.nextEp.code || "").trim().toUpperCase());
         show.watchedEpisodes = Array.from(set).sort();
-        const totalEps = (show.episodes || []).length || 1;
-        show.userStatus = set.size >= totalEps ? "completed" : "in_progress";
+        show.userStatus = "in_progress";
+        const updatedProg = this.computeShowProgress(show);
+        if (updatedProg.leftCount === 0 && updatedProg.total > 0) {
+          show.userStatus = "completed";
+        }
         show.lastWatchedAt = new Date().toISOString();
         await this.persistState();
       }
@@ -2576,7 +3151,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const wasInLib = (this.state.shows || []).some((s) => s.id === showId);
         const show = this.ensureDetailShowInLibrary(showId);
         if (!show) return;
-        const eps = Array.isArray(show.episodes) ? show.episodes : [];
+        let eps = Array.isArray(show.episodes) ? show.episodes : [];
         const eff = wasInLib ? this.getEffectiveShowStatus(show) : "preview";
         const sTitleKey = this.normalizeTitleKey(show.title);
         let needsCompletedEnrich = false;
@@ -2585,47 +3160,83 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             await this.removeItemFromLibrary(showId);
             return;
           }
-          const baseEps =
-            eps.length > 0
-              ? eps
-              : [
-                  {
-                    code: "S01E01",
-                    season: 1,
-                    number: 1,
-                    title: "Pilot",
-                    airDate: String(show.year || 2024) + "-01-01",
-                  },
-                ];
-          if (eps.length === 0) {
-            show.episodes = baseEps;
+          const knownTotal = Math.max(Number(show.totalEpisodes) || 0, eps.length);
+          if (eps.length > 0) {
+            show.watchedEpisodes = eps.map((e) => e.code).sort();
+            show.totalEpisodes = Math.max(knownTotal, eps.length);
+          } else {
+            show.totalEpisodes = Math.max(knownTotal, 1);
+            show.watchedEpisodes = [];
           }
-          show.watchedEpisodes = baseEps.map((e) => e.code).sort();
+          show.completedSeasons = {};
           show.userStatus = "completed";
           this.openSeasons = new Set();
           needsCompletedEnrich =
-            eps.length <= 1 ||
-            !eps.some((e) => Number(e.season) === 1) ||
-            this.isSyntheticEpisodeList(eps);
+            knownTotal <= 1 ||
+            (eps.length > 0 && this.isSyntheticEpisodeList(eps));
         } else if (status === "in_progress") {
-          if ((show.watchedEpisodes || []).length === 0 && eps.length > 0) {
+          if (eff === "completed" && eps.length <= 1) {
+            const detailsUrl = this.getShowDetailsUrl(show);
+            if (detailsUrl) {
+              try {
+                const res = await fetch(detailsUrl);
+                if (res.ok) {
+                  const full = await res.json();
+                  if (full && Array.isArray(full.episodes) && full.episodes.length > 0) {
+                    eps = full.episodes
+                      .map((e) => this.compactEpisode(e))
+                      .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
+                    show.episodes = eps;
+                    show.totalEpisodes = eps.length;
+                    show.completedSeasons = {};
+                  }
+                }
+              } catch (_) {}
+            }
+          }
+          const progNow = this.computeShowProgress(show);
+          if (progNow.watchedCount === 0 && eps.length > 0) {
             show.watchedEpisodes = [eps[0].code];
           } else if (eff === "completed" && eps.length > 1) {
             show.watchedEpisodes = eps.slice(0, eps.length - 1).map((e) => e.code);
+            show.completedSeasons = {};
           }
           show.userStatus = "in_progress";
         } else if (status === "stopped") {
           if (eff === "stopped") {
-            show.userStatus = (show.watchedEpisodes || []).length > 0 ? "in_progress" : "interested";
+            const progNow = this.computeShowProgress(show);
+            show.userStatus = progNow.watchedCount > 0 ? "in_progress" : "interested";
           } else {
+            if (eff === "completed" && eps.length <= 1) {
+              const detailsUrl = this.getShowDetailsUrl(show);
+              if (detailsUrl) {
+                try {
+                  const res = await fetch(detailsUrl);
+                  if (res.ok) {
+                    const full = await res.json();
+                    if (full && Array.isArray(full.episodes) && full.episodes.length > 0) {
+                      eps = full.episodes
+                        .map((e) => this.compactEpisode(e))
+                        .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
+                      show.episodes = eps;
+                      show.totalEpisodes = eps.length;
+                      show.completedSeasons = {};
+                    }
+                  }
+                } catch (_) {}
+              }
+            }
             if (eff === "completed" && eps.length > 1) {
               show.watchedEpisodes = eps.slice(0, eps.length - 1).map((e) => e.code);
+              show.completedSeasons = {};
             }
             show.userStatus = "stopped";
           }
         } else if (status === "interested") {
-          if ((show.watchedEpisodes || []).length > 0) return;
+          const progNow = this.computeShowProgress(show);
+          if (progNow.watchedCount > 0 && eff !== "preview") return;
           show.watchedEpisodes = [];
+          show.completedSeasons = {};
           show.userStatus = "interested";
         }
         if (!this._sessionRemovedKeys) this._sessionRemovedKeys = new Set();
@@ -2641,13 +3252,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               const res = await fetch(detailsUrl);
               if (res.ok) {
                 const full = await res.json();
-                const liveShow = (this.state.shows || []).find(
-                  (s) => s.id === show.id || (sTitleKey && this.normalizeTitleKey(s.title) === sTitleKey)
-                );
+                const liveShow = (this.state.shows || []).find((s) => this.doesShowMatchItem(s, show));
                 if (liveShow && full && Array.isArray(full.episodes) && full.episodes.length > 0) {
                   liveShow.episodes = full.episodes
                     .map((e) => this.compactEpisode(e))
                     .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
+                  liveShow.totalEpisodes = liveShow.episodes.length;
+                  liveShow.completedSeasons = {};
                   if (full.cast && full.cast.length > 0) liveShow.cast = full.cast;
                   if (full.network && !this.isGenericStreamingLabel(full.network)) liveShow.network = full.network;
                   if (String(liveShow.userStatus || "").toLowerCase() === "completed") {
@@ -2662,7 +3273,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       // =========================================================
-      // SEARCH / DISCOVER LOGIC
+      // SEARCH / DISCOVER LOGIC (INFINITE SCROLL + STRICT ID MATCH)
       // =========================================================
       cacheSearchItems(items) {
         if (!Array.isArray(items)) return;
@@ -2674,19 +3285,40 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
       }
 
+      updateSearchInfiniteStatus() {
+        const statusEl = document.getElementById("search-infinite-status");
+        if (!statusEl) return;
+        if (this.isLoadingMoreSearch) {
+          statusEl.textContent = "Loading more titles...";
+          statusEl.classList.remove("hidden");
+        } else if (this.searchHasMore && (this.searchResults || []).length > 0) {
+          statusEl.textContent = "Scroll down for more results";
+          statusEl.classList.remove("hidden");
+        } else {
+          statusEl.textContent = "";
+          statusEl.classList.add("hidden");
+        }
+      }
+
       async runDefaultDiscover() {
         const seq = ++this._searchReqSeq;
+        this.searchPage = 1;
+        this.searchHasMore = false;
+        this.isLoadingMoreSearch = false;
+        this.updateSearchInfiniteStatus();
         try {
           const provCsv = Array.from(this.selectedUsPlatforms).join(",");
           const url = provCsv
-            ? "/api/discover-providers?providers=" + encodeURIComponent(provCsv)
-            : "/api/search?q=" + encodeURIComponent("Game of Thrones");
+            ? "/api/discover-providers?providers=" + encodeURIComponent(provCsv) + "&page=1"
+            : "/api/search?q=" + encodeURIComponent("Game of Thrones") + "&page=1";
           const res = await fetch(url);
           if (res.ok && seq === this._searchReqSeq) {
             const data = await res.json();
             const filtered = (data.results || []).filter((r) => r.mediaType !== "actor");
             this.cacheSearchItems(filtered);
             this.searchResults = filtered;
+            this.searchPage = 1;
+            this.searchHasMore = Boolean(data.hasMore);
             this.renderSearch();
           }
         } catch (_) {}
@@ -2702,17 +3334,93 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             return;
           }
           const seq = ++this._searchReqSeq;
+          this.searchPage = 1;
+          this.searchHasMore = false;
+          this.isLoadingMoreSearch = false;
+          this.updateSearchInfiniteStatus();
           try {
-            const res = await fetch("/api/search?q=" + encodeURIComponent(q));
+            const res = await fetch("/api/search?q=" + encodeURIComponent(q) + "&page=1");
             if (res.ok && seq === this._searchReqSeq) {
               const data = await res.json();
               const filtered = (data.results || []).filter((r) => r.mediaType !== "actor");
               this.cacheSearchItems(filtered);
               this.searchResults = filtered;
+              this.searchPage = 1;
+              this.searchHasMore = Boolean(data.hasMore);
               this.renderSearch();
             }
           } catch (_) {}
         }, 260);
+      }
+
+      async loadMoreSearchResults() {
+        if (this.isLoadingMoreSearch || !this.searchHasMore || this.activeTab !== "search") return;
+        const nextPage = (Number(this.searchPage) || 1) + 1;
+        if (nextPage > 25) {
+          this.searchHasMore = false;
+          this.updateSearchInfiniteStatus();
+          return;
+        }
+        const seq = this._searchReqSeq;
+        this.isLoadingMoreSearch = true;
+        this.updateSearchInfiniteStatus();
+        try {
+          const q = this.searchQuery.trim();
+          const provCsv = Array.from(this.selectedUsPlatforms).join(",");
+          const url = q
+            ? "/api/search?q=" + encodeURIComponent(q) + "&page=" + nextPage
+            : provCsv
+              ? "/api/discover-providers?providers=" + encodeURIComponent(provCsv) + "&page=" + nextPage
+              : "/api/search?q=" + encodeURIComponent("Game of Thrones") + "&page=" + nextPage;
+          const res = await fetch(url);
+          if (res.ok && seq === this._searchReqSeq) {
+            const data = await res.json();
+            const incoming = (data.results || []).filter((r) => r.mediaType !== "actor");
+            const existing = Array.isArray(this.searchResults) ? this.searchResults : [];
+            const seenIds = new Set(existing.map((e) => String(e.id || "")));
+            const newItems = [];
+            for (const item of incoming) {
+              if (!item || !item.id || seenIds.has(String(item.id))) continue;
+              const isMovieItem = item.mediaType === "movie" || String(item.id || "").startsWith("movie_");
+              const alreadyPresent = existing.some((ex) => {
+                const exIsMovie = ex.mediaType === "movie" || String(ex.id || "").startsWith("movie_");
+                if (isMovieItem !== exIsMovie) return false;
+                return isMovieItem ? this.doesMovieMatchItem(ex, item) : this.doesShowMatchItem(ex, item);
+              });
+              if (alreadyPresent) continue;
+              seenIds.add(String(item.id));
+              newItems.push(item);
+            }
+            this.cacheSearchItems(newItems);
+            this.searchPage = nextPage;
+            this.searchHasMore = Boolean(data.hasMore) && incoming.length > 0;
+            if (newItems.length > 0) {
+              this.searchResults = [...existing, ...newItems];
+              const listEl = document.getElementById("search-results-list");
+              const countEl = document.getElementById("search-count-label");
+              if (
+                listEl &&
+                this.searchSort === "top" &&
+                !(this.searchQuery.trim() && this.selectedUsPlatforms.size > 0) &&
+                existing.length > 0
+              ) {
+                const appendedHtml = newItems.map((it) => this.renderSearchCardHtml(it)).join("");
+                listEl.insertAdjacentHTML("beforeend", appendedHtml);
+                if (countEl) {
+                  countEl.textContent = this.searchResults.length + (this.searchHasMore ? "+ results" : " results");
+                }
+              } else {
+                this.renderSearch();
+              }
+            }
+          }
+        } catch (_) {
+        } finally {
+          if (seq === this._searchReqSeq) {
+            this.isLoadingMoreSearch = false;
+            this.updateSearchInfiniteStatus();
+          }
+        }
       }
 
       clearSearch() {
@@ -2729,6 +3437,104 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           sortSel.value = sortKey;
         }
         this.renderSearch();
+      }
+
+      renderSearchCardHtml(item) {
+        const isMovieItem = item.mediaType === "movie" || String(item.id || "").startsWith("movie_");
+        const existingShow = !isMovieItem
+          ? (this.state.shows || []).find((s) => this.doesShowMatchItem(s, item))
+          : null;
+        const existingMovie = isMovieItem
+          ? (this.state.movies || []).find((m) => this.doesMovieMatchItem(m, item))
+          : null;
+        const showStatus = existingShow ? this.getEffectiveShowStatus(existingShow) : "";
+        const existingProg = existingShow ? this.computeShowProgress(existingShow) : null;
+        const isInWatchlist =
+          (existingShow && showStatus === "interested") ||
+          (existingMovie && !existingMovie.watched);
+        const isCompleted =
+          (existingShow && showStatus === "completed") ||
+          (existingMovie && Boolean(existingMovie.watched));
+        const hasWatched =
+          isCompleted ||
+          (existingShow && (showStatus === "in_progress" || (existingProg && existingProg.watchedCount > 0)));
+
+        const badgeClass = isMovieItem ? "text-sky-400" : "tv-yellow-text";
+        const badgeLabel = isMovieItem ? "Movie" : "TV Show";
+        const subtitle =
+          item.overview ||
+          (item.director && item.director !== item.streamingService ? item.director : "") ||
+          "Tap for Info, + for Watchlist, or ✓ to mark Completed";
+        const poster =
+          item.posterUrl ||
+          "https://via.placeholder.com/200x300/1c1c22/facc15?text=" + encodeURIComponent(item.title || "Item");
+
+        const watchlistBtnClass = isInWatchlist
+          ? "w-10 h-10 rounded-full bg-yellow-400/20 border-2 border-yellow-400 tv-yellow-text flex items-center justify-center shrink-0 transition active:scale-95"
+          : "w-10 h-10 rounded-full bg-[#232329] border border-zinc-700 tv-yellow-text flex items-center justify-center shrink-0 transition hover:border-yellow-400/60 active:scale-95";
+        const completedBtnClass = isCompleted
+          ? "w-10 h-10 rounded-full bg-emerald-500 border border-emerald-500 text-white flex items-center justify-center shrink-0 transition active:scale-95"
+          : "w-10 h-10 rounded-full bg-[#232329] border border-zinc-700 text-zinc-400 flex items-center justify-center shrink-0 transition hover:border-emerald-500/60 hover:text-white active:scale-95";
+
+        const watchlistQuickBtn = !hasWatched
+          ? '<button title="' +
+            (isInWatchlist ? "In Watchlist (Tap to remove)" : "Add to Watchlist") +
+            '" onclick="event.stopPropagation(); app.quickToggleSearchWatchlist(&quot;' +
+            escapeHtml(item.id) +
+            '&quot;)" class="' +
+            watchlistBtnClass +
+            '">' +
+            (isInWatchlist ? WATCHLIST_SVG : PLUS_SVG) +
+            "</button>"
+          : "";
+
+        const rightBtns =
+          '<div class="flex items-center gap-2 shrink-0">' +
+          watchlistQuickBtn +
+          '<button title="' +
+          (isCompleted ? "Completed (Tap to mark unwatched)" : "Mark as Completed") +
+          '" onclick="event.stopPropagation(); app.quickMarkSearchCompleted(&quot;' +
+          escapeHtml(item.id) +
+          '&quot;)" class="' +
+          completedBtnClass +
+          '">' +
+          CHECK_SVG +
+          "</button>" +
+          "</div>";
+
+        return (
+          '<div onclick="app.addOrOpenSearchResult(&quot;' +
+          escapeHtml(item.id) +
+          '&quot;)" class="tv-card rounded-2xl p-3 flex items-center gap-3.5 cursor-pointer hover:border-zinc-700 transition">' +
+          '<img src="' +
+          escapeHtml(poster) +
+          '" loading="lazy" decoding="async" class="w-16 h-24 object-cover rounded-xl shrink-0 bg-zinc-900" />' +
+          '<div class="flex-1 min-w-0 space-y-0.5">' +
+          '<div class="flex items-center gap-2 min-w-0">' +
+          '<h3 class="text-base font-extrabold text-white truncate min-w-0 flex-1">' +
+          escapeHtml(item.title) +
+          "</h3>" +
+          '<span class="px-2 py-0.5 rounded-md bg-zinc-800 text-[11px] font-semibold text-zinc-300 shrink-0">' +
+          escapeHtml(item.year || 2024) +
+          "</span>" +
+          "</div>" +
+          '<div class="text-xs font-bold truncate ' +
+          badgeClass +
+          '">' +
+          badgeLabel +
+          "</div>" +
+          '<div class="text-xs text-zinc-400 truncate">' +
+          escapeHtml(subtitle) +
+          "</div>" +
+          '<div class="flex items-center gap-1 text-xs font-bold text-zinc-200 pt-0.5">' +
+          '<span class="tv-yellow-text">★</span><span>' +
+          Number(item.rating || 7.8).toFixed(1) +
+          "</span>" +
+          "</div>" +
+          "</div>" +
+          rightBtns +
+          "</div>"
+        );
       }
 
       renderSearch() {
@@ -2750,134 +3556,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
 
         if (countEl) {
-          countEl.textContent = items.length + " results";
+          countEl.textContent = items.length + (this.searchHasMore ? "+ results" : " results");
         }
 
-        const showById = new Map((this.state.shows || []).map((s) => [s.id, s]));
-        const showByTmdbId = new Map(
-          (this.state.shows || []).filter((s) => Number(s.tmdbId) > 0).map((s) => [Number(s.tmdbId), s])
-        );
-        const showByTvmazeId = new Map(
-          (this.state.shows || []).filter((s) => Number(s.tvmazeId) > 0).map((s) => [Number(s.tvmazeId), s])
-        );
-        const showByTitle = new Map(
-          (this.state.shows || []).map((s) => [this.normalizeTitleKey(s.title), s])
-        );
-        const movieById = new Map((this.state.movies || []).map((m) => [m.id, m]));
-        const movieByTmdbId = new Map(
-          (this.state.movies || []).filter((m) => Number(m.tmdbId) > 0).map((m) => [Number(m.tmdbId), m])
-        );
-        const movieByTitle = new Map(
-          (this.state.movies || []).map((m) => [this.normalizeTitleKey(m.title), m])
-        );
-
         listEl.innerHTML =
-          items
-            .map((item) => {
-              const normTitle = this.normalizeTitleKey(item.title);
-              const isMovieItem = item.mediaType === "movie" || String(item.id || "").startsWith("movie_");
-              const existingShow = !isMovieItem
-                ? showById.get(item.id) ||
-                  (Number(item.tmdbId) > 0 ? showByTmdbId.get(Number(item.tmdbId)) : null) ||
-                  (Number(item.tvmazeId) > 0 ? showByTvmazeId.get(Number(item.tvmazeId)) : null) ||
-                  (normTitle ? showByTitle.get(normTitle) : null)
-                : null;
-              const existingMovie = isMovieItem
-                ? movieById.get(item.id) ||
-                  (Number(item.tmdbId) > 0 ? movieByTmdbId.get(Number(item.tmdbId)) : null) ||
-                  (normTitle ? movieByTitle.get(normTitle) : null)
-                : null;
-              const showStatus = existingShow ? this.getEffectiveShowStatus(existingShow) : "";
-              const isInWatchlist =
-                (existingShow && showStatus === "interested") ||
-                (existingMovie && !existingMovie.watched);
-              const isCompleted =
-                (existingShow && showStatus === "completed") ||
-                (existingMovie && Boolean(existingMovie.watched));
-              const hasWatched =
-                isCompleted ||
-                (existingShow &&
-                  (showStatus === "in_progress" || (existingShow.watchedEpisodes || []).length > 0));
-
-              const badgeClass = item.mediaType === "movie" ? "text-sky-400" : "tv-yellow-text";
-              const badgeLabel = item.mediaType === "movie" ? "Movie" : "TV Show";
-              const subtitle =
-                item.overview ||
-                (item.director && item.director !== item.streamingService ? item.director : "") ||
-                "Tap for Info, + for Watchlist, or ✓ to mark Completed";
-              const poster =
-                item.posterUrl ||
-                "https://via.placeholder.com/200x300/1c1c22/facc15?text=" + encodeURIComponent(item.title || "Item");
-
-              const watchlistBtnClass = isInWatchlist
-                ? "w-10 h-10 rounded-full bg-yellow-400/20 border-2 border-yellow-400 tv-yellow-text flex items-center justify-center shrink-0 transition active:scale-95"
-                : "w-10 h-10 rounded-full bg-[#232329] border border-zinc-700 tv-yellow-text flex items-center justify-center shrink-0 transition hover:border-yellow-400/60 active:scale-95";
-              const completedBtnClass = isCompleted
-                ? "w-10 h-10 rounded-full bg-emerald-500 border border-emerald-500 text-white flex items-center justify-center shrink-0 transition active:scale-95"
-                : "w-10 h-10 rounded-full bg-[#232329] border border-zinc-700 text-zinc-400 flex items-center justify-center shrink-0 transition hover:border-emerald-500/60 hover:text-white active:scale-95";
-
-              const watchlistQuickBtn = !hasWatched
-                ? '<button title="' +
-                  (isInWatchlist ? "In Watchlist (Tap to remove)" : "Add to Watchlist") +
-                  '" onclick="event.stopPropagation(); app.quickToggleSearchWatchlist(&quot;' +
-                  escapeHtml(item.id) +
-                  '&quot;)" class="' +
-                  watchlistBtnClass +
-                  '">' +
-                  (isInWatchlist ? WATCHLIST_SVG : PLUS_SVG) +
-                  "</button>"
-                : "";
-
-              const rightBtns =
-                '<div class="flex items-center gap-2 shrink-0">' +
-                watchlistQuickBtn +
-                '<button title="' +
-                (isCompleted ? "Completed (Tap to mark unwatched)" : "Mark as Completed") +
-                '" onclick="event.stopPropagation(); app.quickMarkSearchCompleted(&quot;' +
-                escapeHtml(item.id) +
-                '&quot;)" class="' +
-                completedBtnClass +
-                '">' +
-                CHECK_SVG +
-                "</button>" +
-                "</div>";
-
-              return (
-                '<div onclick="app.addOrOpenSearchResult(&quot;' +
-                escapeHtml(item.id) +
-                '&quot;)" class="tv-card rounded-2xl p-3 flex items-center gap-3.5 cursor-pointer hover:border-zinc-700 transition">' +
-                '<img src="' +
-                escapeHtml(poster) +
-                '" class="w-16 h-24 object-cover rounded-xl shrink-0 bg-zinc-900" />' +
-                '<div class="flex-1 min-w-0 space-y-0.5">' +
-                '<div class="flex items-center gap-2 min-w-0">' +
-                '<h3 class="text-base font-extrabold text-white truncate min-w-0 flex-1">' +
-                escapeHtml(item.title) +
-                "</h3>" +
-                '<span class="px-2 py-0.5 rounded-md bg-zinc-800 text-[11px] font-semibold text-zinc-300 shrink-0">' +
-                escapeHtml(item.year || 2024) +
-                "</span>" +
-                "</div>" +
-                '<div class="text-xs font-bold truncate ' +
-                badgeClass +
-                '">' +
-                badgeLabel +
-                "</div>" +
-                '<div class="text-xs text-zinc-400 truncate">' +
-                escapeHtml(subtitle) +
-                "</div>" +
-                '<div class="flex items-center gap-1 text-xs font-bold text-zinc-200 pt-0.5">' +
-                '<span class="tv-yellow-text">★</span><span>' +
-                Number(item.rating || 7.8).toFixed(1) +
-                "</span>" +
-                "</div>" +
-                "</div>" +
-                rightBtns +
-                "</div>"
-              );
-            })
-            .join("") ||
+          items.map((item) => this.renderSearchCardHtml(item)).join("") ||
           '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No results found. Try searching another title!</div>';
+        this.updateSearchInfiniteStatus();
       }
 
       findSearchItemById(itemId) {
@@ -2890,28 +3575,18 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
       findExistingForSearchItem(itemId) {
         const item = this.findSearchItemById(itemId);
-        const normTitle = item ? this.normalizeTitleKey(item.title) : "";
-        const itemTmdbId = item && Number(item.tmdbId) > 0 ? Number(item.tmdbId) : 0;
-        const itemTvmazeId = item && Number(item.tvmazeId) > 0 ? Number(item.tvmazeId) : 0;
         const isMovieItem =
           item
             ? item.mediaType === "movie" || String(item.id || "").startsWith("movie_")
             : String(itemId || "").startsWith("movie_");
         if (isMovieItem) {
-          const existingMovie = (this.state.movies || []).find(
-            (m) =>
-              m.id === itemId ||
-              (itemTmdbId > 0 && Number(m.tmdbId) === itemTmdbId) ||
-              (normTitle && this.normalizeTitleKey(m.title) === normTitle)
+          const existingMovie = (this.state.movies || []).find((m) =>
+            item ? this.doesMovieMatchItem(m, item) : m.id === itemId
           );
           return { existingShow: null, existingMovie };
         }
-        const existingShow = (this.state.shows || []).find(
-          (s) =>
-            s.id === itemId ||
-            (itemTmdbId > 0 && Number(s.tmdbId) === itemTmdbId) ||
-            (itemTvmazeId > 0 && Number(s.tvmazeId) === itemTvmazeId) ||
-            (normTitle && this.normalizeTitleKey(s.title) === normTitle)
+        const existingShow = (this.state.shows || []).find((s) =>
+          item ? this.doesShowMatchItem(s, item) : s.id === itemId
         );
         const existingMovie = !existingShow
           ? (this.state.movies || []).find((m) => m.id === itemId)
@@ -2976,21 +3651,24 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
       enrichMovieStreamingIfNeeded(movie) {
         if (!movie) return;
-        const lookupId = movie.tmdbId ? "movie_" + movie.tmdbId : String(movie.id || "");
+        const cleanTmdb = this.cleanMovieTmdbId(movie.id, movie.tmdbId);
+        const lookupId = cleanTmdb > 0 ? "movie_" + cleanTmdb : String(movie.id || "");
         if (!lookupId.startsWith("movie_")) return;
-        if (!this.isGenericStreamingLabel(movie.streamingService) && Array.isArray(movie.cast) && movie.cast.length > 0) {
+        if (!this.isGenericStreamingLabel(movie.streamingService) && Array.isArray(movie.cast) && movie.cast.length > 0 && movie.overview) {
           return;
         }
-        const mTitleKey = this.normalizeTitleKey(movie.title);
-        fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupId))
+        const titleParam = movie.title ? "&title=" + encodeURIComponent(movie.title) : "";
+        fetch("/api/show-details?tvmazeId=" + encodeURIComponent(lookupId) + titleParam)
           .then((r) => (r.ok ? r.json() : null))
           .then((full) => {
             if (!full) return;
             const liveMovie =
-              (this.state.movies || []).find(
-                (m) => m.id === movie.id || (mTitleKey && this.normalizeTitleKey(m.title) === mTitleKey)
-              ) || movie;
+              (this.state.movies || []).find((m) => this.doesMovieMatchItem(m, movie)) || movie;
             let changed = false;
+            if (full.tmdbId && Number(full.tmdbId) > 0 && !this.cleanMovieTmdbId(liveMovie.id, liveMovie.tmdbId)) {
+              liveMovie.tmdbId = Number(full.tmdbId);
+              changed = true;
+            }
             if (full.streamingService && !this.isGenericStreamingLabel(full.streamingService)) {
               liveMovie.streamingService = full.streamingService;
               changed = true;
@@ -3007,8 +3685,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               liveMovie.cast = full.cast;
               changed = true;
             }
-            if (Array.isArray(full.genres) && full.genres.length > 0) {
-              liveMovie.genres = full.genres;
+            if (full.overview && !liveMovie.overview) {
+              liveMovie.overview = full.overview;
               changed = true;
             }
             if (changed) {
@@ -3042,12 +3720,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           }
           const newMovie = {
             ...item,
+            tmdbId: this.cleanMovieTmdbId(item.id, item.tmdbId),
             watched: isCompleted,
             watchedAt: isCompleted ? new Date().toISOString().slice(0, 10) : "",
-            userRating: 0,
-            reaction: "",
-            rewatchCount: 0,
-            isFavorite: false,
           };
           this.state.movies = [newMovie, ...(this.state.movies || [])];
           await this.persistState();
@@ -3060,7 +3735,6 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           return;
         }
 
-        // TV Show -> persist immediately with targetStatus so DB updates before any re-search or tab close, then enrich full episode guide
         const fallbackEpisodes =
           Array.isArray(item.episodes) && item.episodes.length > 0
             ? item.episodes.map((e) => this.compactEpisode(e))
@@ -3078,10 +3752,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           ...item,
           id: item.id,
           userStatus: isCompleted ? "completed" : "interested",
-          userRating: 0,
-          reaction: "",
-          isFavorite: false,
-          rewatchCount: 0,
+          totalEpisodes: fallbackEpisodes.length,
+          completedSeasons: {},
           watchedEpisodes: isCompleted ? fallbackEpisodes.map((e) => e.code).sort() : [],
           episodes: fallbackEpisodes,
           lastWatchedAt: isCompleted ? new Date().toISOString() : "",
@@ -3095,17 +3767,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             const res = await fetch(detailsUrl);
             if (res.ok) {
               const fullShow = await res.json();
-              const liveShow = (this.state.shows || []).find(
-                (s) =>
-                  s.id === item.id ||
-                  (Number(item.tmdbId) > 0 && Number(s.tmdbId) === Number(item.tmdbId)) ||
-                  (normTitle && this.normalizeTitleKey(s.title) === normTitle)
-              );
+              const liveShow = (this.state.shows || []).find((s) => this.doesShowMatchItem(s, item));
               if (fullShow && liveShow) {
                 if (Array.isArray(fullShow.episodes) && fullShow.episodes.length > 0) {
                   liveShow.episodes = fullShow.episodes
                     .map((e) => this.compactEpisode(e))
                     .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
+                  liveShow.totalEpisodes = liveShow.episodes.length;
+                  liveShow.completedSeasons = {};
                 }
                 if (fullShow.tvmazeId && !liveShow.tvmazeId) liveShow.tvmazeId = fullShow.tvmazeId;
                 if (fullShow.tmdbId && !liveShow.tmdbId) liveShow.tmdbId = fullShow.tmdbId;
@@ -3144,12 +3813,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (item.mediaType === "movie" || String(item.id || "").startsWith("movie_")) {
           const previewMovie = {
             ...item,
+            tmdbId: this.cleanMovieTmdbId(item.id, item.tmdbId),
             watched: false,
             watchedAt: "",
-            userRating: 0,
-            reaction: "",
-            rewatchCount: 0,
-            isFavorite: false,
             _isPreview: true,
           };
           this.detailItem = previewMovie;
@@ -3163,11 +3829,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const previewShow = {
           ...item,
           userStatus: "preview",
-          userRating: 0,
-          reaction: "",
-          isFavorite: false,
-          rewatchCount: 0,
           watchedEpisodes: [],
+          completedSeasons: {},
           episodes:
             Array.isArray(item.episodes) && item.episodes.length > 0
               ? item.episodes
@@ -3192,19 +3855,18 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
         const detailsUrl = this.getShowDetailsUrl(item);
         if (detailsUrl) {
-          const pTitleKey = this.normalizeTitleKey(previewShow.title);
           fetch(detailsUrl)
             .then((r) => (r.ok ? r.json() : null))
             .then((full) => {
               if (!full) return;
-              const liveShow = (this.state.shows || []).find(
-                (s) => s.id === previewShow.id || (pTitleKey && this.normalizeTitleKey(s.title) === pTitleKey)
-              );
+              const liveShow = (this.state.shows || []).find((s) => this.doesShowMatchItem(s, previewShow));
               const target = liveShow || previewShow;
               if (Array.isArray(full.episodes) && full.episodes.length > 0) {
                 target.episodes = full.episodes
                   .map((e) => this.compactEpisode(e))
                   .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
+                target.totalEpisodes = target.episodes.length;
+                target.completedSeasons = {};
               }
               if (full.tvmazeId && !target.tvmazeId) target.tvmazeId = full.tvmazeId;
               if (full.tmdbId && !target.tmdbId) target.tmdbId = full.tmdbId;
@@ -3270,10 +3932,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             }
           };
           applyInitialSeasons(show);
-          // Lazily enrich or backfill missing early/new seasons & streaming network from TMDB or TVMaze
+          // Lazily enrich full episode catalog & overview/cast when opening a compacted or incomplete show
           const detailsUrl = this.getShowDetailsUrl(show);
           if (detailsUrl) {
             const prevEps = Array.isArray(show.episodes) ? show.episodes : [];
+            const hasCompactedSeasons = Boolean(show.completedSeasons && Object.keys(show.completedSeasons).length > 0);
+            const isWindowed = (Number(show.totalEpisodes) || 0) > prevEps.length;
             const hadSeasonOne = prevEps.some((e) => Number(e.season) === 1);
             const wasSynthetic = this.isSyntheticEpisodeList(prevEps);
             const prevWatchedCount = (show.watchedEpisodes || []).length;
@@ -3287,25 +3951,34 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 if (
                   fullEps.length > 0 &&
                   (fullEps.length > prevEps.length ||
+                    isWindowed ||
+                    hasCompactedSeasons ||
                     (!hadSeasonOne && fullHasSeasonOne) ||
                     wasSynthetic ||
                     prevEps.length <= 1)
                 ) {
-                  show.episodes = fullEps
+                  const sortedFull = fullEps
                     .map((e) => this.compactEpisode(e))
                     .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
-                  if (show.userStatus === "completed") {
-                    show.watchedEpisodes = show.episodes.map((e) => e.code).sort();
-                  } else if (wasSynthetic && prevWatchedCount > 0) {
+                  const wasCompleted = String(show.userStatus || "").toLowerCase() === "completed";
+                  const expandedWatched = this.expandCompactedWatchedSet(show, sortedFull);
+                  show.episodes = sortedFull;
+                  show.totalEpisodes = sortedFull.length;
+                  show.completedSeasons = {};
+                  if (wasCompleted) {
+                    show.watchedEpisodes = sortedFull.map((e) => e.code).sort();
+                  } else if (wasSynthetic && prevWatchedCount > 0 && !hasCompactedSeasons) {
                     const maxTarget =
                       show.userStatus === "in_progress"
-                        ? Math.max(1, show.episodes.length - 1)
-                        : show.episodes.length;
+                        ? Math.max(1, sortedFull.length - 1)
+                        : sortedFull.length;
                     const keepCount = Math.min(prevWatchedCount, maxTarget);
-                    show.watchedEpisodes = show.episodes
+                    show.watchedEpisodes = sortedFull
                       .slice(0, keepCount)
                       .map((e) => e.code)
                       .sort();
+                  } else {
+                    show.watchedEpisodes = Array.from(expandedWatched).sort();
                   }
                   changed = true;
                 }
@@ -3385,8 +4058,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (!show) return;
         this.detailItem = show;
         const eps = Array.isArray(show.episodes) ? show.episodes : [];
+        const hasCompactedSeasons = Boolean(show.completedSeasons && Object.keys(show.completedSeasons).length > 0);
+        const isWindowed = hasCompactedSeasons || (Number(show.totalEpisodes) || 0) > eps.length;
         const validCodes =
-          eps.length > 0
+          !isWindowed && eps.length > 0
             ? new Set(eps.map((e) => String(e.code || "").trim().toUpperCase()).filter(Boolean))
             : null;
         const set = new Set(
@@ -3394,7 +4069,27 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             .map((c) => String(c || "").trim().toUpperCase())
             .filter((c) => c && (!validCodes || validCodes.has(c)))
         );
+        if (String(show.userStatus || "").toLowerCase() === "completed" && set.size === 0 && eps.length > 0) {
+          for (const e of eps) {
+            const c = String(e.code || "").trim().toUpperCase();
+            if (c) set.add(c);
+          }
+        }
         const normCode = String(epCode || "").trim().toUpperCase();
+        const epSeasonNum = this.parseSeasonFromCode(normCode);
+        const compHasSeason = Boolean(
+          epSeasonNum > 0 &&
+            show.completedSeasons &&
+            Number(show.completedSeasons[String(epSeasonNum)]) > 0
+        );
+        if (compHasSeason && !set.has(normCode)) {
+          const seasonEps = eps.filter((e) => Number(e.season) === epSeasonNum);
+          for (const e of seasonEps) {
+            const c = String(e.code || "").trim().toUpperCase();
+            if (c) set.add(c);
+          }
+          delete show.completedSeasons[String(epSeasonNum)];
+        }
         const isAdding = !set.has(normCode);
         if (isAdding) {
           set.add(normCode);
@@ -3403,10 +4098,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           }
         } else {
           set.delete(normCode);
-          if (show.userStatus === "completed") {
+          if (String(show.userStatus || "").toLowerCase() === "completed") {
             show.userStatus = "in_progress";
           }
-          if (set.size === 0 && show.userStatus !== "stopped") {
+          const remainingCompacted = Boolean(show.completedSeasons && Object.keys(show.completedSeasons).length > 0);
+          if (set.size === 0 && !remainingCompacted && show.userStatus !== "stopped") {
             this.state.shows = (this.state.shows || []).filter((s) => s.id !== showId);
             show.watchedEpisodes = [];
             show.userStatus = "preview";
@@ -3427,8 +4123,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (!show) return;
         this.detailItem = show;
         const eps = Array.isArray(show.episodes) ? show.episodes : [];
+        const hasCompactedSeasons = Boolean(show.completedSeasons && Object.keys(show.completedSeasons).length > 0);
+        const isWindowed = hasCompactedSeasons || (Number(show.totalEpisodes) || 0) > eps.length;
         const validCodes =
-          eps.length > 0
+          !isWindowed && eps.length > 0
             ? new Set(eps.map((e) => String(e.code || "").trim().toUpperCase()).filter(Boolean))
             : null;
         const seasonEps = eps.filter((e) => Number(e.season) === Number(seasonNum));
@@ -3437,19 +4135,34 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             .map((c) => String(c || "").trim().toUpperCase())
             .filter((c) => c && (!validCodes || validCodes.has(c)))
         );
+        if (String(show.userStatus || "").toLowerCase() === "completed" && set.size === 0 && eps.length > 0) {
+          for (const e of eps) {
+            const c = String(e.code || "").trim().toUpperCase();
+            if (c) set.add(c);
+          }
+        }
+        const compSeasonCount =
+          show.completedSeasons && Number(show.completedSeasons[String(seasonNum)]) > 0
+            ? Number(show.completedSeasons[String(seasonNum)])
+            : 0;
         const allWatched =
-          seasonEps.length > 0 &&
-          seasonEps.every((e) => set.has(String(e.code || "").trim().toUpperCase()));
+          compSeasonCount > 0 ||
+          (seasonEps.length > 0 &&
+            seasonEps.every((e) => set.has(String(e.code || "").trim().toUpperCase())));
+        if (allWatched && compSeasonCount > 0 && show.completedSeasons) {
+          delete show.completedSeasons[String(seasonNum)];
+        }
         for (const e of seasonEps) {
           const c = String(e.code || "").trim().toUpperCase();
           if (allWatched) set.delete(c);
           else set.add(c);
         }
         if (allWatched) {
-          if (show.userStatus === "completed") {
+          if (String(show.userStatus || "").toLowerCase() === "completed") {
             show.userStatus = "in_progress";
           }
-          if (set.size === 0 && show.userStatus !== "stopped") {
+          const remainingCompacted = Boolean(show.completedSeasons && Object.keys(show.completedSeasons).length > 0);
+          if (set.size === 0 && !remainingCompacted && show.userStatus !== "stopped") {
             this.state.shows = (this.state.shows || []).filter((s) => s.id !== showId);
             show.watchedEpisodes = [];
             show.userStatus = "preview";
@@ -3486,15 +4199,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const targetShow = (this.state.shows || []).find((s) => s.id === id);
         const targetMovie = (this.state.movies || []).find((m) => m.id === id);
         this._sessionRemovedKeys.add(String(id || ""));
-        const showTitleKey = targetShow ? this.normalizeTitleKey(targetShow.title) : "";
-        const movieTitleKey = targetMovie ? this.normalizeTitleKey(targetMovie.title) : "";
-        if (showTitleKey) this._sessionRemovedKeys.add("title:" + showTitleKey);
-        if (movieTitleKey) this._sessionRemovedKeys.add("title:" + movieTitleKey);
         this.state.shows = (this.state.shows || []).filter(
-          (s) => s.id !== id && (!showTitleKey || this.normalizeTitleKey(s.title) !== showTitleKey)
+          (s) => s.id !== id && !(targetShow && this.doesShowMatchItem(s, targetShow))
         );
         this.state.movies = (this.state.movies || []).filter(
-          (m) => m.id !== id && (!movieTitleKey || this.normalizeTitleKey(m.title) !== movieTitleKey)
+          (m) => m.id !== id && !(targetMovie && this.doesMovieMatchItem(m, targetMovie))
         );
         this.closeDetailSheet();
         await this.persistState();
@@ -3737,6 +4446,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const episodes = [...(Array.isArray(item.episodes) ? item.episodes : [])].sort(
           (a, b) => (Number(a.season || 1) - Number(b.season || 1)) || (Number(a.number || 1) - Number(b.number || 1))
         );
+        const itemIsCompleted = String(item.userStatus || "").toLowerCase() === "completed";
+        const compSeasonsObj =
+          item.completedSeasons && typeof item.completedSeasons === "object" && !Array.isArray(item.completedSeasons)
+            ? item.completedSeasons
+            : {};
         const watchedSet = new Set(
           (item.watchedEpisodes || []).map((c) => String(c || "").trim().toUpperCase()).filter(Boolean)
         );
@@ -3752,9 +4466,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         for (const seasonNum of sortedSeasonNums) {
           const sEps = bySeason.get(seasonNum) || [];
           const isOpen = this.openSeasons.has(seasonNum);
-          const watchedInSeason = sEps.filter((e) =>
-            watchedSet.has(String(e.code || "").trim().toUpperCase())
-          ).length;
+          const isCompactedSeason = Number(compSeasonsObj[String(seasonNum)]) > 0;
+          const watchedInSeason =
+            itemIsCompleted || isCompactedSeason
+              ? sEps.length
+              : sEps.filter((e) => watchedSet.has(String(e.code || "").trim().toUpperCase())).length;
           const allSeasonWatched = sEps.length > 0 && watchedInSeason === sEps.length;
           html +=
             '<div id="detail-season-' +
@@ -3789,7 +4505,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           if (isOpen) {
             html += '<div class="divide-y divide-zinc-800/70 px-3 pb-2">';
             for (const ep of sEps) {
-              const isWatched = watchedSet.has(String(ep.code || "").trim().toUpperCase());
+              const isWatched =
+                itemIsCompleted ||
+                isCompactedSeason ||
+                watchedSet.has(String(ep.code || "").trim().toUpperCase());
               const thumb =
                 ep.imageUrl ||
                 item.posterUrl ||
@@ -3802,7 +4521,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 '&quot;)" class="py-3 flex items-center gap-3 cursor-pointer">' +
                 '<img src="' +
                 escapeHtml(thumb) +
-                '" class="w-24 h-14 object-cover rounded-xl bg-zinc-900 shrink-0" />' +
+                '" loading="lazy" decoding="async" class="w-24 h-14 object-cover rounded-xl bg-zinc-900 shrink-0" />' +
                 '<div class="flex-1 min-w-0">' +
                 '<div class="text-sm font-bold text-white truncate">' +
                 ep.number +
@@ -3831,7 +4550,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           html += "</div>";
         }
 
-        bodyEl.innerHTML = html || '<p class="text-xs text-zinc-400 text-center py-6">No episodes found.</p>';
+        bodyEl.innerHTML =
+          html ||
+          (episodes.length === 0
+            ? '<p class="text-xs text-zinc-400 text-center py-6">Loading full episode list...</p>'
+            : '<p class="text-xs text-zinc-400 text-center py-6">No episodes found.</p>');
         if (this.pendingScrollSeason) {
           const targetSeason = this.pendingScrollSeason;
           this.pendingScrollSeason = null;
@@ -3867,7 +4590,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         let epCount = 0;
         let showMins = 0;
         for (const s of shows) {
-          const w = (s.watchedEpisodes || []).length;
+          const prog = this.computeShowProgress(s);
+          const w = prog.watchedCount;
           epCount += w;
           showMins += w * (Number(s.runtimeMins) || 45);
         }
@@ -3930,7 +4654,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
                   '<img src="' +
                   escapeHtml(s.posterUrl || "") +
-                  '" class="w-28 h-40 object-cover rounded-2xl bg-zinc-900" />' +
+                  '" loading="lazy" decoding="async" class="w-28 h-40 object-cover rounded-2xl bg-zinc-900" />' +
                   '<div class="text-xs font-bold text-white truncate">' +
                   escapeHtml(s.title) +
                   "</div>" +
@@ -3957,7 +4681,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   '&quot;)" class="w-28 shrink-0 cursor-pointer space-y-1">' +
                   '<img src="' +
                   escapeHtml(m.posterUrl || "") +
-                  '" class="w-28 h-40 object-cover rounded-2xl bg-zinc-900" />' +
+                  '" loading="lazy" decoding="async" class="w-28 h-40 object-cover rounded-2xl bg-zinc-900" />' +
                   '<div class="text-xs font-bold text-white truncate">' +
                   escapeHtml(m.title) +
                   "</div>" +
@@ -3982,36 +4706,36 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       // =========================================================
       // TINDER-STYLE SWIPE RECOMMENDATIONS ENGINE
       // =========================================================
+      canonicalizeRecId(item) {
+        if (!item) return "";
+        const isMovie = item.mediaType === "movie" || String(item.id || "").startsWith("movie_");
+        const tmdbNum = isMovie ? this.cleanMovieTmdbId(item.id, item.tmdbId) : Number(item.tmdbId) || 0;
+        if (tmdbNum > 0) {
+          return isMovie ? "movie_" + tmdbNum : "tmdb_tv_" + tmdbNum;
+        }
+        return String(item.id || "").trim();
+      }
+
       isItemInDbOrDecided(item) {
         if (!item) return true;
-        const normTitle = String(item.title || "").trim().toLowerCase();
-        const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
-        const movies = Array.isArray(this.state.movies) ? this.state.movies : [];
+        const isMovie = item.mediaType === "movie" || String(item.id || "").startsWith("movie_");
+        const canonId = this.canonicalizeRecId(item);
         const decidedSet = new Set(Array.isArray(this.state.decidedIds) ? this.state.decidedIds : []);
-        for (const a of (this.state.actors || [])) {
-          if (a && a.role === "decided_rec") {
-            if (a.id) decidedSet.add(a.id);
-            if (a.name) decidedSet.add("title_" + String(a.name).trim().toLowerCase());
-          }
-        }
-        if (decidedSet.has(item.id) || (normTitle && decidedSet.has("title_" + normTitle))) {
+        if (
+          decidedSet.has(item.id) ||
+          (canonId && decidedSet.has(canonId)) ||
+          (Number(item.tmdbId) > 0 &&
+            (decidedSet.has("tmdb_" + item.mediaType + "_" + item.tmdbId) ||
+              decidedSet.has((isMovie ? "movie_" : "tmdb_tv_") + item.tmdbId)))
+        ) {
           return true;
         }
-        if (item.tmdbId && decidedSet.has("tmdb_" + item.mediaType + "_" + item.tmdbId)) {
-          return true;
+        if (isMovie) {
+          const movies = Array.isArray(this.state.movies) ? this.state.movies : [];
+          return movies.some((m) => this.doesMovieMatchItem(m, item));
         }
-        for (const s of shows) {
-          if (s.id === item.id) return true;
-          if (item.tmdbId && Number(s.tmdbId) === Number(item.tmdbId)) return true;
-          if (item.tvmazeId && Number(s.tvmazeId) === Number(item.tvmazeId)) return true;
-          if (normTitle && String(s.title || "").trim().toLowerCase() === normTitle) return true;
-        }
-        for (const m of movies) {
-          if (m.id === item.id) return true;
-          if (item.tmdbId && Number(m.tmdbId) === Number(item.tmdbId)) return true;
-          if (normTitle && String(m.title || "").trim().toLowerCase() === normTitle) return true;
-        }
-        return false;
+        const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
+        return shows.some((s) => this.doesShowMatchItem(s, item));
       }
 
       markItemDecided(item) {
@@ -4019,26 +4743,24 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (!Array.isArray(this.state.decidedIds)) {
           this.state.decidedIds = [];
         }
-        const set = new Set(this.state.decidedIds);
-        if (item.id) set.add(item.id);
-        const normTitle = String(item.title || "").trim().toLowerCase();
-        if (normTitle) set.add("title_" + normTitle);
-        if (item.tmdbId) set.add("tmdb_" + item.mediaType + "_" + item.tmdbId);
-        this.state.decidedIds = Array.from(set);
+        const canonId = this.canonicalizeRecId(item) || String(item.id || "").trim();
+        if (canonId && !this.state.decidedIds.includes(canonId)) {
+          this.state.decidedIds.push(canonId);
+        }
+      }
 
-        if (!Array.isArray(this.state.actors)) {
-          this.state.actors = [];
+      sampleDiverseItems(list, count) {
+        if (!Array.isArray(list) || list.length <= count) {
+          return Array.isArray(list) ? [...list] : [];
         }
-        if (item.id && !this.state.actors.some((a) => a.id === item.id && a.role === "decided_rec")) {
-          this.state.actors.push({
-            id: item.id,
-            name: normTitle || item.id,
-            role: "decided_rec",
-            imageUrl: "",
-            imdbUrl: "",
-            knownFor: "",
-          });
+        const copy = [...list];
+        for (let i = copy.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          const tmp = copy[i];
+          copy[i] = copy[j];
+          copy[j] = tmp;
         }
+        return copy.slice(0, count);
       }
 
       getFilteredRecommendations() {
@@ -4063,7 +4785,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (this.isLoadingRecs) return;
         this.isLoadingRecs = true;
         if (incrementPage) {
-          this.recPage = (this.recPage % 5) + 1;
+          this.recPage = (this.recPage % 10) + 1;
         }
         this.renderSwipeDeck();
 
@@ -4071,20 +4793,24 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
           const movies = Array.isArray(this.state.movies) ? this.state.movies : [];
 
-          // Prioritize watched / in-progress series & watched movies as recommendation seeds
+          // Sample across the user's ENTIRE watched library so Hindi/regional & older titles are equally represented
           const watchedShows = shows.filter((s) => {
             const eff = this.getEffectiveShowStatus(s);
-            return eff === "completed" || eff === "in_progress" || (s.watchedEpisodes || []).length > 0;
+            const prog = this.computeShowProgress(s);
+            return eff === "completed" || eff === "in_progress" || prog.watchedCount > 0;
           });
-          const seedShows = (watchedShows.length > 0 ? watchedShows : shows).slice(0, 5);
+          const seedShows = this.sampleDiverseItems(watchedShows.length > 0 ? watchedShows : shows, 6);
           const watchedMovies = movies.filter((m) => m.watched);
-          const seedMovies = (watchedMovies.length > 0 ? watchedMovies : movies).slice(0, 5);
+          const seedMovies = this.sampleDiverseItems(watchedMovies.length > 0 ? watchedMovies : movies, 8);
 
           const tvSeedsParam = seedShows
             .map((s) => (Number(s.tmdbId) || 0) + ":" + String(s.title || "").replace(/[|:]/g, " "))
             .join("|");
           const movieSeedsParam = seedMovies
-            .map((m) => (Number(m.tmdbId) || 0) + ":" + String(m.title || "").replace(/[|:]/g, " "))
+            .map(
+              (m) =>
+                this.cleanMovieTmdbId(m.id, m.tmdbId) + ":" + String(m.title || "").replace(/[|:]/g, " ")
+            )
             .join("|");
 
           const url =
@@ -4097,13 +4823,22 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const res = await fetch(url);
           if (res.ok) {
             const data = await res.json();
-            const existingIds = new Set((this.recPool || []).map((r) => r.id));
+            const existingPool = Array.isArray(this.recPool) ? this.recPool : [];
+            const existingIds = new Set(existingPool.map((r) => r.id));
             for (const item of (data.results || [])) {
-              if (item && item.id && !existingIds.has(item.id)) {
-                existingIds.add(item.id);
-                this.recPool.push(item);
-              }
+              if (!item || !item.id || existingIds.has(item.id)) continue;
+              if (this.isItemInDbOrDecided(item)) continue;
+              const isMovie = item.mediaType === "movie" || String(item.id || "").startsWith("movie_");
+              const dupInPool = existingPool.some((ex) => {
+                const exMovie = ex.mediaType === "movie" || String(ex.id || "").startsWith("movie_");
+                if (isMovie !== exMovie) return false;
+                return isMovie ? this.doesMovieMatchItem(ex, item) : this.doesShowMatchItem(ex, item);
+              });
+              if (dupInPool) continue;
+              existingIds.add(item.id);
+              existingPool.push(item);
             }
+            this.recPool = existingPool;
           }
         } catch (_) {}
 
@@ -4136,18 +4871,18 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
         if (action === "watchlist") {
           if (item.mediaType === "movie") {
-            this.state.movies = [
-              {
-                ...item,
-                watched: false,
-                watchedAt: "",
-                userRating: 0,
-                reaction: "",
-                rewatchCount: 0,
-                isFavorite: false,
-              },
-              ...(this.state.movies || []),
-            ];
+            const exists = (this.state.movies || []).some((m) => this.doesMovieMatchItem(m, item));
+            if (!exists) {
+              this.state.movies = [
+                {
+                  ...item,
+                  tmdbId: this.cleanMovieTmdbId(item.id, item.tmdbId),
+                  watched: false,
+                  watchedAt: "",
+                },
+                ...(this.state.movies || []),
+              ];
+            }
           } else {
             let fullShow = null;
             const detailsUrl = this.getShowDetailsUrl(item);
@@ -4157,34 +4892,36 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 if (res.ok) fullShow = await res.json();
               } catch (_) {}
             }
+            const eps = fullShow?.episodes || [
+              { code: "S01E01", season: 1, number: 1, title: "Pilot", airDate: String(item.year || 2024) + "-01-01", runtimeMins: item.runtimeMins || 45 },
+            ];
             const newShow = {
               ...(fullShow || item),
               userStatus: "interested",
-              userRating: 0,
-              reaction: "",
-              isFavorite: false,
-              rewatchCount: 0,
+              totalEpisodes: eps.length,
+              completedSeasons: {},
               watchedEpisodes: [],
-              episodes: fullShow?.episodes || [
-                { code: "S01E01", season: 1, number: 1, title: "Pilot", airDate: String(item.year || 2024) + "-01-01", runtimeMins: item.runtimeMins || 45 },
-              ],
+              episodes: eps,
             };
             this.state.shows = [newShow, ...(this.state.shows || [])];
           }
         } else if (action === "completed") {
           if (item.mediaType === "movie") {
-            this.state.movies = [
-              {
-                ...item,
-                watched: true,
-                watchedAt: new Date().toISOString().slice(0, 10),
-                userRating: 0,
-                reaction: "",
-                rewatchCount: 0,
-                isFavorite: false,
-              },
-              ...(this.state.movies || []),
-            ];
+            const existing = (this.state.movies || []).find((m) => this.doesMovieMatchItem(m, item));
+            if (existing) {
+              existing.watched = true;
+              existing.watchedAt = new Date().toISOString().slice(0, 10);
+            } else {
+              this.state.movies = [
+                {
+                  ...item,
+                  tmdbId: this.cleanMovieTmdbId(item.id, item.tmdbId),
+                  watched: true,
+                  watchedAt: new Date().toISOString().slice(0, 10),
+                },
+                ...(this.state.movies || []),
+              ];
+            }
           } else {
             let fullShow = null;
             const detailsUrl = this.getShowDetailsUrl(item);
@@ -4200,10 +4937,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             const newShow = {
               ...(fullShow || item),
               userStatus: "completed",
-              userRating: 0,
-              reaction: "",
-              isFavorite: false,
-              rewatchCount: 0,
+              totalEpisodes: eps.length,
+              completedSeasons: {},
               lastWatchedAt: new Date().toISOString(),
               watchedEpisodes: eps.map((e) => e.code).sort(),
               episodes: eps,
@@ -4781,11 +5516,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const q = String.fromCharCode(34);
         const nl = String.fromCharCode(10);
         const esc = (val) => q + String(val == null ? "" : val).split(q).join(q + q) + q;
-        const rows = ["Type,Title,Year,Rating,Status,Progress,RuntimeMinutes,Favorite"];
+        const rows = ["Type,Title,Year,Rating,Status,Progress,RuntimeMinutes"];
         const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
         for (const s of shows) {
-          const eps = Array.isArray(s.episodes) ? s.episodes : [];
-          const watched = (s.watchedEpisodes || []).length;
+          const prog = this.computeShowProgress(s);
           const eff = this.getEffectiveShowStatus(s);
           const status = eff === "completed" ? "Watched" : eff === "in_progress" ? "In Progress" : eff === "stopped" ? "Stopped" : "Watchlist";
           rows.push(
@@ -4795,9 +5529,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               esc(s.year),
               esc(s.rating),
               esc(status),
-              esc(watched + "/" + eps.length + " eps"),
+              esc(prog.watchedCount + "/" + prog.total + " eps"),
               esc(s.runtimeMins || 45),
-              esc(Boolean(s.isFavorite)),
             ].join(",")
           );
         }
@@ -4812,7 +5545,6 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               esc(m.watched ? "Watched" : "Watchlist"),
               esc(m.watched ? "1/1" : "0/1"),
               esc(m.runtimeMins || 120),
-              esc(Boolean(m.isFavorite)),
             ].join(",")
           );
         }
@@ -4866,7 +5598,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           );
           if (res.ok) {
             const data = await res.json();
-            this.friendSearchResults = Array.isArray(data.results) ? data.results : [];
+            const list = Array.isArray(data.users)
+              ? data.users
+              : Array.isArray(data.results)
+                ? data.results
+                : [];
+            this.friendSearchResults = list;
             this.renderFriendSearchResults();
           }
         } catch (_) {}
@@ -4887,6 +5624,18 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.friendSearchQuery = "";
       }
 
+      applySocialStateFromResponse(data) {
+        const social = data && typeof data.state === "object" && data.state ? data.state : data;
+        if (!social || typeof social !== "object") return;
+        if (Array.isArray(social.friends)) this.state.friends = social.friends;
+        if (Array.isArray(social.incomingFriendRequests)) {
+          this.state.incomingFriendRequests = social.incomingFriendRequests;
+        }
+        if (Array.isArray(social.outgoingFriendRequests)) {
+          this.state.outgoingFriendRequests = social.outgoingFriendRequests;
+        }
+      }
+
       async sendFriendRequest(targetUserId) {
         const cleanTarget = String(targetUserId || "")
           .trim()
@@ -4904,16 +5653,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             this.showFriendStatusToast(data.error || "Could not send friend request.", true);
             return;
           }
-          if (Array.isArray(data.friends)) this.state.friends = data.friends;
-          if (Array.isArray(data.incomingFriendRequests)) {
-            this.state.incomingFriendRequests = data.incomingFriendRequests;
-          }
-          if (Array.isArray(data.outgoingFriendRequests)) {
-            this.state.outgoingFriendRequests = data.outgoingFriendRequests;
-          }
+          this.applySocialStateFromResponse(data);
           this.saveLocalCache();
+          const social = data && data.state ? data.state : data;
+          const nowFriends = Array.isArray(social?.friends) && social.friends.includes(cleanTarget);
           this.showFriendStatusToast(
-            data.status === "accepted"
+            data.status === "accepted" || nowFriends
               ? "You and @" + cleanTarget + " are now friends!"
               : "Friend request sent to @" + cleanTarget + "!"
           );
@@ -4935,13 +5680,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           });
           const data = await res.json().catch(() => ({}));
           if (res.ok) {
-            if (Array.isArray(data.friends)) this.state.friends = data.friends;
-            if (Array.isArray(data.incomingFriendRequests)) {
-              this.state.incomingFriendRequests = data.incomingFriendRequests;
-            }
-            if (Array.isArray(data.outgoingFriendRequests)) {
-              this.state.outgoingFriendRequests = data.outgoingFriendRequests;
-            }
+            this.applySocialStateFromResponse(data);
             this.saveLocalCache();
             this.showFriendStatusToast(
               action === "accept"
@@ -4965,13 +5704,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           });
           const data = await res.json().catch(() => ({}));
           if (res.ok) {
-            if (Array.isArray(data.friends)) this.state.friends = data.friends;
-            if (Array.isArray(data.incomingFriendRequests)) {
-              this.state.incomingFriendRequests = data.incomingFriendRequests;
-            }
-            if (Array.isArray(data.outgoingFriendRequests)) {
-              this.state.outgoingFriendRequests = data.outgoingFriendRequests;
-            }
+            this.applySocialStateFromResponse(data);
             if (this.selectedFriendId === cleanFriend) {
               this.closeFriendLibrary();
             }
@@ -4986,6 +5719,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const cleanFriend = String(friendUserId || "").trim().toLowerCase();
         if (!cleanFriend) return;
         this.selectedFriendId = cleanFriend;
+        this.friendLibraryError = "";
         this.isLoadingFriendLibrary = true;
         this.renderFriendLibrary();
         const panel = document.getElementById("friend-library-panel");
@@ -5001,21 +5735,24 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             { headers: this.getHeaders() }
           );
           const data = await res.json().catch(() => ({}));
-          if (res.ok) {
+          const libObj = data && typeof data.library === "object" && data.library ? data.library : data;
+          if (res.ok && libObj && (Array.isArray(libObj.shows) || Array.isArray(libObj.movies))) {
             this.selectedFriendLibrary = {
-              userId: data.userId || cleanFriend,
-              email: data.email || cleanFriend,
-              shows: Array.isArray(data.shows) ? data.shows : [],
-              movies: Array.isArray(data.movies) ? data.movies : [],
+              userId: libObj.userId || cleanFriend,
+              email: libObj.email || cleanFriend,
+              shows: Array.isArray(libObj.shows) ? libObj.shows : [],
+              movies: Array.isArray(libObj.movies) ? libObj.movies : [],
             };
+            this.friendLibraryError = "";
           } else {
-            this.showFriendStatusToast(
-              data.error || "Friend must accept your request before viewing their library.",
-              true
-            );
+            const errMsg =
+              data.error || "Could not load @" + cleanFriend + "'s library right now. Please tap Retry.";
+            this.friendLibraryError = errMsg;
+            this.showFriendStatusToast(errMsg, true);
             this.selectedFriendLibrary = null;
           }
         } catch (_) {
+          this.friendLibraryError = "Network error loading @" + cleanFriend + "'s library. Tap Retry.";
           this.selectedFriendLibrary = null;
         }
         this.isLoadingFriendLibrary = false;
@@ -5025,6 +5762,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       closeFriendLibrary() {
         this.selectedFriendId = "";
         this.selectedFriendLibrary = null;
+        this.friendLibraryError = "";
         document.getElementById("friend-library-panel")?.classList.add("hidden");
       }
 
@@ -5282,8 +6020,17 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
         const lib = this.selectedFriendLibrary;
         if (!lib) {
+          if (subEl) subEl.textContent = "Unable to load library";
+          if (filterBar) filterBar.innerHTML = "";
           itemsBox.innerHTML =
-            '<p class="text-xs text-zinc-400 py-4 text-center">Could not load friend library.</p>';
+            '<div class="py-5 text-center space-y-2.5">' +
+            '<p class="text-xs text-rose-400 font-semibold">' +
+            escapeHtml(this.friendLibraryError || "Could not load friend library.") +
+            "</p>" +
+            '<button onclick="app.openFriendLibrary(&quot;' +
+            escapeHtml(this.selectedFriendId) +
+            '&quot;)" class="px-4 py-1.5 rounded-full tv-yellow-bg text-xs font-extrabold">Retry</button>' +
+            "</div>";
           return;
         }
 
@@ -5368,12 +6115,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               const statusBadge = m.watched
                 ? '<span class="text-[11px] font-bold text-emerald-400">✓ Watched</span>'
                 : '<span class="text-[11px] font-bold tv-yellow-text">Watchlist</span>';
-              const myMovie = (this.state.movies || []).find(
-                (myM) =>
-                  myM.id === m.id ||
-                  String(myM.title || "").trim().toLowerCase() ===
-                    String(m.title || "").trim().toLowerCase()
-              );
+              const myMovie = (this.state.movies || []).find((myM) => this.doesMovieMatchItem(myM, m));
               let addBtn = "";
               if (!myMovie) {
                 addBtn =
@@ -5402,7 +6144,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 '<div class="flex items-center gap-3 min-w-0">' +
                 '<img src="' +
                 escapeHtml(poster) +
-                '" class="w-12 h-16 object-cover rounded-xl bg-zinc-900 shrink-0" />' +
+                '" loading="lazy" decoding="async" class="w-12 h-16 object-cover rounded-xl bg-zinc-900 shrink-0" />' +
                 '<div class="min-w-0">' +
                 '<div class="text-sm font-extrabold text-white truncate">' +
                 escapeHtml(m.title) +
@@ -5452,12 +6194,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 : eff === "in_progress"
                 ? "tv-yellow-text"
                 : "text-zinc-400";
-            const myShow = (this.state.shows || []).find(
-              (myS) =>
-                myS.id === s.id ||
-                String(myS.title || "").trim().toLowerCase() ===
-                  String(s.title || "").trim().toLowerCase()
-            );
+            const myShow = (this.state.shows || []).find((myS) => this.doesShowMatchItem(myS, s));
             const myEff = myShow ? this.getEffectiveShowStatus(myShow) : "";
             let addBtn = "";
             if (!myShow) {
@@ -5489,7 +6226,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               '<div class="flex items-center gap-3 min-w-0">' +
               '<img src="' +
               escapeHtml(poster) +
-              '" class="w-12 h-16 object-cover rounded-xl bg-zinc-900 shrink-0" />' +
+              '" loading="lazy" decoding="async" class="w-12 h-16 object-cover rounded-xl bg-zinc-900 shrink-0" />' +
               '<div class="min-w-0">' +
               '<div class="text-sm font-extrabold text-white truncate">' +
               escapeHtml(s.title) +
@@ -5519,12 +6256,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (mediaType === "movie") {
           const found = (lib.movies || []).find((m) => m.id === itemId);
           if (!found) return;
-          const existing = (this.state.movies || []).find(
-            (m) =>
-              m.id === found.id ||
-              String(m.title || "").trim().toLowerCase() ===
-                String(found.title || "").trim().toLowerCase()
-          );
+          const existing = (this.state.movies || []).find((m) => this.doesMovieMatchItem(m, found));
           if (existing) {
             if (markCompleted) {
               existing.watched = true;
@@ -5534,12 +6266,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             this.state.movies = [
               {
                 ...found,
+                tmdbId: this.cleanMovieTmdbId(found.id, found.tmdbId),
                 watched: markCompleted,
                 watchedAt: markCompleted ? new Date().toISOString().slice(0, 10) : "",
-                userRating: 0,
-                reaction: "",
-                rewatchCount: 0,
-                isFavorite: false,
               },
               ...(this.state.movies || []),
             ];
@@ -5547,31 +6276,21 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         } else {
           const found = (lib.shows || []).find((s) => s.id === itemId);
           if (!found) return;
+          const friendProg = this.computeShowProgress(found);
           const eps =
             Array.isArray(found.episodes) && found.episodes.length > 0
               ? found.episodes.map((e) => this.compactEpisode(e))
-              : [
-                  {
-                    code: "S01E01",
-                    season: 1,
-                    number: 1,
-                    title: "Pilot",
-                    airDate: String(found.year || 2024) + "-01-01",
-                    runtimeMins: found.runtimeMins || 45,
-                  },
-                ];
-          const existing = (this.state.shows || []).find(
-            (s) =>
-              s.id === found.id ||
-              String(s.title || "").trim().toLowerCase() ===
-                String(found.title || "").trim().toLowerCase()
-          );
+              : [];
+          const knownTotal = Math.max(Number(found.totalEpisodes) || 0, friendProg.total || 0, eps.length, 1);
+          const existing = (this.state.shows || []).find((s) => this.doesShowMatchItem(s, found));
           if (existing) {
             if (markCompleted) {
-              if (!Array.isArray(existing.episodes) || existing.episodes.length < eps.length) {
+              if (eps.length > (existing.episodes || []).length) {
                 existing.episodes = eps;
               }
-              existing.watchedEpisodes = (existing.episodes || eps).map((e) => e.code).sort();
+              existing.totalEpisodes = Math.max(Number(existing.totalEpisodes) || 0, knownTotal);
+              existing.completedSeasons = {};
+              existing.watchedEpisodes = (existing.episodes || []).map((e) => e.code).sort();
               existing.userStatus = "completed";
               existing.lastWatchedAt = new Date().toISOString();
             }
@@ -5579,13 +6298,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             this.state.shows = [
               {
                 ...found,
-                episodes: eps,
+                totalEpisodes: knownTotal,
+                completedSeasons: {},
+                episodes: markCompleted ? [] : eps,
                 userStatus: markCompleted ? "completed" : "interested",
-                watchedEpisodes: markCompleted ? eps.map((e) => e.code).sort() : [],
-                userRating: 0,
-                reaction: "",
-                rewatchCount: 0,
-                isFavorite: false,
+                watchedEpisodes: [],
                 lastWatchedAt: new Date().toISOString(),
               },
               ...(this.state.shows || []),

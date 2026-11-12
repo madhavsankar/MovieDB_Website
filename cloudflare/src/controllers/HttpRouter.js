@@ -337,17 +337,25 @@ export class HttpRouter {
     if (request.method === "GET" && path === "/api/search") {
       const q = url.searchParams.get("q") || "";
       const providers = url.searchParams.get("providers") || "";
+      const page = Number(url.searchParams.get("page") || 1) || 1;
       if (providers && !q.trim()) {
-        const data = await LiveCatalogService.discoverByUsProviders(providers, { env: this.env });
+        const data = await LiveCatalogService.discoverByUsProviders(providers, {
+          page,
+          env: this.env,
+        });
         return this.json(data);
       }
-      const data = await LiveCatalogService.searchMulti(q, { env: this.env });
+      const data = await LiveCatalogService.searchMulti(q, { page, env: this.env });
       return this.json(data);
     }
 
     if (request.method === "GET" && path === "/api/discover-providers") {
       const providers = url.searchParams.get("providers") || "";
-      const data = await LiveCatalogService.discoverByUsProviders(providers, { env: this.env });
+      const page = Number(url.searchParams.get("page") || 1) || 1;
+      const data = await LiveCatalogService.discoverByUsProviders(providers, {
+        page,
+        env: this.env,
+      });
       return this.json(data);
     }
 
@@ -446,22 +454,38 @@ export class HttpRouter {
       }
 
       if (path === "/api/friends/search") {
-        const q = url.searchParams.get("q") || "";
-        const users = await this.repo.searchUsersByUsername(userParam, q);
-        return this.json({ users }, 200, sessionHeaders);
-      }
-
-      if (path === "/api/friends/library") {
-        const friendId = url.searchParams.get("friendId") || "";
-        const library = await this.repo.getFriendLibrary(userParam, friendId);
-        if (!library) {
+        try {
+          const q = url.searchParams.get("q") || "";
+          const users = await this.repo.searchUsersByUsername(userParam, q);
+          return this.json({ users }, 200, sessionHeaders);
+        } catch (err) {
           return this.json(
-            { error: "You can only view the series and movies of accepted friends." },
-            403,
+            { error: err?.message || "Unable to search users right now." },
+            502,
             sessionHeaders
           );
         }
-        return this.json({ library }, 200, sessionHeaders);
+      }
+
+      if (path === "/api/friends/library") {
+        try {
+          const friendId = url.searchParams.get("friendId") || "";
+          const library = await this.repo.getFriendLibrary(userParam, friendId);
+          if (!library) {
+            return this.json(
+              { error: "You can only view the series and movies of accepted friends." },
+              403,
+              sessionHeaders
+            );
+          }
+          return this.json({ library }, 200, sessionHeaders);
+        } catch (err) {
+          return this.json(
+            { error: err?.message || "Unable to load friend's library right now. Please try again." },
+            502,
+            sessionHeaders
+          );
+        }
       }
     }
 

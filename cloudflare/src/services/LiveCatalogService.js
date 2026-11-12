@@ -271,40 +271,98 @@ export class LiveCatalogService {
    *  - TVMaze (`/search/shows?q=...`) for TV Shows
    *  - IMDb Suggestion API + Apple iTunes Search API for Movies
    */
-  static async searchMulti(query, { fetchImpl = fetch, env = null } = {}) {
+  static async searchMulti(query, { page = 1, fetchImpl = fetch, env = null } = {}) {
     const q = String(query || "").trim();
-    if (!q) return { results: [] };
+    const safePage = Math.max(1, Math.min(25, Math.floor(Number(page) || 1)));
+    if (!q) return { results: [], page: safePage, hasMore: false };
 
     const results = [];
+    const seenShowTmdbIds = new Set();
     const seenShowTitles = new Set();
+    const seenShowBaseTitleYears = new Map();
+    const seenMovieTmdbIds = new Set();
     const seenMovieTitles = new Set();
+    const seenMovieBaseTitleYears = new Map();
     const normalizeSearchTitle = (s) =>
       String(s || "")
         .toLowerCase()
         .replace(/&/g, " and ")
         .replace(/[^a-z0-9]+/g, " ")
         .trim();
+    const normalizeBaseTitle = (s) =>
+      normalizeSearchTitle(
+        String(s || "")
+          .replace(/\([^)]*\)/g, " ")
+          .replace(/\[[^\]]*\]/g, " ")
+      );
+    const hasMovieNearYear = (baseTitle, yr) => {
+      if (!baseTitle) return false;
+      const yrs = seenMovieBaseTitleYears.get(baseTitle);
+      if (!yrs) return false;
+      return yrs.some((y) => Math.abs(y - yr) <= 1);
+    };
+    const recordMovieTitleYear = (baseTitle, yr) => {
+      if (!baseTitle) return;
+      if (!seenMovieBaseTitleYears.has(baseTitle)) seenMovieBaseTitleYears.set(baseTitle, []);
+      seenMovieBaseTitleYears.get(baseTitle).push(yr);
+    };
+    const hasShowNearYear = (baseTitle, yr) => {
+      if (!baseTitle) return false;
+      const yrs = seenShowBaseTitleYears.get(baseTitle);
+      if (!yrs) return false;
+      return yrs.some((y) => Math.abs(y - yr) <= 1);
+    };
+    const recordShowTitleYear = (baseTitle, yr) => {
+      if (!baseTitle) return;
+      if (!seenShowBaseTitleYears.has(baseTitle)) seenShowBaseTitleYears.set(baseTitle, []);
+      seenShowBaseTitleYears.get(baseTitle).push(yr);
+    };
+    let tmdbMovieCount = 0;
     const normQuery = normalizeSearchTitle(q);
     const ampVariant = /\band\b/i.test(q) ? q.replace(/\band\b/gi, "&") : "";
+    let tmdbHasMore = false;
+    let ampHasMore = false;
+    let actorHasMore = false;
+    let itunesHasMore = false;
 
     try {
       const tmdbReq = LiveCatalogService._buildTmdbRequest(
-        `/search/multi?query=${encodeURIComponent(q)}&include_adult=false&language=en-US&page=1`,
+        `/search/multi?query=${encodeURIComponent(q)}&include_adult=false&language=en-US&page=${safePage}`,
         env
       );
       const tmdbAmpTvReq = ampVariant
         ? LiveCatalogService._buildTmdbRequest(
-            `/search/tv?query=${encodeURIComponent(ampVariant)}&include_adult=false&language=en-US&page=1`,
+            `/search/tv?query=${encodeURIComponent(ampVariant)}&include_adult=false&language=en-US&page=${safePage}`,
             env
           )
         : null;
-      const [tmdbRes, tmdbAmpTvRes, showsRes, imdbRes, moviesRes] = await Promise.allSettled([
-        tmdbReq ? fetchImpl(tmdbReq.url, { headers: tmdbReq.headers }) : Promise.resolve(null),
-        tmdbAmpTvReq ? fetchImpl(tmdbAmpTvReq.url, { headers: tmdbAmpTvReq.headers }) : Promise.resolve(null),
-        fetchImpl(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(q)}`),
-        fetchImpl(`https://v3.sg.media-imdb.com/suggestion/x/${encodeURIComponent(q)}.json`),
-        fetchImpl(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&country=US&entity=movie&limit=10`),
-      ]);
+      const tmdbPersonReq =
+        safePage > 1
+          ? LiveCatalogService._buildTmdbRequest(
+              `/search/person?query=${encodeURIComponent(q)}&include_adult=false&language=en-US&page=1`,
+              env
+            )
+          : null;
+      const itunesOffset = (safePage - 1) * 25;
+      const [tmdbRes, tmdbAmpTvRes, tmdbPersonRes, showsRes, imdbRes, moviesRes] =
+        await Promise.allSettled([
+          tmdbReq ? fetchImpl(tmdbReq.url, { headers: tmdbReq.headers }) : Promise.resolve(null),
+          tmdbAmpTvReq
+            ? fetchImpl(tmdbAmpTvReq.url, { headers: tmdbAmpTvReq.headers })
+            : Promise.resolve(null),
+          tmdbPersonReq
+            ? fetchImpl(tmdbPersonReq.url, { headers: tmdbPersonReq.headers })
+            : Promise.resolve(null),
+          safePage === 1
+            ? fetchImpl(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(q)}`)
+            : Promise.resolve(null),
+          safePage === 1
+            ? fetchImpl(`https://v3.sg.media-imdb.com/suggestion/x/${encodeURIComponent(q)}.json`)
+            : Promise.resolve(null),
+          fetchImpl(
+            `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&country=US&entity=movie&limit=25&offset=${itunesOffset}`
+          ),
+        ]);
 
       // Map TVMaze shows by normalized title so TMDB TV results can also carry tvmazeId for instant full-episode lookup
       const tvmazeByTitle = new Map();
@@ -324,7 +382,9 @@ export class LiveCatalogService {
       let tmdbRawResults = [];
       if (tmdbAmpTvRes.status === "fulfilled" && tmdbAmpTvRes.value && tmdbAmpTvRes.value.ok) {
         const ampData = await tmdbAmpTvRes.value.json();
-        for (const tvItem of (ampData?.results || []).slice(0, 10)) {
+        const ampTotalPages = Number(ampData?.total_pages) || 1;
+        if (safePage < ampTotalPages) ampHasMore = true;
+        for (const tvItem of ampData?.results || []) {
           if (tvItem && tvItem.id) {
             combinedTmdbItems.push({ ...tvItem, media_type: "tv" });
           }
@@ -332,22 +392,31 @@ export class LiveCatalogService {
       }
       if (tmdbRes.status === "fulfilled" && tmdbRes.value && tmdbRes.value.ok) {
         const tmdbData = await tmdbRes.value.json();
+        const tmdbTotalPages = Number(tmdbData?.total_pages) || 1;
+        if (safePage < tmdbTotalPages) tmdbHasMore = true;
         tmdbRawResults = Array.isArray(tmdbData?.results) ? tmdbData.results : [];
-        for (const item of tmdbRawResults.slice(0, 18)) {
+        for (const item of tmdbRawResults) {
           if (item && item.id) combinedTmdbItems.push(item);
         }
       }
 
-      // Expand matched actors (person) into their movies (without ever returning actor cards)
+      // Expand matched actors (person) into their movies (paginated in slices of 30 per page)
+      const personCandidates = [...tmdbRawResults];
+      if (tmdbPersonRes.status === "fulfilled" && tmdbPersonRes.value && tmdbPersonRes.value.ok) {
+        const pData = await tmdbPersonRes.value.json();
+        for (const p of (pData?.results || []).slice(0, 4)) {
+          if (p && p.id) personCandidates.push({ ...p, media_type: "person" });
+        }
+      }
       const matchedPersons = [];
       const seenPersonIds = new Set();
-      for (let idx = 0; idx < Math.min(8, tmdbRawResults.length); idx++) {
-        const p = tmdbRawResults[idx];
+      for (let idx = 0; idx < Math.min(10, personCandidates.length); idx++) {
+        const p = personCandidates[idx];
         if (!p || !p.id || String(p.media_type || "").toLowerCase() !== "person") continue;
         const pNorm = normalizeSearchTitle(p.name || p.original_name || "");
         if (!pNorm || seenPersonIds.has(p.id)) continue;
         if (
-          idx < 3 ||
+          (safePage === 1 && idx < 3) ||
           pNorm === normQuery ||
           (normQuery.length >= 4 && (pNorm.startsWith(normQuery) || normQuery.startsWith(pNorm)))
         ) {
@@ -360,6 +429,7 @@ export class LiveCatalogService {
         (String(tmdbRawResults[0]?.media_type || "").toLowerCase() === "person" ||
           normalizeSearchTitle(matchedPersons[0].name || "") === normQuery);
 
+      const ACTOR_PAGE_SIZE = 30;
       const actorMovieItems = [];
       if (matchedPersons.length > 0) {
         const creditReqs = matchedPersons.slice(0, 2).map((p) => {
@@ -400,9 +470,12 @@ export class LiveCatalogService {
               bVotes >= 30
                 ? (Number(b.popularity) || 0) + Math.min(300, bVotes / 20)
                 : (Number(b.popularity) || 0) * 0.2;
-            return bScore - aScore;
+            return bScore - aScore || (Number(b.id) || 0) - (Number(a.id) || 0);
           });
-          for (const m of cleanCast.slice(0, 28)) {
+          const sliceStart = (safePage - 1) * ACTOR_PAGE_SIZE;
+          const sliceEnd = sliceStart + ACTOR_PAGE_SIZE;
+          if (cleanCast.length > sliceEnd) actorHasMore = true;
+          for (const m of cleanCast.slice(sliceStart, sliceEnd)) {
             actorMovieItems.push({ movie: m, personName: batch.personName });
           }
         }
@@ -411,12 +484,17 @@ export class LiveCatalogService {
       const pushActorMovies = () => {
         for (const entry of actorMovieItems) {
           const m = entry.movie;
+          const mId = Number(m.id) || 0;
+          if (mId > 0 && seenMovieTmdbIds.has(mId)) continue;
           const title = m.title || m.original_title || "Untitled Movie";
           const rel = String(m.release_date || "");
           const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
           const key = `${normalizeSearchTitle(title)}_${year}`;
           if (seenMovieTitles.has(key)) continue;
+          if (mId > 0) seenMovieTmdbIds.add(mId);
           seenMovieTitles.add(key);
+          recordMovieTitleYear(normalizeBaseTitle(title), year);
+          tmdbMovieCount += 1;
           const posterUrl = m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : "";
           const cleanOverview = stripHtml(m.overview || "");
           results.push({
@@ -456,12 +534,17 @@ export class LiveCatalogService {
         const mType = String(item.media_type || "").toLowerCase();
         if (actorIsPrimary && (Number(item.vote_count) || 0) < 25) continue;
         if (mType === "tv") {
+          const tvId = Number(item.id) || 0;
+          if (tvId > 0 && seenShowTmdbIds.has(tvId)) continue;
           const title = item.name || item.original_name || "Untitled Show";
           const normTitle = normalizeSearchTitle(title);
-          if (!normTitle || seenShowTitles.has(normTitle)) continue;
-          seenShowTitles.add(normTitle);
           const firstAir = String(item.first_air_date || "");
           const year = firstAir ? parseInt(firstAir.slice(0, 4), 10) || 2024 : 2024;
+          const showKey = `${normTitle}_${year}`;
+          if (!normTitle || seenShowTitles.has(showKey)) continue;
+          if (tvId > 0) seenShowTmdbIds.add(tvId);
+          seenShowTitles.add(showKey);
+          recordShowTitleYear(normalizeBaseTitle(title), year);
           const matchedTvMaze = tvmazeByTitle.get(normTitle);
           const posterUrl = item.poster_path
             ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
@@ -482,12 +565,17 @@ export class LiveCatalogService {
             overview: stripHtml(item.overview || matchedTvMaze?.summary || ""),
           });
         } else if (mType === "movie") {
+          const mId = Number(item.id) || 0;
+          if (mId > 0 && seenMovieTmdbIds.has(mId)) continue;
           const title = item.title || item.original_title || "Untitled Movie";
           const rel = String(item.release_date || "");
           const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
           const key = `${normalizeSearchTitle(title)}_${year}`;
           if (seenMovieTitles.has(key)) continue;
+          if (mId > 0) seenMovieTmdbIds.add(mId);
           seenMovieTitles.add(key);
+          recordMovieTitleYear(normalizeBaseTitle(title), year);
+          tmdbMovieCount += 1;
           const posterUrl = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : "";
           results.push({
             id: `movie_${item.id}`,
@@ -511,19 +599,23 @@ export class LiveCatalogService {
       }
 
       if (!actorIsPrimary || actorMovieItems.length === 0) {
-        for (const entry of showsData.slice(0, 12)) {
+        for (const entry of showsData) {
           const show = entry?.show;
           if (!show || !show.id) continue;
           const normTitle = normalizeSearchTitle(show.name || "");
-          if (!normTitle || seenShowTitles.has(normTitle)) continue;
-          seenShowTitles.add(normTitle);
           const premiered = String(show.premiered || "");
           const year = premiered ? parseInt(premiered.slice(0, 4), 10) || 2024 : 2024;
+          const showKey = `${normTitle}_${year}`;
+          const baseShowTitle = normalizeBaseTitle(show.name || "");
+          if (!normTitle || seenShowTitles.has(showKey) || hasShowNearYear(baseShowTitle, year)) continue;
+          seenShowTitles.add(showKey);
+          recordShowTitleYear(baseShowTitle, year);
           const network = show.network?.name || show.webChannel?.name || "Streaming";
           const posterUrl = show.image?.medium || show.image?.original || "";
           results.push({
             id: `tvmaze_${show.id}`,
             tvmazeId: show.id,
+            tmdbId: 0,
             mediaType: "show",
             title: show.name || "Untitled Show",
             year,
@@ -538,22 +630,25 @@ export class LiveCatalogService {
         }
       }
 
-      if (imdbRes.status === "fulfilled" && imdbRes.value.ok) {
+      if (tmdbMovieCount < 5 && imdbRes.status === "fulfilled" && imdbRes.value && imdbRes.value.ok) {
         const imdbData = await imdbRes.value.json();
         for (const item of imdbData?.d || []) {
           if (!item || !item.id || !item.l) continue;
           const qid = String(item.qid || "").toLowerCase();
           if (qid === "movie" || qid === "feature" || qid === "tvmovie") {
-            const key = `${normalizeSearchTitle(item.l)}_${item.y || 2024}`;
-            if (seenMovieTitles.has(key)) continue;
+            const year = Number(item.y) || 2024;
+            const key = `${normalizeSearchTitle(item.l)}_${year}`;
+            const baseTitle = normalizeBaseTitle(item.l);
+            if (seenMovieTitles.has(key) || hasMovieNearYear(baseTitle, year)) continue;
             seenMovieTitles.add(key);
+            recordMovieTitleYear(baseTitle, year);
             const castArr = item.s ? String(item.s).split(",").map((c) => c.trim()).filter(Boolean) : [];
             results.push({
               id: `movie_${item.id}`,
-              tmdbId: parseInt(String(item.id).replace(/\D/g, ""), 10) || 0,
+              tmdbId: 0,
               mediaType: "movie",
               title: item.l,
-              year: Number(item.y) || 2024,
+              year,
               director: castArr[0] || "",
               cast: castArr,
               runtimeMins: 125,
@@ -567,20 +662,24 @@ export class LiveCatalogService {
         }
       }
 
-      if (moviesRes.status === "fulfilled" && moviesRes.value.ok) {
+      if (tmdbMovieCount < 5 && moviesRes.status === "fulfilled" && moviesRes.value && moviesRes.value.ok) {
         const moviesData = await moviesRes.value.json();
-        for (const item of (moviesData?.results || []).slice(0, 10)) {
+        const itunesItems = Array.isArray(moviesData?.results) ? moviesData.results : [];
+        if (itunesItems.length >= 25) itunesHasMore = true;
+        for (const item of itunesItems) {
           if (!item || !item.trackId) continue;
           const rel = String(item.releaseDate || "");
           const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
-          const key = `${String(item.trackName || "").toLowerCase()}_${year}`;
-          if (seenMovieTitles.has(key)) continue;
+          const key = `${normalizeSearchTitle(item.trackName || "")}_${year}`;
+          const baseTitle = normalizeBaseTitle(item.trackName || "");
+          if (seenMovieTitles.has(key) || hasMovieNearYear(baseTitle, year)) continue;
           seenMovieTitles.add(key);
+          recordMovieTitleYear(baseTitle, year);
           const runtimeMins = item.trackTimeMillis ? Math.max(45, Math.round(item.trackTimeMillis / 60000)) : 120;
           const artwork = String(item.artworkUrl100 || "").replace("100x100bb.jpg", "600x900bb.jpg");
           results.push({
-            id: `movie_${item.trackId}`,
-            tmdbId: item.trackId,
+            id: `movie_itunes_${item.trackId}`,
+            tmdbId: 0,
             mediaType: "movie",
             title: item.trackName || "Untitled Movie",
             year,
@@ -596,20 +695,25 @@ export class LiveCatalogService {
       }
     } catch (_) {}
 
-    return { results };
+    const hasMore =
+      results.length > 0 &&
+      safePage < 25 &&
+      (tmdbHasMore || ampHasMore || actorHasMore || itunesHasMore);
+    return { results, page: safePage, hasMore: Boolean(hasMore) };
   }
 
   /**
    * Discovers US TV Shows & Movies streaming on the specified US platform(s) via TMDB `/3/discover/tv` and `/3/discover/movie`
    * (`watch_region=US&with_watch_monetization_types=flatrate&with_watch_providers=...`).
    */
-  static async discoverByUsProviders(platformsCsv, { fetchImpl = fetch, env = null } = {}) {
+  static async discoverByUsProviders(platformsCsv, { page = 1, fetchImpl = fetch, env = null } = {}) {
+    const safePage = Math.max(1, Math.min(25, Math.floor(Number(page) || 1)));
     const requestedKeys = String(platformsCsv || "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
     if (requestedKeys.length === 0) {
-      return LiveCatalogService.searchMulti("Game of Thrones", { fetchImpl, env });
+      return LiveCatalogService.searchMulti("Game of Thrones", { page: safePage, fetchImpl, env });
     }
 
     const matchedPlatforms = LiveCatalogService.US_STREAMING_PLATFORMS.filter((p) =>
@@ -618,14 +722,16 @@ export class LiveCatalogService {
     const providerIdsPipe = matchedPlatforms.flatMap((p) => p.providerIds).join("|");
     const platformLabel = matchedPlatforms.map((p) => p.key).join(" / ") || requestedKeys.join(" / ");
     const results = [];
+    let tvHasMore = false;
+    let movHasMore = false;
 
     if (providerIdsPipe) {
       const tvReq = LiveCatalogService._buildTmdbRequest(
-        `/discover/tv?watch_region=US&with_watch_monetization_types=flatrate&with_watch_providers=${encodeURIComponent(providerIdsPipe)}&sort_by=popularity.desc&language=en-US&page=1`,
+        `/discover/tv?watch_region=US&with_watch_monetization_types=flatrate&with_watch_providers=${encodeURIComponent(providerIdsPipe)}&sort_by=popularity.desc&language=en-US&page=${safePage}`,
         env
       );
       const movReq = LiveCatalogService._buildTmdbRequest(
-        `/discover/movie?watch_region=US&with_watch_monetization_types=flatrate&with_watch_providers=${encodeURIComponent(providerIdsPipe)}&sort_by=popularity.desc&language=en-US&page=1`,
+        `/discover/movie?watch_region=US&with_watch_monetization_types=flatrate&with_watch_providers=${encodeURIComponent(providerIdsPipe)}&sort_by=popularity.desc&language=en-US&page=${safePage}`,
         env
       );
 
@@ -637,7 +743,8 @@ export class LiveCatalogService {
 
         if (tvRes.status === "fulfilled" && tvRes.value && tvRes.value.ok) {
           const tvData = await tvRes.value.json();
-          for (const item of (tvData?.results || []).slice(0, 12)) {
+          if (safePage < (Number(tvData?.total_pages) || 1)) tvHasMore = true;
+          for (const item of tvData?.results || []) {
             if (!item?.id) continue;
             const firstAir = String(item.first_air_date || "");
             const year = firstAir ? parseInt(firstAir.slice(0, 4), 10) || 2024 : 2024;
@@ -661,7 +768,8 @@ export class LiveCatalogService {
 
         if (movRes.status === "fulfilled" && movRes.value && movRes.value.ok) {
           const movData = await movRes.value.json();
-          for (const item of (movData?.results || []).slice(0, 12)) {
+          if (safePage < (Number(movData?.total_pages) || 1)) movHasMore = true;
+          for (const item of movData?.results || []) {
             if (!item?.id) continue;
             const rel = String(item.release_date || "");
             const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
@@ -684,7 +792,8 @@ export class LiveCatalogService {
       } catch (_) {}
     }
 
-    return { results };
+    const hasMore = results.length > 0 && safePage < 25 && (tvHasMore || movHasMore);
+    return { results, page: safePage, hasMore: Boolean(hasMore) };
   }
 
   /**
@@ -695,23 +804,58 @@ export class LiveCatalogService {
     const safePage = Math.max(1, Math.min(10, Number(page) || 1));
     const results = [];
     const seenKeys = new Set();
+    const normalizeRecBaseTitle = (s) =>
+      String(s || "")
+        .toLowerCase()
+        .replace(/\([^)]*\)/g, " ")
+        .replace(/\[[^\]]*\]/g, " ")
+        .replace(/&/g, " and ")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
 
     const pushUnique = (item) => {
       if (!item || !item.title || !item.posterUrl) return;
-      const normKey = `${item.mediaType}_${String(item.title).trim().toLowerCase()}`;
-      if (seenKeys.has(item.id) || seenKeys.has(normKey)) return;
+      const baseTitle = normalizeRecBaseTitle(item.title);
+      const normKey = `${item.mediaType}_${baseTitle}`;
+      const tmdbKey = item.tmdbId > 0 ? `${item.mediaType}_tmdb_${item.tmdbId}` : "";
+      if (seenKeys.has(item.id) || seenKeys.has(normKey) || (tmdbKey && seenKeys.has(tmdbKey))) return;
       seenKeys.add(item.id);
-      seenKeys.add(normKey);
+      if (baseTitle) seenKeys.add(normKey);
+      if (tmdbKey) seenKeys.add(tmdbKey);
       results.push(item);
     };
 
+    const INDIAN_LANGS = new Set(["hi", "ml", "ta", "te", "kn", "bn", "mr", "pa", "gu", "ur"]);
+    const LANG_LABELS = {
+      hi: "Hindi",
+      ml: "Malayalam",
+      ta: "Tamil",
+      te: "Telugu",
+      kn: "Kannada",
+      bn: "Bengali",
+      mr: "Marathi",
+      pa: "Punjabi",
+      gu: "Gujarati",
+      ur: "Urdu",
+    };
+
     try {
-      // Resolve missing tmdbId for seeds that only have a title
-      const resolvedTvSeeds = [];
-      for (const s of tvSeeds.slice(0, 5)) {
+      const indianLangCounts = new Map();
+      let totalSeedLangCount = 0;
+      const recordSeedLang = (lang) => {
+        const clean = String(lang || "").trim().toLowerCase();
+        if (!clean) return;
+        totalSeedLangCount += 1;
+        if (INDIAN_LANGS.has(clean)) {
+          indianLangCounts.set(clean, (indianLangCounts.get(clean) || 0) + 1);
+        }
+      };
+
+      const resolveTvJobs = tvSeeds.slice(0, 5).map(async (s) => {
         let tmdbId = Number(s?.tmdbId) || 0;
         const title = String(s?.title || "").trim();
-        if (!tmdbId && title) {
+        let lang = String(s?.lang || "").trim().toLowerCase();
+        if (tmdbId <= 0 && title) {
           const searchReq = LiveCatalogService._buildTmdbRequest(
             `/search/tv?query=${encodeURIComponent(title)}&language=en-US&page=1`,
             env
@@ -721,21 +865,21 @@ export class LiveCatalogService {
               const r = await fetchImpl(searchReq.url, { headers: searchReq.headers });
               if (r.ok) {
                 const d = await r.json();
-                tmdbId = Number(d?.results?.[0]?.id) || 0;
+                const hit = d?.results?.[0];
+                tmdbId = Number(hit?.id) || 0;
+                if (hit?.original_language) lang = String(hit.original_language).toLowerCase();
               }
             } catch (_) {}
           }
         }
-        if (tmdbId > 0) {
-          resolvedTvSeeds.push({ tmdbId, title: title || "your watched shows" });
-        }
-      }
+        return tmdbId > 0 ? { tmdbId, title: title || "your watched shows", lang } : null;
+      });
 
-      const resolvedMovieSeeds = [];
-      for (const m of movieSeeds.slice(0, 5)) {
+      const resolveMovieJobs = movieSeeds.slice(0, 6).map(async (m) => {
         let tmdbId = Number(m?.tmdbId) || 0;
         const title = String(m?.title || "").trim();
-        if (!tmdbId && title) {
+        let lang = String(m?.lang || "").trim().toLowerCase();
+        if (tmdbId <= 0 && title) {
           const searchReq = LiveCatalogService._buildTmdbRequest(
             `/search/movie?query=${encodeURIComponent(title)}&language=en-US&page=1`,
             env
@@ -745,68 +889,178 @@ export class LiveCatalogService {
               const r = await fetchImpl(searchReq.url, { headers: searchReq.headers });
               if (r.ok) {
                 const d = await r.json();
-                tmdbId = Number(d?.results?.[0]?.id) || 0;
+                const hit = d?.results?.[0];
+                tmdbId = Number(hit?.id) || 0;
+                if (hit?.original_language) lang = String(hit.original_language).toLowerCase();
               }
             } catch (_) {}
           }
         }
-        if (tmdbId > 0) {
-          resolvedMovieSeeds.push({ tmdbId, title: title || "your watched movies" });
-        }
-      }
+        return tmdbId > 0 ? { tmdbId, title: title || "your watched movies", lang } : null;
+      });
 
-      const fetchJobs = [];
+      const [resolvedTvRaw, resolvedMovieRaw] = await Promise.all([
+        Promise.all(resolveTvJobs),
+        Promise.all(resolveMovieJobs),
+      ]);
+      const resolvedTvSeeds = resolvedTvRaw.filter(Boolean);
+      const resolvedMovieSeeds = resolvedMovieRaw.filter(Boolean);
+
+      const seedFetchJobs = [];
       for (const seed of resolvedTvSeeds) {
-        const req = LiveCatalogService._buildTmdbRequest(
-          `/tv/${seed.tmdbId}/recommendations?language=en-US&page=${safePage}`,
-          env
-        );
+        const path =
+          safePage === 1
+            ? `/tv/${seed.tmdbId}?append_to_response=recommendations,similar&language=en-US`
+            : `/tv/${seed.tmdbId}/recommendations?language=en-US&page=${safePage}`;
+        const req = LiveCatalogService._buildTmdbRequest(path, env);
         if (req) {
-          fetchJobs.push(
+          seedFetchJobs.push(
             fetchImpl(req.url, { headers: req.headers })
               .then((r) => (r.ok ? r.json() : null))
-              .then((data) => ({ type: "tv", seedTitle: seed.title, items: data?.results || [] }))
+              .then((data) => {
+                const lang = String(data?.original_language || seed.lang || "").toLowerCase();
+                recordSeedLang(lang);
+                const recs = Array.isArray(data?.recommendations?.results)
+                  ? data.recommendations.results
+                  : Array.isArray(data?.results)
+                    ? data.results
+                    : [];
+                const sim = Array.isArray(data?.similar?.results) ? data.similar.results : [];
+                return { type: "tv", seedTitle: seed.title, items: [...recs, ...sim] };
+              })
               .catch(() => null)
           );
         }
       }
 
       for (const seed of resolvedMovieSeeds) {
-        const req = LiveCatalogService._buildTmdbRequest(
-          `/movie/${seed.tmdbId}/recommendations?language=en-US&page=${safePage}`,
-          env
-        );
+        const path =
+          safePage === 1
+            ? `/movie/${seed.tmdbId}?append_to_response=recommendations,similar&language=en-US`
+            : `/movie/${seed.tmdbId}/recommendations?language=en-US&page=${safePage}`;
+        const req = LiveCatalogService._buildTmdbRequest(path, env);
         if (req) {
-          fetchJobs.push(
+          seedFetchJobs.push(
             fetchImpl(req.url, { headers: req.headers })
               .then((r) => (r.ok ? r.json() : null))
-              .then((data) => ({ type: "movie", seedTitle: seed.title, items: data?.results || [] }))
+              .then((data) => {
+                const lang = String(data?.original_language || seed.lang || "").toLowerCase();
+                recordSeedLang(lang);
+                const recs = Array.isArray(data?.recommendations?.results)
+                  ? data.recommendations.results
+                  : Array.isArray(data?.results)
+                    ? data.results
+                    : [];
+                const sim = Array.isArray(data?.similar?.results) ? data.similar.results : [];
+                return { type: "movie", seedTitle: seed.title, items: [...recs, ...sim] };
+              })
               .catch(() => null)
           );
         }
       }
 
-      // Also include trending TV & Movies as discovery supplement
+      const seedBatches = (await Promise.all(seedFetchJobs)).filter(Boolean);
+
+      const indianTotal = Array.from(indianLangCounts.values()).reduce((a, b) => a + b, 0);
+      const indianRatio = totalSeedLangCount > 0 ? indianTotal / totalSeedLangCount : 0;
+      const discoveryJobs = [];
+
+      if (indianTotal > 0) {
+        const rankedLangs = Array.from(indianLangCounts.entries())
+          .sort((a, b) => b[1] - a[1])
+          .map(([k]) => k);
+        if (!rankedLangs.includes("hi")) rankedLangs.unshift("hi");
+        const targetLangs = rankedLangs.slice(0, 3);
+
+        for (const lang of targetLangs) {
+          const langName = LANG_LABELS[lang] || "Indian";
+          const discMovPop = LiveCatalogService._buildTmdbRequest(
+            `/discover/movie?with_original_language=${encodeURIComponent(lang)}&sort_by=popularity.desc&vote_count.gte=15&include_adult=false&language=en-US&page=${safePage}`,
+            env
+          );
+          if (discMovPop) {
+            discoveryJobs.push(
+              fetchImpl(discMovPop.url, { headers: discMovPop.headers })
+                .then((r) => (r.ok ? r.json() : null))
+                .then((d) => ({
+                  type: "movie",
+                  seedTitle: "",
+                  customReason: `Popular in ${langName} Cinema`,
+                  items: d?.results || [],
+                }))
+                .catch(() => null)
+            );
+          }
+          if (lang === "hi" || indianRatio >= 0.4) {
+            const discMovTop = LiveCatalogService._buildTmdbRequest(
+              `/discover/movie?with_original_language=${encodeURIComponent(lang)}&sort_by=vote_average.desc&vote_count.gte=60&include_adult=false&language=en-US&page=${safePage}`,
+              env
+            );
+            if (discMovTop) {
+              discoveryJobs.push(
+                fetchImpl(discMovTop.url, { headers: discMovTop.headers })
+                  .then((r) => (r.ok ? r.json() : null))
+                  .then((d) => ({
+                    type: "movie",
+                    seedTitle: "",
+                    customReason: `Top-Rated ${langName} Movie`,
+                    items: d?.results || [],
+                  }))
+                  .catch(() => null)
+              );
+            }
+          }
+        }
+
+        const hiTvReq = LiveCatalogService._buildTmdbRequest(
+          `/discover/tv?with_original_language=hi&sort_by=popularity.desc&vote_count.gte=10&include_adult=false&language=en-US&page=${safePage}`,
+          env
+        );
+        if (hiTvReq) {
+          discoveryJobs.push(
+            fetchImpl(hiTvReq.url, { headers: hiTvReq.headers })
+              .then((r) => (r.ok ? r.json() : null))
+              .then((d) => ({
+                type: "tv",
+                seedTitle: "",
+                customReason: "Popular Hindi & Indian Series",
+                items: d?.results || [],
+              }))
+              .catch(() => null)
+          );
+        }
+      }
+
+      // Include global trending as light supplement (limited when user's seeds are predominantly Indian)
       const trendTvReq = LiveCatalogService._buildTmdbRequest(`/trending/tv/week?language=en-US&page=${safePage}`, env);
       const trendMovReq = LiveCatalogService._buildTmdbRequest(`/trending/movie/week?language=en-US&page=${safePage}`, env);
       if (trendTvReq) {
-        fetchJobs.push(
+        discoveryJobs.push(
           fetchImpl(trendTvReq.url, { headers: trendTvReq.headers })
             .then((r) => (r.ok ? r.json() : null))
-            .then((data) => ({ type: "tv", seedTitle: "", items: data?.results || [] }))
+            .then((data) => ({
+              type: "tv",
+              seedTitle: "",
+              items: (data?.results || []).slice(0, indianRatio >= 0.45 ? 8 : 20),
+            }))
             .catch(() => null)
         );
       }
       if (trendMovReq) {
-        fetchJobs.push(
+        discoveryJobs.push(
           fetchImpl(trendMovReq.url, { headers: trendMovReq.headers })
             .then((r) => (r.ok ? r.json() : null))
-            .then((data) => ({ type: "movie", seedTitle: "", items: data?.results || [] }))
+            .then((data) => ({
+              type: "movie",
+              seedTitle: "",
+              items: (data?.results || []).slice(0, indianRatio >= 0.45 ? 6 : 20),
+            }))
             .catch(() => null)
         );
       }
 
-      const batches = (await Promise.all(fetchJobs)).filter(Boolean);
+      const discoveryBatches = (await Promise.all(discoveryJobs)).filter(Boolean);
+      const batches = [...seedBatches, ...discoveryBatches];
       const maxLen = batches.reduce((acc, b) => Math.max(acc, (b.items || []).length), 0);
 
       for (let i = 0; i < maxLen; i++) {
@@ -832,7 +1086,9 @@ export class LiveCatalogService {
               rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 8.0,
               posterUrl: `https://image.tmdb.org/t/p/w500${item.poster_path}`,
               overview: stripHtml(item.overview || ""),
-              becauseOf: batch.seedTitle ? `Because you watched ${batch.seedTitle}` : "Popular & Acclaimed Series",
+              becauseOf: batch.seedTitle
+                ? `Because you watched ${batch.seedTitle}`
+                : batch.customReason || "Popular & Acclaimed Series",
             });
           } else {
             const title = item.title || item.original_title || "";
@@ -852,7 +1108,9 @@ export class LiveCatalogService {
               rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 7.8,
               posterUrl: `https://image.tmdb.org/t/p/w500${item.poster_path}`,
               overview: stripHtml(item.overview || ""),
-              becauseOf: batch.seedTitle ? `Because you watched ${batch.seedTitle}` : "Popular & Acclaimed Movie",
+              becauseOf: batch.seedTitle
+                ? `Because you watched ${batch.seedTitle}`
+                : batch.customReason || "Popular & Acclaimed Movie",
             });
           }
         }
@@ -869,7 +1127,23 @@ export class LiveCatalogService {
     let rawStr = String(tvmazeId || "").trim();
     const cleanTitle = String(title || "").trim();
     if (rawStr.startsWith("movie_")) {
-      const tmdbId = Number(rawStr.replace(/^movie_/, "").replace(/\D/g, ""));
+      const isNonTmdbMovie = rawStr.startsWith("movie_tt") || rawStr.startsWith("movie_itunes_");
+      let tmdbId = isNonTmdbMovie ? 0 : Number(rawStr.replace(/^movie_/, "").replace(/\D/g, ""));
+      if (!tmdbId && cleanTitle) {
+        const sMovReq = LiveCatalogService._buildTmdbRequest(
+          `/search/movie?query=${encodeURIComponent(cleanTitle)}&include_adult=false&language=en-US&page=1`,
+          env
+        );
+        if (sMovReq) {
+          try {
+            const sr = await fetchImpl(sMovReq.url, { headers: sMovReq.headers });
+            if (sr.ok) {
+              const sd = await sr.json();
+              tmdbId = Number(sd?.results?.[0]?.id) || 0;
+            }
+          } catch (_) {}
+        }
+      }
       const tmdbReq = LiveCatalogService._buildTmdbRequest(
         `/movie/${tmdbId}?append_to_response=credits,watch/providers&language=en-US`,
         env
@@ -1128,17 +1402,56 @@ export class LiveCatalogService {
     let totalEpisodesWatched = 0;
     let showMinutesWatched = 0;
     for (const s of shows) {
-      const watchedSet = new Set(s.watchedEpisodes || []);
-      totalEpisodesWatched += watchedSet.size;
+      const eps = Array.isArray(s.episodes) ? s.episodes : [];
+      const rawStatus = String(s.userStatus || "").toLowerCase();
       const defaultEpRuntime = Number(s.runtimeMins) || 45;
-      if (Array.isArray(s.episodes) && s.episodes.length > 0) {
-        for (const ep of s.episodes) {
-          if (watchedSet.has(ep.code)) {
-            showMinutesWatched += Number(ep.runtimeMins) || defaultEpRuntime;
-          }
+      const watchedSet = new Set(
+        (s.watchedEpisodes || [])
+          .map((c) => String(c || "").trim().toUpperCase())
+          .filter(Boolean)
+      );
+      const presentSeasons = new Set(eps.map((ep) => String(Number(ep.season) || 1)));
+      const compMap = s.completedSeasons && typeof s.completedSeasons === "object" ? s.completedSeasons : {};
+      let compactedCount = 0;
+      for (const [sk, cnt] of Object.entries(compMap)) {
+        const sNum = Number(sk) || 0;
+        if (sNum > 0 && !presentSeasons.has(String(sNum))) {
+          compactedCount += Math.max(0, Number(cnt) || 0);
         }
+      }
+      if (rawStatus === "completed") {
+        const count = Math.max(
+          Number(s.totalEpisodes) || 0,
+          eps.length + compactedCount,
+          compactedCount + watchedSet.size,
+          1
+        );
+        totalEpisodesWatched += count;
+        showMinutesWatched += count * defaultEpRuntime;
       } else {
-        showMinutesWatched += watchedSet.size * defaultEpRuntime;
+        totalEpisodesWatched += compactedCount;
+        showMinutesWatched += compactedCount * defaultEpRuntime;
+        if (eps.length > 0) {
+          for (const ep of eps) {
+            const sk = String(Number(ep.season) || 1);
+            if (watchedSet.has(String(ep.code || "").trim().toUpperCase()) || compMap[sk]) {
+              totalEpisodesWatched += 1;
+              showMinutesWatched += Number(ep.runtimeMins) || defaultEpRuntime;
+            }
+          }
+          // Count any partial watched codes from non-present, non-compacted seasons
+          for (const code of watchedSet) {
+            const m = /^S0*([0-9]+)E[0-9]+$/i.exec(code);
+            const sStr = m ? String(Number(m[1]) || 1) : "";
+            if (!sStr || (!presentSeasons.has(sStr) && !compMap[sStr])) {
+              totalEpisodesWatched += 1;
+              showMinutesWatched += defaultEpRuntime;
+            }
+          }
+        } else {
+          totalEpisodesWatched += watchedSet.size;
+          showMinutesWatched += watchedSet.size * defaultEpRuntime;
+        }
       }
     }
 

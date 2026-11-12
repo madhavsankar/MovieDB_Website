@@ -117,12 +117,39 @@ def compute_stats(state):
     episode_mins = 0
     episodes_watched = 0
     for show in shows:
-        watched_set = set(show.get("watchedEpisodes") or [])
-        episodes_watched += len(watched_set)
-        ep_map = {ep.get("code"): ep.get("runtimeMins") for ep in (show.get("episodes") or [])}
+        eps = show.get("episodes") or []
+        raw_status = str(show.get("userStatus") or "").lower()
         default_rt = int(show.get("runtimeMins") or 45)
-        for code in watched_set:
-            episode_mins += int(ep_map.get(code) or default_rt)
+        watched_set = {str(c or "").strip().upper() for c in (show.get("watchedEpisodes") or []) if str(c or "").strip()}
+        present_seasons = {str(int(ep.get("season") or 1)) for ep in eps if isinstance(ep, dict)}
+        compacted_count = 0
+        comp_seasons = show.get("completedSeasons")
+        if isinstance(comp_seasons, dict):
+            for sk, cnt in comp_seasons.items():
+                try:
+                    s_num = int(sk)
+                    c_num = max(0, int(cnt or 0))
+                    if s_num > 0 and str(s_num) not in present_seasons:
+                        compacted_count += c_num
+                except Exception:
+                    pass
+        if len(eps) == 0 and raw_status == "completed":
+            cnt = max(int(show.get("totalEpisodes") or 0), compacted_count, len(watched_set), 1)
+            episodes_watched += cnt
+            episode_mins += cnt * default_rt
+        else:
+            episodes_watched += compacted_count
+            episode_mins += compacted_count * default_rt
+            if eps:
+                for ep in eps:
+                    if not isinstance(ep, dict):
+                        continue
+                    if str(ep.get("code") or "").strip().upper() in watched_set:
+                        episodes_watched += 1
+                        episode_mins += int(ep.get("runtimeMins") or default_rt)
+            else:
+                episodes_watched += len(watched_set)
+                episode_mins += len(watched_set) * default_rt
     watched_movies = [m for m in movies if m.get("watched")]
     movie_mins = sum(
         int(m.get("runtimeMins") or 120)
@@ -273,38 +300,92 @@ def save_user_state_to_firestore(user_id, state):
         return False
 
 
-def search_multi(query):
+def search_multi(query, page=1):
     q = str(query or "").strip()
+    safe_page = max(1, min(25, int(page or 1)))
     if not q:
-        return {"results": [], "shows": [], "movies": [], "actors": []}
+        return {"results": [], "shows": [], "movies": [], "actors": [], "page": safe_page, "hasMore": False}
     enc = urllib.parse.quote(q)
+    has_more_flags = [False]
 
     def fetch_shows():
-        try:
-            items = http_get_json(f"https://api.tvmaze.com/search/shows?q={enc}")
-            out = []
-            for item in items[:12]:
-                s = item.get("show") or {}
-                if not s.get("id") or not s.get("name"):
-                    continue
-                img = (s.get("image") or {}).get("medium") or (s.get("image") or {}).get("original") or ""
-                out.append({
-                    "id": f"tvmaze_{s['id']}",
-                    "tvmazeId": s["id"],
-                    "mediaType": "show",
-                    "title": s["name"],
-                    "year": int(str(s.get("premiered") or "2024")[:4]) if str(s.get("premiered") or "")[:4].isdigit() else 2024,
-                    "network": (s.get("network") or {}).get("name") or (s.get("webChannel") or {}).get("name") or "Streaming",
-                    "status": s.get("status") or "Running",
-                    "runtimeMins": int(s.get("averageRuntime") or s.get("runtime") or 45),
-                    "genres": s.get("genres") or [],
-                    "rating": float((s.get("rating") or {}).get("average") or 7.8),
-                    "posterUrl": img.replace("http://", "https://"),
-                    "overview": strip_html(s.get("summary") or ""),
-                })
-            return out
-        except Exception:
-            return []
+        out = []
+        tmdb_token = (CONFIG.get("TMDB_READ_TOKEN") or os.environ.get("TMDB_READ_TOKEN") or "").strip()
+        tmdb_key = (CONFIG.get("TMDB_API_KEY") or os.environ.get("TMDB_API_KEY") or "").strip()
+        seen_tv = set()
+        if tmdb_token or tmdb_key:
+            try:
+                sep = "&"
+                url = (
+                    f"https://api.themoviedb.org/3/search/tv?query={enc}&include_adult=false&language=en-US&page={safe_page}"
+                    if tmdb_token
+                    else f"https://api.themoviedb.org/3/search/tv?query={enc}&include_adult=false&language=en-US&page={safe_page}{sep}api_key={urllib.parse.quote(tmdb_key)}"
+                )
+                req_headers = {"User-Agent": "TVTimeTracker/1.0", "Accept": "application/json"}
+                if tmdb_token:
+                    req_headers["Authorization"] = f"Bearer {tmdb_token}"
+                req = urllib.request.Request(url, headers=req_headers)
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    tv_data = json.loads(r.read().decode("utf-8"))
+                if safe_page < int(tv_data.get("total_pages") or 1):
+                    has_more_flags[0] = True
+                for item in (tv_data.get("results") or []):
+                    title = item.get("name") or item.get("original_name")
+                    if not item.get("id") or not title:
+                        continue
+                    k = title.lower().strip()
+                    if k in seen_tv:
+                        continue
+                    seen_tv.add(k)
+                    prem = str(item.get("first_air_date") or "2024")[:4]
+                    yr = int(prem) if prem.isdigit() else 2024
+                    poster_path = item.get("poster_path") or ""
+                    out.append({
+                        "id": f"tmdb_tv_{item['id']}",
+                        "tvmazeId": 0,
+                        "tmdbId": item["id"],
+                        "mediaType": "show",
+                        "title": title,
+                        "year": yr,
+                        "network": "Streaming",
+                        "status": "Running",
+                        "runtimeMins": 45,
+                        "genres": ["TV Series"],
+                        "rating": round(float(item.get("vote_average") or 8.0), 1),
+                        "posterUrl": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else "",
+                        "overview": strip_html(item.get("overview") or ""),
+                    })
+            except Exception:
+                pass
+        if safe_page == 1:
+            try:
+                items = http_get_json(f"https://api.tvmaze.com/search/shows?q={enc}")
+                for item in items:
+                    s = item.get("show") or {}
+                    if not s.get("id") or not s.get("name"):
+                        continue
+                    k = s["name"].lower().strip()
+                    if k in seen_tv:
+                        continue
+                    seen_tv.add(k)
+                    img = (s.get("image") or {}).get("medium") or (s.get("image") or {}).get("original") or ""
+                    out.append({
+                        "id": f"tvmaze_{s['id']}",
+                        "tvmazeId": s["id"],
+                        "mediaType": "show",
+                        "title": s["name"],
+                        "year": int(str(s.get("premiered") or "2024")[:4]) if str(s.get("premiered") or "")[:4].isdigit() else 2024,
+                        "network": (s.get("network") or {}).get("name") or (s.get("webChannel") or {}).get("name") or "Streaming",
+                        "status": s.get("status") or "Running",
+                        "runtimeMins": int(s.get("averageRuntime") or s.get("runtime") or 45),
+                        "genres": s.get("genres") or [],
+                        "rating": float((s.get("rating") or {}).get("average") or 7.8),
+                        "posterUrl": img.replace("http://", "https://"),
+                        "overview": strip_html(s.get("summary") or ""),
+                    })
+            except Exception:
+                pass
+        return out
 
     def fetch_movies():
         out = []
@@ -336,10 +417,14 @@ def search_multi(query):
                     credits = _tmdb_get(f"/person/{pid}/movie_credits?language=en-US")
                     cast_movies = list(credits.get("cast") or [])
                     cast_movies.sort(
-                        key=lambda m: float(m.get("popularity") or 0) + min(300.0, float(m.get("vote_count") or 0) / 12.0),
+                        key=lambda m: (float(m.get("popularity") or 0) + min(300.0, float(m.get("vote_count") or 0) / 12.0), int(m.get("id") or 0)),
                         reverse=True,
                     )
-                    for m in cast_movies[:24]:
+                    slice_start = (safe_page - 1) * 30
+                    slice_end = slice_start + 30
+                    if len(cast_movies) > slice_end:
+                        has_more_flags[0] = True
+                    for m in cast_movies[slice_start:slice_end]:
                         title = m.get("title") or m.get("original_title")
                         if not m.get("id") or not title:
                             continue
@@ -369,8 +454,10 @@ def search_multi(query):
             except Exception:
                 pass
             try:
-                tmdb_data = _tmdb_get(f"/search/movie?query={enc}&include_adult=false&language=en-US&page=1")
-                for item in (tmdb_data.get("results") or [])[:12]:
+                tmdb_data = _tmdb_get(f"/search/movie?query={enc}&include_adult=false&language=en-US&page={safe_page}")
+                if safe_page < int(tmdb_data.get("total_pages") or 1):
+                    has_more_flags[0] = True
+                for item in (tmdb_data.get("results") or []):
                     title = item.get("title") or item.get("original_title")
                     if not item.get("id") or not title:
                         continue
@@ -465,6 +552,8 @@ def search_multi(query):
             "shows": shows,
             "movies": movies,
             "actors": [],
+            "page": safe_page,
+            "hasMore": bool((shows or movies) and safe_page < 25 and has_more_flags[0]),
         }
 
 
@@ -480,10 +569,11 @@ US_PROVIDER_IDS = {
 }
 
 
-def discover_by_us_providers(providers_csv):
+def discover_by_us_providers(providers_csv, page=1):
+    safe_page = max(1, min(25, int(page or 1)))
     names = [p.strip() for p in str(providers_csv or "").split(",") if p.strip() in US_PROVIDER_IDS]
     if not names:
-        return {"results": [], "shows": [], "movies": [], "actors": [], "providers": []}
+        return {"results": [], "shows": [], "movies": [], "actors": [], "providers": [], "page": safe_page, "hasMore": False}
     provider_ids = []
     for n in names:
         for pid in US_PROVIDER_IDS[n]:
@@ -494,6 +584,7 @@ def discover_by_us_providers(providers_csv):
     tmdb_token = (CONFIG.get("TMDB_READ_TOKEN") or os.environ.get("TMDB_READ_TOKEN") or "").strip()
     tmdb_key = (CONFIG.get("TMDB_API_KEY") or os.environ.get("TMDB_API_KEY") or "").strip()
     shows, movies = [], []
+    has_more = False
     if tmdb_token or tmdb_key:
         req_headers = {"User-Agent": "TVTimeTracker/1.0", "Accept": "application/json"}
         if tmdb_token:
@@ -501,14 +592,16 @@ def discover_by_us_providers(providers_csv):
         key_suffix = "" if tmdb_token else f"&api_key={urllib.parse.quote(tmdb_key)}"
         try:
             tv_url = (
-                f"https://api.themoviedb.org/3/discover/tv?include_adult=false&language=en-US&page=1"
+                f"https://api.themoviedb.org/3/discover/tv?include_adult=false&language=en-US&page={safe_page}"
                 f"&sort_by=popularity.desc&watch_region=US&with_watch_monetization_types=flatrate"
                 f"&with_watch_providers={urllib.parse.quote(pipe_ids)}{key_suffix}"
             )
             req = urllib.request.Request(tv_url, headers=req_headers)
             with urllib.request.urlopen(req, timeout=8) as r:
                 tv_data = json.loads(r.read().decode("utf-8"))
-            for s in (tv_data.get("results") or [])[:15]:
+            if safe_page < int(tv_data.get("total_pages") or 1):
+                has_more = True
+            for s in (tv_data.get("results") or [])[:20]:
                 title = s.get("name") or s.get("original_name")
                 if not s.get("id") or not title:
                     continue
@@ -534,14 +627,16 @@ def discover_by_us_providers(providers_csv):
             pass
         try:
             mv_url = (
-                f"https://api.themoviedb.org/3/discover/movie?include_adult=false&language=en-US&page=1"
+                f"https://api.themoviedb.org/3/discover/movie?include_adult=false&language=en-US&page={safe_page}"
                 f"&sort_by=popularity.desc&watch_region=US&with_watch_monetization_types=flatrate"
                 f"&with_watch_providers={urllib.parse.quote(pipe_ids)}{key_suffix}"
             )
             req = urllib.request.Request(mv_url, headers=req_headers)
             with urllib.request.urlopen(req, timeout=8) as r:
                 mv_data = json.loads(r.read().decode("utf-8"))
-            for m in (mv_data.get("results") or [])[:15]:
+            if safe_page < int(mv_data.get("total_pages") or 1):
+                has_more = True
+            for m in (mv_data.get("results") or [])[:20]:
                 title = m.get("title") or m.get("original_title")
                 if not m.get("id") or not title:
                     continue
@@ -570,6 +665,8 @@ def discover_by_us_providers(providers_csv):
         "movies": movies,
         "actors": [],
         "providers": names,
+        "page": safe_page,
+        "hasMore": bool((shows or movies) and safe_page < 25 and has_more),
     }
 
 
@@ -889,15 +986,17 @@ class TvTimeHttpHandler(BaseHTTPRequestHandler):
         if path == "/api/search":
             q = (qs.get("q") or [""])[0]
             providers = (qs.get("providers") or [""])[0]
+            page = int((qs.get("page") or ["1"])[0] or "1")
             if not q.strip() and providers:
-                self._send_json(discover_by_us_providers(providers))
+                self._send_json(discover_by_us_providers(providers, page))
             else:
-                self._send_json(search_multi(q))
+                self._send_json(search_multi(q, page))
             return
 
         if path == "/api/discover-providers":
             providers = (qs.get("providers") or [""])[0]
-            self._send_json(discover_by_us_providers(providers))
+            page = int((qs.get("page") or ["1"])[0] or "1")
+            self._send_json(discover_by_us_providers(providers, page))
             return
 
         if path == "/api/recommendations":

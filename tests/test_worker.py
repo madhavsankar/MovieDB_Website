@@ -878,9 +878,13 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 tickedAfterDetailsHtml,
                 finalSaveCount: savedPayloads.length,
                 finalEpCount: finalSavedShow.episodes.length,
+                finalTotalEpisodes: finalSavedShow.totalEpisodes,
                 finalWatchedCount: finalSavedShow.watchedEpisodes.length,
                 compactedByteLen: compactedPayloadStr.length,
+                compactedEpLen: compactedHimym.episodes.length,
+                compactedTotalEpisodes: compactedHimym.totalEpisodes,
                 compactedWatchedLen: compactedHimym.watchedEpisodes.length,
+                reloadedTotalEpisodes: reloadedHimym.totalEpisodes,
                 reloadedWatchedLen: reloadedHimym.watchedEpisodes.length,
                 reloadedStatus: reloadedHimym.userStatus
               });
@@ -895,11 +899,15 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertTrue(out["tickedDuringResearchHtml"])
         self.assertTrue(out["tickedAfterDetailsHtml"])
         self.assertGreaterEqual(out["finalSaveCount"], 2)
-        self.assertEqual(out["finalEpCount"], 208)
-        self.assertEqual(out["finalWatchedCount"], 208)
-        self.assertLess(out["compactedByteLen"], 600000)
+        self.assertEqual(out["finalEpCount"], 0)
+        self.assertEqual(out["finalTotalEpisodes"], 208)
+        self.assertEqual(out["finalWatchedCount"], 0)
+        self.assertLess(out["compactedByteLen"], 35000)
+        self.assertEqual(out["compactedEpLen"], 0)
+        self.assertEqual(out["compactedTotalEpisodes"], 208)
         self.assertEqual(out["compactedWatchedLen"], 0)
-        self.assertEqual(out["reloadedWatchedLen"], 208)
+        self.assertEqual(out["reloadedTotalEpisodes"], 208)
+        self.assertEqual(out["reloadedWatchedLen"], 0)
         self.assertEqual(out["reloadedStatus"], "completed")
 
     def test_public_repo_security_invariants(self):

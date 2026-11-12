@@ -75,82 +75,305 @@ object FirestoreSyncService {
 
     private fun isSyntheticEpisodeList(eps: List<EpisodeModel>): Boolean {
         if (eps.isEmpty()) return true
+        if (eps.any { it.season > 1 }) return false
         val synthRegex = Regex("^Episode \\d+$", RegexOption.IGNORE_CASE)
         return eps.all { it.title.isBlank() || synthRegex.matches(it.title.trim()) }
     }
 
-    private fun compactEpisodesJsonArray(rawJson: String, minimalForCompleted: Boolean = false): JSONArray {
-        val out = JSONArray()
-        try {
-            val arr = JSONArray(rawJson)
-            for (i in 0 until arr.length()) {
-                val ep = arr.optJSONObject(i) ?: continue
-                val obj = JSONObject().apply {
-                    put("code", ep.optString("code", "S01E01"))
-                    put("season", ep.optInt("season", 1))
-                    put("number", ep.optInt("number", i + 1))
-                    if (!minimalForCompleted) {
-                        val title = ep.optString("title", "")
-                        if (title.isNotEmpty()) put("title", title)
-                        val airDate = ep.optString("airDate", "")
-                        if (airDate.isNotEmpty()) put("airDate", airDate)
-                        val rt = ep.optInt("runtimeMins", 0)
-                        if (rt > 0) put("runtimeMins", rt)
-                    }
-                }
-                out.put(obj)
-            }
-        } catch (_: Exception) {
+    private fun parseShowJsonToEntity(s: JSONObject, userId: String, fallbackIdx: Int): ShowEntity {
+        val watchedArr = s.optJSONArray("watchedEpisodes") ?: JSONArray()
+        val watchedCodes = (0 until watchedArr.length()).mapNotNull { watchedArr.optString(it) }
+        val genresArr = s.optJSONArray("genres") ?: JSONArray()
+        val genresCsv = (0 until genresArr.length()).mapNotNull { genresArr.optString(it) }.joinToString(", ")
+        val castArr = s.optJSONArray("cast") ?: JSONArray()
+        val castCsv = (0 until castArr.length()).mapNotNull { castArr.optString(it) }.joinToString(", ")
+        val epsArr = s.optJSONArray("episodes") ?: JSONArray()
+        val parsedEps = mutableListOf<EpisodeModel>()
+        for (j in 0 until epsArr.length()) {
+            val epObj = epsArr.optJSONObject(j) ?: continue
+            parsedEps.add(EpisodeModel.fromJson(epObj))
         }
-        return out
+        val compObj = s.optJSONObject("completedSeasons")
+        val compMap = LinkedHashMap<Int, Int>()
+        if (compObj != null) {
+            val keys = compObj.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val sNum = k.toIntOrNull() ?: 0
+                val cnt = compObj.optInt(k, 0)
+                if (sNum > 0 && cnt > 0) compMap[sNum] = cnt
+            }
+        }
+        val rawTotal = s.optInt("totalEpisodes", 0).coerceAtLeast(0)
+        val episodesJson = TvTimeProgressCalculator.serializeCompactedMeta(
+            totalEpisodes = rawTotal,
+            completedSeasons = compMap,
+            episodes = parsedEps
+        )
+        return ShowEntity(
+            userId = userId,
+            externalId = s.optString("id", "show_$fallbackIdx"),
+            tvmazeId = s.optInt("tvmazeId", 0),
+            tmdbId = s.optInt("tmdbId", 0),
+            title = s.optString("title", "Show"),
+            year = s.optInt("year", 2024),
+            network = s.optString("network", "Streaming"),
+            status = s.optString("status", "Running"),
+            runtimeMins = s.optInt("runtimeMins", 45),
+            genresCsv = genresCsv.ifBlank { "Drama" },
+            castCsv = castCsv,
+            rating = s.optDouble("rating", 8.0),
+            posterUrl = s.optString("posterUrl", ""),
+            overview = s.optString("overview", ""),
+            userStatus = s.optString("userStatus", "watching"),
+            userRating = 0,
+            reaction = "",
+            isFavorite = false,
+            rewatchCount = 0,
+            watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(watchedCodes),
+            episodesJson = episodesJson,
+            lastWatchedAt = s.optString("lastWatchedAt", "")
+        )
+    }
+
+    private fun parseMovieJsonToEntity(m: JSONObject, userId: String, fallbackIdx: Int): MovieEntity {
+        val extId = m.optString("id", "movie_$fallbackIdx")
+        val rawTmdb = m.optInt("tmdbId", 0)
+        val cleanTmdb = TvTimeProgressCalculator.cleanMovieTmdbId(extId, rawTmdb)
+        val genresArr = m.optJSONArray("genres") ?: JSONArray()
+        val genresCsv = (0 until genresArr.length()).mapNotNull { genresArr.optString(it) }.joinToString(", ")
+        val castArr = m.optJSONArray("cast") ?: JSONArray()
+        val castCsv = (0 until minOf(3, castArr.length())).mapNotNull { castArr.optString(it) }.joinToString(", ")
+        return MovieEntity(
+            userId = userId,
+            externalId = extId,
+            tmdbId = cleanTmdb,
+            title = m.optString("title", "Movie"),
+            year = m.optInt("year", 2024),
+            runtimeMins = m.optInt("runtimeMins", 120),
+            genresCsv = genresCsv.ifBlank { "Movie" },
+            castCsv = castCsv,
+            director = m.optString("director", ""),
+            streamingService = m.optString("streamingService", "Streaming"),
+            rating = m.optDouble("rating", 8.0),
+            posterUrl = m.optString("posterUrl", ""),
+            overview = m.optString("overview", ""),
+            watched = m.optBoolean("watched", false),
+            watchedAt = m.optString("watchedAt", "")
+        )
+    }
+
+    fun compactShowEntityToFirestoreJson(s: ShowEntity): JSONObject {
+        val meta = TvTimeProgressCalculator.parseCompactedMeta(s.episodesJson)
+        val rawWatched = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
+        val prog = TvTimeProgressCalculator.computeShowProgress(
+            episodes = meta.episodes,
+            watchedCodes = rawWatched,
+            rawUserStatus = s.userStatus,
+            totalEpisodesOverride = meta.totalEpisodes,
+            completedSeasons = meta.completedSeasons
+        )
+        val effStatus = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus)
+        val defaultRt = s.runtimeMins.coerceAtLeast(15)
+
+        val obj = JSONObject().apply {
+            put("id", s.externalId)
+            if (s.tvmazeId > 0) put("tvmazeId", s.tvmazeId) else put("tvmazeId", 0)
+            if (s.tmdbId > 0) put("tmdbId", s.tmdbId) else put("tmdbId", 0)
+            put("title", s.title)
+            put("year", s.year)
+            put("network", s.network.ifBlank { "Streaming" })
+            put("status", s.status.ifBlank { "Running" })
+            put("runtimeMins", defaultRt)
+            put("rating", Math.round(s.rating * 10.0) / 10.0)
+            put("posterUrl", s.posterUrl)
+            put("userStatus", effStatus)
+            if (s.lastWatchedAt.isNotBlank()) put("lastWatchedAt", s.lastWatchedAt)
+        }
+
+        if (effStatus == "completed") {
+            obj.put("totalEpisodes", prog.totalEpisodes.coerceAtLeast(1))
+            obj.put("watchedEpisodes", JSONArray())
+            obj.put("episodes", JSONArray())
+            return obj
+        }
+
+        val completedSeasons = LinkedHashMap<Int, Int>(meta.completedSeasons)
+        val groupedBySeason = meta.episodes
+            .sortedWith(compareBy({ it.season }, { it.number }))
+            .groupBy { it.season }
+            .toSortedMap()
+
+        for ((seasonNum, seasonEps) in groupedBySeason) {
+            if (seasonEps.isNotEmpty() && seasonEps.all { rawWatched.contains(it.code.trim().uppercase()) }) {
+                completedSeasons[seasonNum] = maxOf(completedSeasons[seasonNum] ?: 0, seasonEps.size)
+            }
+        }
+
+        val epCodeRegex = Regex("^S(\\d+)E(\\d+)$", RegexOption.IGNORE_CASE)
+        val remainingSeasons = groupedBySeason.filterKeys { !completedSeasons.containsKey(it) }
+        val todayIso = java.time.LocalDate.now().toString()
+
+        val activeSeasonNum = remainingSeasons.keys.firstOrNull()
+        val keptEpisodes = if (activeSeasonNum != null) {
+            val activeList = remainingSeasons[activeSeasonNum].orEmpty().toMutableList()
+            val earliestFuture = meta.episodes
+                .filter { it.season != activeSeasonNum && it.airDate.take(10).length == 10 && it.airDate.take(10) >= todayIso }
+                .minWithOrNull(compareBy<EpisodeModel> { it.airDate.take(10) }.thenBy { it.season }.thenBy { it.number })
+            if (earliestFuture != null && activeList.none { it.code.equals(earliestFuture.code, ignoreCase = true) }) {
+                activeList.add(earliestFuture)
+            }
+            activeList
+        } else {
+            emptyList()
+        }
+
+        val keptWatched = rawWatched.filter { code ->
+            val m = epCodeRegex.find(code)
+            val sNum = m?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            sNum <= 0 || !completedSeasons.containsKey(sNum)
+        }.sorted()
+
+        val keptEpsArr = JSONArray()
+        for (ep in keptEpisodes) {
+            val epJson = JSONObject().apply {
+                put("code", ep.code)
+                put("season", ep.season)
+                put("number", ep.number)
+                val defaultTitle = "Episode ${ep.number}"
+                if (ep.title.isNotBlank() && !ep.title.equals(defaultTitle, ignoreCase = true)) {
+                    put("title", ep.title)
+                }
+                if (ep.airDate.isNotBlank()) put("airDate", ep.airDate)
+                if (ep.runtimeMins > 0 && ep.runtimeMins != defaultRt) put("runtimeMins", ep.runtimeMins)
+            }
+            keptEpsArr.put(epJson)
+        }
+
+        val computedTotal = maxOf(
+            prog.totalEpisodes,
+            completedSeasons.values.sum() + remainingSeasons.values.sumOf { it.size },
+            1
+        )
+        obj.put("totalEpisodes", computedTotal)
+        if (completedSeasons.isNotEmpty()) {
+            val csJson = JSONObject()
+            completedSeasons.toSortedMap().forEach { (sNum, cnt) -> csJson.put(sNum.toString(), cnt) }
+            obj.put("completedSeasons", csJson)
+        }
+        obj.put("watchedEpisodes", JSONArray(keptWatched))
+        obj.put("episodes", keptEpsArr)
+        return obj
+    }
+
+    fun compactMovieEntityToFirestoreJson(m: MovieEntity): JSONObject {
+        val cleanTmdb = TvTimeProgressCalculator.cleanMovieTmdbId(m.externalId, m.tmdbId)
+        val topCast = m.castCsv.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .take(3)
+        return JSONObject().apply {
+            put("id", m.externalId)
+            put("tmdbId", cleanTmdb)
+            put("title", m.title)
+            put("year", m.year)
+            put("runtimeMins", m.runtimeMins.coerceAtLeast(1))
+            if (topCast.isNotEmpty()) put("cast", JSONArray(topCast))
+            if (m.director.isNotBlank()) put("director", m.director)
+            put("streamingService", m.streamingService.ifBlank { "Streaming" })
+            put("rating", Math.round(m.rating * 10.0) / 10.0)
+            put("posterUrl", m.posterUrl)
+            put("watched", m.watched)
+            if (m.watchedAt.isNotBlank()) put("watchedAt", m.watchedAt)
+        }
     }
 
     fun deduplicateShows(shows: List<ShowEntity>): List<ShowEntity> {
         val byKey = LinkedHashMap<String, ShowEntity>()
+        val titleToKeys = LinkedHashMap<String, MutableList<String>>()
         fun statusRank(st: String): Int = when (st.lowercase()) {
             "completed" -> 4
             "in_progress", "watching" -> 3
             "stopped" -> 2
             else -> 1
         }
+
         for (s in shows) {
             val titleKey = TvTimeProgressCalculator.normalizeTitleKey(s.title)
-            val key = if (titleKey.isNotEmpty()) "title:$titleKey" else s.externalId.ifBlank { "id:${s.id}" }
-            val existing = byKey[key]
-            if (existing == null) {
-                val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
-                var watched = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
-                if (s.userStatus.equals("completed", ignoreCase = true) && eps.isNotEmpty() && watched.size < eps.size) {
-                    watched = eps.map { it.code.uppercase() }.toSet()
-                } else if (eps.isNotEmpty() && !isSyntheticEpisodeList(eps)) {
-                    val validCodes = eps.map { it.code.uppercase() }.toSet()
-                    watched = watched.filter { validCodes.contains(it) }.toSet()
+            var matchedKey: String? = null
+            if (s.tmdbId > 0 && byKey.containsKey("tmdb:${s.tmdbId}")) {
+                matchedKey = "tmdb:${s.tmdbId}"
+            } else if (s.tvmazeId > 0 && byKey.containsKey("tvmaze:${s.tvmazeId}")) {
+                matchedKey = "tvmaze:${s.tvmazeId}"
+            } else if (s.externalId.isNotBlank() && byKey.containsKey("ext:${s.externalId}")) {
+                matchedKey = "ext:${s.externalId}"
+            } else if (titleKey.isNotEmpty() && titleToKeys.containsKey(titleKey)) {
+                for (candKey in titleToKeys[titleKey].orEmpty()) {
+                    val cand = byKey[candKey] ?: continue
+                    if (TvTimeProgressCalculator.doesShowMatch(
+                            s.externalId, s.tmdbId, s.tvmazeId, s.title, s.year,
+                            cand.externalId, cand.tmdbId, cand.tvmazeId, cand.title, cand.year
+                        )
+                    ) {
+                        matchedKey = candKey
+                        break
+                    }
                 }
-                byKey[key] = s.copy(
+            }
+
+            val meta = TvTimeProgressCalculator.parseCompactedMeta(s.episodesJson)
+            val eps = meta.episodes
+            var watched = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
+            if (s.userStatus.equals("completed", ignoreCase = true) && eps.isNotEmpty() && meta.completedSeasons.isEmpty() && watched.size < eps.size) {
+                watched = eps.map { it.code.uppercase() }.toSet()
+            } else if (eps.isNotEmpty() && meta.completedSeasons.isEmpty() && !isSyntheticEpisodeList(eps)) {
+                val validCodes = eps.map { it.code.uppercase() }.toSet()
+                watched = watched.filter { validCodes.contains(it) }.toSet()
+            }
+
+            if (matchedKey == null) {
+                val primaryKey = when {
+                    s.tmdbId > 0 -> "tmdb:${s.tmdbId}"
+                    s.tvmazeId > 0 -> "tvmaze:${s.tvmazeId}"
+                    s.externalId.isNotBlank() -> "ext:${s.externalId}"
+                    titleKey.isNotEmpty() -> "title:$titleKey:${s.year}"
+                    else -> "id:${s.id}"
+                }
+                byKey[primaryKey] = s.copy(
                     watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(watched)
                 )
-            } else {
-                val existingEps = TvTimeProgressCalculator.parseEpisodeList(existing.episodesJson)
-                val newEps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
-                val existingSynth = isSyntheticEpisodeList(existingEps)
-                val newSynth = isSyntheticEpisodeList(newEps)
-                val (bestEps, bestEpsJson) = when {
-                    existingSynth && !newSynth && newEps.isNotEmpty() -> newEps to s.episodesJson
-                    !existingSynth && newSynth && existingEps.isNotEmpty() -> existingEps to existing.episodesJson
-                    newEps.size > existingEps.size -> newEps to s.episodesJson
-                    else -> existingEps to existing.episodesJson
+                if (titleKey.isNotEmpty()) {
+                    titleToKeys.getOrPut(titleKey) { mutableListOf() }.add(primaryKey)
                 }
+            } else {
+                val existing = byKey[matchedKey]!!
+                val existingMeta = TvTimeProgressCalculator.parseCompactedMeta(existing.episodesJson)
+                val existingEps = existingMeta.episodes
+                val newEps = eps
+                val existingSynth = isSyntheticEpisodeList(existingEps) && existingMeta.completedSeasons.isEmpty()
+                val newSynth = isSyntheticEpisodeList(newEps) && meta.completedSeasons.isEmpty()
+                val mergedComp = LinkedHashMap<Int, Int>(existingMeta.completedSeasons)
+                for ((k, v) in meta.completedSeasons) {
+                    mergedComp[k] = maxOf(mergedComp[k] ?: 0, v)
+                }
+                val bestEps = when {
+                    existingSynth && !newSynth && newEps.isNotEmpty() -> newEps
+                    !existingSynth && newSynth && existingEps.isNotEmpty() -> existingEps
+                    newEps.size > existingEps.size -> newEps
+                    else -> existingEps
+                }
+                val bestTotal = maxOf(existingMeta.totalEpisodes, meta.totalEpisodes, mergedComp.values.sum() + bestEps.size)
                 val bestStatus = if (statusRank(s.userStatus) > statusRank(existing.userStatus)) s.userStatus else existing.userStatus
-                var mergedWatched = TvTimeProgressCalculator.parseWatchedSet(existing.watchedCodesCsv) +
-                    TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
-                if (bestStatus.equals("completed", ignoreCase = true) && bestEps.isNotEmpty()) {
+                var mergedWatched = TvTimeProgressCalculator.parseWatchedSet(existing.watchedCodesCsv) + watched
+                if (bestStatus.equals("completed", ignoreCase = true) && bestEps.isNotEmpty() && mergedComp.isEmpty()) {
                     mergedWatched = bestEps.map { it.code.uppercase() }.toSet()
-                } else if (bestEps.isNotEmpty() && !isSyntheticEpisodeList(bestEps)) {
+                } else if (bestEps.isNotEmpty() && mergedComp.isEmpty() && !isSyntheticEpisodeList(bestEps)) {
                     val validCodes = bestEps.map { it.code.uppercase() }.toSet()
                     val filtered = mergedWatched.filter { validCodes.contains(it) }.toSet()
                     if (filtered.isNotEmpty()) mergedWatched = filtered
                 }
-                byKey[key] = existing.copy(
+                val bestEpsJson = TvTimeProgressCalculator.serializeCompactedMeta(bestTotal, mergedComp, bestEps)
+                byKey[matchedKey] = existing.copy(
                     tvmazeId = if (existing.tvmazeId != 0) existing.tvmazeId else s.tvmazeId,
                     tmdbId = if (existing.tmdbId != 0) existing.tmdbId else s.tmdbId,
                     posterUrl = existing.posterUrl.ifBlank { s.posterUrl },
@@ -168,15 +391,46 @@ object FirestoreSyncService {
 
     fun deduplicateMovies(movies: List<MovieEntity>): List<MovieEntity> {
         val byKey = LinkedHashMap<String, MovieEntity>()
-        for (m in movies) {
+        val titleToKeys = LinkedHashMap<String, MutableList<String>>()
+        for (rawMovie in movies) {
+            val cleanTmdb = TvTimeProgressCalculator.cleanMovieTmdbId(rawMovie.externalId, rawMovie.tmdbId)
+            val m = if (cleanTmdb != rawMovie.tmdbId) rawMovie.copy(tmdbId = cleanTmdb) else rawMovie
             val titleKey = TvTimeProgressCalculator.normalizeTitleKey(m.title)
-            val key = if (titleKey.isNotEmpty()) "title:$titleKey:${m.year}" else m.externalId.ifBlank { "id:${m.id}" }
-            val existing = byKey[key]
-            if (existing == null) {
-                byKey[key] = m
+
+            var matchedKey: String? = null
+            if (cleanTmdb > 0 && byKey.containsKey("tmdb:$cleanTmdb")) {
+                matchedKey = "tmdb:$cleanTmdb"
+            } else if (m.externalId.isNotBlank() && byKey.containsKey("ext:${m.externalId}")) {
+                matchedKey = "ext:${m.externalId}"
+            } else if (titleKey.isNotEmpty() && titleToKeys.containsKey(titleKey)) {
+                for (candKey in titleToKeys[titleKey].orEmpty()) {
+                    val cand = byKey[candKey] ?: continue
+                    if (TvTimeProgressCalculator.doesMovieMatch(
+                            m.externalId, m.tmdbId, m.title, m.year,
+                            cand.externalId, cand.tmdbId, cand.title, cand.year
+                        )
+                    ) {
+                        matchedKey = candKey
+                        break
+                    }
+                }
+            }
+
+            if (matchedKey == null) {
+                val primaryKey = when {
+                    cleanTmdb > 0 -> "tmdb:$cleanTmdb"
+                    m.externalId.isNotBlank() -> "ext:${m.externalId}"
+                    titleKey.isNotEmpty() -> "title:$titleKey:${m.year}"
+                    else -> "id:${m.id}"
+                }
+                byKey[primaryKey] = m
+                if (titleKey.isNotEmpty()) {
+                    titleToKeys.getOrPut(titleKey) { mutableListOf() }.add(primaryKey)
+                }
             } else {
-                byKey[key] = existing.copy(
-                    tmdbId = if (existing.tmdbId != 0) existing.tmdbId else m.tmdbId,
+                val existing = byKey[matchedKey]!!
+                byKey[matchedKey] = existing.copy(
+                    tmdbId = if (existing.tmdbId > 0) existing.tmdbId else m.tmdbId,
                     posterUrl = existing.posterUrl.ifBlank { m.posterUrl },
                     overview = existing.overview.ifBlank { m.overview },
                     watched = existing.watched || m.watched,
@@ -244,97 +498,24 @@ object FirestoreSyncService {
                 val movies = deduplicateMovies(dao.getMoviesForUser(cleanUser))
                 val actors = dao.getActorsForUser(cleanUser)
 
-                fun buildShowsArray(minimalCompleted: Boolean, minimalLargeShows: Boolean = false): JSONArray {
-                    val arr = JSONArray()
-                    for (s in shows) {
-                        val isComp = s.userStatus.equals("completed", ignoreCase = true)
-                        val watchedArr = if (minimalCompleted && isComp) {
-                            JSONArray()
-                        } else {
-                            JSONArray(TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv).toList())
-                        }
-                        val parsedCount = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson).size
-                        val useMinimal = (minimalCompleted && isComp) || (minimalLargeShows && parsedCount > 100)
-                        val epsArr = compactEpisodesJsonArray(s.episodesJson, useMinimal)
-                        arr.put(
-                            JSONObject().apply {
-                                put("id", s.externalId)
-                                put("tvmazeId", s.tvmazeId)
-                                put("tmdbId", s.tmdbId)
-                                put("title", s.title)
-                                put("year", s.year)
-                                put("network", s.network)
-                                put("status", s.status)
-                                put("runtimeMins", s.runtimeMins)
-                                put("genres", JSONArray(s.genresCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
-                                put("cast", JSONArray(s.castCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
-                                put("rating", s.rating)
-                                put("posterUrl", s.posterUrl)
-                                put("overview", s.overview)
-                                put("userStatus", s.userStatus)
-                                put("userRating", s.userRating)
-                                put("reaction", s.reaction)
-                                put("isFavorite", s.isFavorite)
-                                put("rewatchCount", s.rewatchCount)
-                                put("watchedEpisodes", watchedArr)
-                                put("episodes", epsArr)
-                                put("lastWatchedAt", s.lastWatchedAt)
-                            }
-                        )
-                    }
-                    return arr
+                val showsArr = JSONArray()
+                for (s in shows) {
+                    showsArr.put(compactShowEntityToFirestoreJson(s))
                 }
-
-                val showsArr = buildShowsArray(minimalCompleted = false)
 
                 val moviesArr = JSONArray()
                 for (m in movies) {
-                    moviesArr.put(
-                        JSONObject().apply {
-                            put("id", m.externalId)
-                            put("tmdbId", m.tmdbId)
-                            put("title", m.title)
-                            put("year", m.year)
-                            put("runtimeMins", m.runtimeMins)
-                            put("genres", JSONArray(m.genresCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
-                            put("cast", JSONArray(m.castCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
-                            put("director", m.director)
-                            put("streamingService", m.streamingService)
-                            put("rating", m.rating)
-                            put("posterUrl", m.posterUrl)
-                            put("overview", m.overview)
-                            put("watched", m.watched)
-                            put("watchedAt", m.watchedAt)
-                            put("userRating", m.userRating)
-                            put("reaction", m.reaction)
-                            put("rewatchCount", m.rewatchCount)
-                            put("isFavorite", m.isFavorite)
-                            put("notes", m.notes)
-                        }
-                    )
+                    moviesArr.put(compactMovieEntityToFirestoreJson(m))
                 }
 
-                val actorsArr = JSONArray()
-                for (a in actors) {
-                    actorsArr.put(
-                        JSONObject().apply {
-                            put("id", a.externalId)
-                            put("name", a.name)
-                            put("role", a.role)
-                            put("imageUrl", a.imageUrl)
-                            put("imdbUrl", a.imdbUrl)
-                            put("knownFor", a.knownFor)
-                        }
-                    )
-                }
-
-                val decidedIdsArr = JSONArray()
+                val canonicalDecided = LinkedHashSet<String>()
                 for (a in actors) {
                     if (a.role == "decided_rec") {
-                        decidedIdsArr.put(a.externalId)
-                        if (a.name.isNotBlank()) decidedIdsArr.put("title_${a.name.lowercase()}")
+                        val c = TvTimeProgressCalculator.canonicalizeDecidedId(a.externalId)
+                        if (c.isNotEmpty()) canonicalDecided.add(c)
                     }
                 }
+                val decidedIdsArr = JSONArray(canonicalDecided.toList().takeLast(2500))
 
                 val social = socialCache[cleanUser] ?: readSocialFromRemoteUnlocked(cleanUser)
 
@@ -343,24 +524,14 @@ object FirestoreSyncService {
                     put("email", displayUserLabel(cleanUser))
                     put("shows", showsArr)
                     put("movies", moviesArr)
-                    put("actors", actorsArr)
                     put("decidedIds", decidedIdsArr)
-                    put("followingUsers", JSONArray(listOf("partner")))
                     put("friends", JSONArray(social.friends))
                     put("incomingFriendRequests", JSONArray(social.incomingRequests))
                     put("outgoingFriendRequests", JSONArray(social.outgoingRequests))
                     put("updatedAt", Instant.now().toString())
                 }
 
-                var payloadStr = payloadObj.toString()
-                if (payloadStr.length > 550_000) {
-                    payloadObj.put("shows", buildShowsArray(minimalCompleted = true))
-                    payloadStr = payloadObj.toString()
-                }
-                if (payloadStr.length > 750_000) {
-                    payloadObj.put("shows", buildShowsArray(minimalCompleted = true, minimalLargeShows = true))
-                    payloadStr = payloadObj.toString()
-                }
+                val payloadStr = payloadObj.toString()
 
                 val firestoreBody = JSONObject().apply {
                     put(
@@ -371,7 +542,6 @@ object FirestoreSyncService {
                             put("payload", JSONObject().put("stringValue", payloadStr))
                             put("showCount", JSONObject().put("integerValue", shows.size.toString()))
                             put("movieCount", JSONObject().put("integerValue", movies.size.toString()))
-                            put("actorCount", JSONObject().put("integerValue", actors.size.toString()))
                             put("updatedAt", JSONObject().put("stringValue", Instant.now().toString()))
                         }
                     )
@@ -380,8 +550,8 @@ object FirestoreSyncService {
                 val conn = (URL(docUrl).openConnection() as HttpURLConnection).apply {
                     requestMethod = "PATCH"
                     setRequestProperty("Content-Type", "application/json")
-                    connectTimeout = 5000
-                    readTimeout = 5000
+                    connectTimeout = 10000
+                    readTimeout = 15000
                     doOutput = true
                 }
                 conn.outputStream.use { it.write(firestoreBody.toString().toByteArray(Charsets.UTF_8)) }
@@ -406,8 +576,8 @@ object FirestoreSyncService {
             try {
                 val conn = (URL(docUrl).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
-                    connectTimeout = 5000
-                    readTimeout = 5000
+                    connectTimeout = 10000
+                    readTimeout = 15000
                 }
                 if (conn.responseCode !in 200..299) {
                     ensureUserSeeded(dao, cleanUser)
@@ -429,44 +599,13 @@ object FirestoreSyncService {
                 val showsArr = payload.optJSONArray("shows")
                 val moviesArr = payload.optJSONArray("movies")
                 val actorsArr = payload.optJSONArray("actors")
+                val decidedArr = payload.optJSONArray("decidedIds")
 
                 if (showsArr != null) {
                     val parsedShows = mutableListOf<ShowEntity>()
                     for (i in 0 until showsArr.length()) {
                         val s = showsArr.optJSONObject(i) ?: continue
-                        val watchedArr = s.optJSONArray("watchedEpisodes") ?: JSONArray()
-                        val watchedCodes = (0 until watchedArr.length()).mapNotNull { watchedArr.optString(it) }
-                        val genresArr = s.optJSONArray("genres") ?: JSONArray()
-                        val genresCsv = (0 until genresArr.length()).mapNotNull { genresArr.optString(it) }.joinToString(", ")
-                        val castArr = s.optJSONArray("cast") ?: JSONArray()
-                        val castCsv = (0 until castArr.length()).mapNotNull { castArr.optString(it) }.joinToString(", ")
-                        val epsArr = s.optJSONArray("episodes") ?: JSONArray()
-                        parsedShows.add(
-                            ShowEntity(
-                                userId = cleanUser,
-                                externalId = s.optString("id", "show_$i"),
-                                tvmazeId = s.optInt("tvmazeId", 0),
-                                tmdbId = s.optInt("tmdbId", 0),
-                                title = s.optString("title", "Show"),
-                                year = s.optInt("year", 2024),
-                                network = s.optString("network", "Streaming"),
-                                status = s.optString("status", "Running"),
-                                runtimeMins = s.optInt("runtimeMins", 45),
-                                genresCsv = genresCsv.ifBlank { "Drama" },
-                                castCsv = castCsv,
-                                rating = s.optDouble("rating", 8.0),
-                                posterUrl = s.optString("posterUrl", ""),
-                                overview = s.optString("overview", ""),
-                                userStatus = s.optString("userStatus", "watching"),
-                                userRating = s.optInt("userRating", 0),
-                                reaction = s.optString("reaction", ""),
-                                isFavorite = s.optBoolean("isFavorite", false),
-                                rewatchCount = s.optInt("rewatchCount", 0),
-                                watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(watchedCodes),
-                                episodesJson = epsArr.toString(),
-                                lastWatchedAt = s.optString("lastWatchedAt", "")
-                            )
-                        )
+                        parsedShows.add(parseShowJsonToEntity(s, cleanUser, i))
                     }
                     val existingLocalShows = dao.getShowsForUser(cleanUser)
                     val combinedShows = if (existingLocalShows.size > parsedShows.size) {
@@ -484,34 +623,7 @@ object FirestoreSyncService {
                     val parsedMovies = mutableListOf<MovieEntity>()
                     for (i in 0 until moviesArr.length()) {
                         val m = moviesArr.optJSONObject(i) ?: continue
-                        val genresArr = m.optJSONArray("genres") ?: JSONArray()
-                        val genresCsv = (0 until genresArr.length()).mapNotNull { genresArr.optString(it) }.joinToString(", ")
-                        val castArr = m.optJSONArray("cast") ?: JSONArray()
-                        val castCsv = (0 until castArr.length()).mapNotNull { castArr.optString(it) }.joinToString(", ")
-                        parsedMovies.add(
-                            MovieEntity(
-                                userId = cleanUser,
-                                externalId = m.optString("id", "movie_$i"),
-                                tmdbId = m.optInt("tmdbId", 0),
-                                title = m.optString("title", "Movie"),
-                                year = m.optInt("year", 2024),
-                                runtimeMins = m.optInt("runtimeMins", 120),
-                                genresCsv = genresCsv.ifBlank { "Movie" },
-                                castCsv = castCsv,
-                                director = m.optString("director", ""),
-                                streamingService = m.optString("streamingService", "Streaming"),
-                                rating = m.optDouble("rating", 8.0),
-                                posterUrl = m.optString("posterUrl", ""),
-                                overview = m.optString("overview", ""),
-                                watched = m.optBoolean("watched", false),
-                                watchedAt = m.optString("watchedAt", ""),
-                                userRating = m.optInt("userRating", 0),
-                                reaction = m.optString("reaction", ""),
-                                rewatchCount = m.optInt("rewatchCount", 0),
-                                isFavorite = m.optBoolean("isFavorite", false),
-                                notes = m.optString("notes", "")
-                            )
-                        )
+                        parsedMovies.add(parseMovieJsonToEntity(m, cleanUser, i))
                     }
                     val existingLocalMovies = dao.getMoviesForUser(cleanUser)
                     val combinedMovies = if (existingLocalMovies.size > parsedMovies.size) {
@@ -525,42 +637,38 @@ object FirestoreSyncService {
                     }
                 }
 
-                if (actorsArr != null) {
+                if (actorsArr != null || decidedArr != null) {
+                    val existingDecided = dao.getActorsForUser(cleanUser)
+                        .filter { it.role == "decided_rec" }
+                        .mapNotNull { TvTimeProgressCalculator.canonicalizeDecidedId(it.externalId).takeIf { c -> c.isNotEmpty() } }
+                    val insertedDecided = LinkedHashSet<String>(existingDecided)
                     dao.deleteAllActorsForUser(cleanUser)
-                    val insertedDecided = mutableSetOf<String>()
-                    for (i in 0 until actorsArr.length()) {
-                        val a = actorsArr.optJSONObject(i) ?: continue
-                        val extId = a.optString("id", "actor_$i")
-                        val role = a.optString("role", "Acting")
-                        if (role == "decided_rec") insertedDecided.add(extId)
+                    if (actorsArr != null) {
+                        for (i in 0 until actorsArr.length()) {
+                            val a = actorsArr.optJSONObject(i) ?: continue
+                            val extId = a.optString("id", "actor_$i")
+                            val role = a.optString("role", "Acting")
+                            if (role == "decided_rec") {
+                                val c = TvTimeProgressCalculator.canonicalizeDecidedId(extId)
+                                if (c.isNotEmpty()) insertedDecided.add(c)
+                            }
+                        }
+                    }
+                    if (decidedArr != null) {
+                        for (j in 0 until decidedArr.length()) {
+                            val c = TvTimeProgressCalculator.canonicalizeDecidedId(decidedArr.optString(j, ""))
+                            if (c.isNotEmpty()) insertedDecided.add(c)
+                        }
+                    }
+                    for (did in insertedDecided) {
                         dao.insertActor(
                             ActorEntity(
                                 userId = cleanUser,
-                                externalId = extId,
-                                name = a.optString("name", "Actor"),
-                                role = role,
-                                imageUrl = a.optString("imageUrl", ""),
-                                imdbUrl = a.optString("imdbUrl", ""),
-                                knownFor = a.optString("knownFor", "")
+                                externalId = did,
+                                name = did,
+                                role = "decided_rec"
                             )
                         )
-                    }
-                    val decidedArr = payload.optJSONArray("decidedIds")
-                    if (decidedArr != null) {
-                        for (j in 0 until decidedArr.length()) {
-                            val did = decidedArr.optString(j, "").trim()
-                            if (did.isNotEmpty() && !insertedDecided.contains(did)) {
-                                insertedDecided.add(did)
-                                dao.insertActor(
-                                    ActorEntity(
-                                        userId = cleanUser,
-                                        externalId = did,
-                                        name = did.removePrefix("title_"),
-                                        role = "decided_rec"
-                                    )
-                                )
-                            }
-                        }
                     }
                 }
 
@@ -581,74 +689,20 @@ object FirestoreSyncService {
 
         val showsArr = JSONArray()
         for (s in shows) {
-            val watchedArr = JSONArray(TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv).toList())
-            val epsArr = try { JSONArray(s.episodesJson) } catch (_: Exception) { JSONArray() }
-            showsArr.put(
-                JSONObject().apply {
-                    put("id", s.externalId)
-                    put("tvmazeId", s.tvmazeId)
-                    put("tmdbId", s.tmdbId)
-                    put("title", s.title)
-                    put("year", s.year)
-                    put("network", s.network)
-                    put("status", s.status)
-                    put("runtimeMins", s.runtimeMins)
-                    put("genres", JSONArray(s.genresCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
-                    put("cast", JSONArray(s.castCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
-                    put("rating", s.rating)
-                    put("posterUrl", s.posterUrl)
-                    put("overview", s.overview)
-                    put("userStatus", s.userStatus)
-                    put("userRating", s.userRating)
-                    put("reaction", s.reaction)
-                    put("isFavorite", s.isFavorite)
-                    put("rewatchCount", s.rewatchCount)
-                    put("watchedEpisodes", watchedArr)
-                    put("episodes", epsArr)
-                    put("lastWatchedAt", s.lastWatchedAt)
-                }
-            )
+            showsArr.put(compactShowEntityToFirestoreJson(s))
         }
 
         val moviesArr = JSONArray()
         for (m in movies) {
-            moviesArr.put(
-                JSONObject().apply {
-                    put("id", m.externalId)
-                    put("tmdbId", m.tmdbId)
-                    put("title", m.title)
-                    put("year", m.year)
-                    put("runtimeMins", m.runtimeMins)
-                    put("genres", JSONArray(m.genresCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
-                    put("cast", JSONArray(m.castCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
-                    put("director", m.director)
-                    put("streamingService", m.streamingService)
-                    put("rating", m.rating)
-                    put("posterUrl", m.posterUrl)
-                    put("overview", m.overview)
-                    put("watched", m.watched)
-                    put("watchedAt", m.watchedAt)
-                    put("userRating", m.userRating)
-                    put("reaction", m.reaction)
-                    put("rewatchCount", m.rewatchCount)
-                    put("isFavorite", m.isFavorite)
-                    put("notes", m.notes)
-                }
-            )
+            moviesArr.put(compactMovieEntityToFirestoreJson(m))
         }
 
-        val actorsArr = JSONArray()
+        val decidedIdsArr = JSONArray()
         for (a in actors) {
-            actorsArr.put(
-                JSONObject().apply {
-                    put("id", a.externalId)
-                    put("name", a.name)
-                    put("role", a.role)
-                    put("imageUrl", a.imageUrl)
-                    put("imdbUrl", a.imdbUrl)
-                    put("knownFor", a.knownFor)
-                }
-            )
+            if (a.role == "decided_rec") {
+                val c = TvTimeProgressCalculator.canonicalizeDecidedId(a.externalId)
+                if (c.isNotEmpty()) decidedIdsArr.put(c)
+            }
         }
 
         JSONObject().apply {
@@ -656,7 +710,7 @@ object FirestoreSyncService {
             put("exportedAt", Instant.now().toString())
             put("shows", showsArr)
             put("movies", moviesArr)
-            put("actors", actorsArr)
+            put("decidedIds", decidedIdsArr)
         }.toString(2)
     }
 
@@ -670,18 +724,23 @@ object FirestoreSyncService {
         val sb = StringBuilder()
         sb.appendLine("Type,Title,Year,Status,WatchedProgress,Rating,Reaction,Favorite,RewatchCount,NetworkOrDirector")
         for (s in shows) {
-            val watchedCount = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv).size
+            val prog = TvTimeProgressCalculator.computeShowProgressFromJson(
+                s.episodesJson,
+                s.watchedCodesCsv,
+                s.userStatus
+            )
+            val effStatus = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus)
             sb.appendLine(
                 listOf(
                     "Show",
                     csvEsc(s.title),
                     s.year.toString(),
-                    csvEsc(s.userStatus),
-                    csvEsc("$watchedCount eps (${s.watchedCodesCsv})"),
+                    csvEsc(effStatus),
+                    csvEsc("${prog.watchedCount}/${prog.totalEpisodes} eps"),
                     s.rating.toString(),
-                    csvEsc(s.reaction),
-                    s.isFavorite.toString(),
-                    s.rewatchCount.toString(),
+                    csvEsc(""),
+                    "false",
+                    "0",
                     csvEsc(s.network)
                 ).joinToString(",")
             )
@@ -695,9 +754,9 @@ object FirestoreSyncService {
                     csvEsc(if (m.watched) "completed" else "watchlist"),
                     csvEsc(if (m.watched) "Watched" else "Unwatched"),
                     m.rating.toString(),
-                    csvEsc(m.reaction),
-                    m.isFavorite.toString(),
-                    m.rewatchCount.toString(),
+                    csvEsc(""),
+                    "false",
+                    "0",
                     csvEsc(m.director.ifBlank { m.streamingService })
                 ).joinToString(",")
             )
@@ -768,41 +827,13 @@ object FirestoreSyncService {
         val showsArr = root.optJSONArray("shows")
         if (showsArr != null) {
             dao.deleteAllShowsForUser(cleanUser)
+            val parsedShows = mutableListOf<ShowEntity>()
             for (i in 0 until showsArr.length()) {
                 val s = showsArr.optJSONObject(i) ?: continue
-                val watchedArr = s.optJSONArray("watchedEpisodes") ?: JSONArray()
-                val watchedCodes = (0 until watchedArr.length()).mapNotNull { watchedArr.optString(it) }.toSet()
-                val epsArr = s.optJSONArray("episodes") ?: JSONArray()
-                val genresArr = s.optJSONArray("genres") ?: JSONArray()
-                val genresCsv = (0 until genresArr.length()).mapNotNull { genresArr.optString(it) }.joinToString(", ")
-                val castArr = s.optJSONArray("cast") ?: JSONArray()
-                val castCsv = (0 until castArr.length()).mapNotNull { castArr.optString(it) }.joinToString(", ")
-                dao.insertShow(
-                    ShowEntity(
-                        userId = cleanUser,
-                        externalId = s.optString("id", "show_$i"),
-                        tvmazeId = s.optInt("tvmazeId", 0),
-                        tmdbId = s.optInt("tmdbId", 0),
-                        title = s.optString("title", "Show"),
-                        year = s.optInt("year", 2024),
-                        network = s.optString("network", "Streaming"),
-                        status = s.optString("status", "Running"),
-                        runtimeMins = s.optInt("runtimeMins", 45),
-                        genresCsv = genresCsv.ifBlank { "Drama" },
-                        castCsv = castCsv,
-                        rating = s.optDouble("rating", 8.0),
-                        posterUrl = s.optString("posterUrl", ""),
-                        overview = s.optString("overview", ""),
-                        userStatus = s.optString("userStatus", "watching"),
-                        userRating = s.optInt("userRating", 0),
-                        reaction = s.optString("reaction", ""),
-                        isFavorite = s.optBoolean("isFavorite", false),
-                        rewatchCount = s.optInt("rewatchCount", 0),
-                        watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(watchedCodes),
-                        episodesJson = epsArr.toString(),
-                        lastWatchedAt = s.optString("lastWatchedAt", "")
-                    )
-                )
+                parsedShows.add(parseShowJsonToEntity(s, cleanUser, i))
+            }
+            for (se in deduplicateShows(parsedShows)) {
+                dao.insertShow(se)
                 importedCount++
             }
         }
@@ -810,54 +841,44 @@ object FirestoreSyncService {
         val moviesArr = root.optJSONArray("movies")
         if (moviesArr != null) {
             dao.deleteAllMoviesForUser(cleanUser)
+            val parsedMovies = mutableListOf<MovieEntity>()
             for (i in 0 until moviesArr.length()) {
                 val m = moviesArr.optJSONObject(i) ?: continue
-                val genresArr = m.optJSONArray("genres") ?: JSONArray()
-                val genresCsv = (0 until genresArr.length()).mapNotNull { genresArr.optString(it) }.joinToString(", ")
-                val castArr = m.optJSONArray("cast") ?: JSONArray()
-                val castCsv = (0 until castArr.length()).mapNotNull { castArr.optString(it) }.joinToString(", ")
-                dao.insertMovie(
-                    MovieEntity(
-                        userId = cleanUser,
-                        externalId = m.optString("id", "movie_$i"),
-                        tmdbId = m.optInt("tmdbId", 0),
-                        title = m.optString("title", "Movie"),
-                        year = m.optInt("year", 2024),
-                        runtimeMins = m.optInt("runtimeMins", 120),
-                        genresCsv = genresCsv.ifBlank { "Movie" },
-                        castCsv = castCsv,
-                        director = m.optString("director", ""),
-                        streamingService = m.optString("streamingService", "Streaming"),
-                        rating = m.optDouble("rating", 8.0),
-                        posterUrl = m.optString("posterUrl", ""),
-                        overview = m.optString("overview", ""),
-                        watched = m.optBoolean("watched", false),
-                        watchedAt = m.optString("watchedAt", ""),
-                        userRating = m.optInt("userRating", 0),
-                        reaction = m.optString("reaction", ""),
-                        rewatchCount = m.optInt("rewatchCount", 0),
-                        isFavorite = m.optBoolean("isFavorite", false),
-                        notes = m.optString("notes", "")
-                    )
-                )
+                parsedMovies.add(parseMovieJsonToEntity(m, cleanUser, i))
+            }
+            for (me in deduplicateMovies(parsedMovies)) {
+                dao.insertMovie(me)
                 importedCount++
             }
         }
 
         val actorsArr = root.optJSONArray("actors")
-        if (actorsArr != null) {
+        val decidedArr = root.optJSONArray("decidedIds")
+        if (actorsArr != null || decidedArr != null) {
             dao.deleteAllActorsForUser(cleanUser)
-            for (i in 0 until actorsArr.length()) {
-                val a = actorsArr.optJSONObject(i) ?: continue
+            val insertedDecided = LinkedHashSet<String>()
+            if (actorsArr != null) {
+                for (i in 0 until actorsArr.length()) {
+                    val a = actorsArr.optJSONObject(i) ?: continue
+                    if (a.optString("role") == "decided_rec") {
+                        val c = TvTimeProgressCalculator.canonicalizeDecidedId(a.optString("id", ""))
+                        if (c.isNotEmpty()) insertedDecided.add(c)
+                    }
+                }
+            }
+            if (decidedArr != null) {
+                for (j in 0 until decidedArr.length()) {
+                    val c = TvTimeProgressCalculator.canonicalizeDecidedId(decidedArr.optString(j, ""))
+                    if (c.isNotEmpty()) insertedDecided.add(c)
+                }
+            }
+            for (did in insertedDecided) {
                 dao.insertActor(
                     ActorEntity(
                         userId = cleanUser,
-                        externalId = a.optString("id", "actor_$i"),
-                        name = a.optString("name", "Actor"),
-                        role = a.optString("role", "Acting"),
-                        imageUrl = a.optString("imageUrl", ""),
-                        imdbUrl = a.optString("imdbUrl", ""),
-                        knownFor = a.optString("knownFor", "")
+                        externalId = did,
+                        name = did,
+                        role = "decided_rec"
                     )
                 )
             }
@@ -1036,8 +1057,8 @@ object FirestoreSyncService {
         return try {
             val conn = (URL(docUrl).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 5000
-                readTimeout = 5000
+                connectTimeout = 10000
+                readTimeout = 15000
             }
             if (conn.responseCode !in 200..299) return null
             val docText = conn.inputStream.bufferedReader().use { it.readText() }
@@ -1057,9 +1078,10 @@ object FirestoreSyncService {
         return try {
             payloadObj.put("userId", clean)
             payloadObj.put("updatedAt", Instant.now().toString())
+            payloadObj.remove("actors")
+            payloadObj.remove("followingUsers")
             val showsCount = payloadObj.optJSONArray("shows")?.length() ?: 0
             val moviesCount = payloadObj.optJSONArray("movies")?.length() ?: 0
-            val actorsCount = payloadObj.optJSONArray("actors")?.length() ?: 0
             val firestoreBody = JSONObject().apply {
                 put(
                     "fields",
@@ -1069,7 +1091,6 @@ object FirestoreSyncService {
                         put("payload", JSONObject().put("stringValue", payloadObj.toString()))
                         put("showCount", JSONObject().put("integerValue", showsCount.toString()))
                         put("movieCount", JSONObject().put("integerValue", moviesCount.toString()))
-                        put("actorCount", JSONObject().put("integerValue", actorsCount.toString()))
                         put("updatedAt", JSONObject().put("stringValue", Instant.now().toString()))
                     }
                 )
@@ -1077,8 +1098,8 @@ object FirestoreSyncService {
             val conn = (URL(docUrl).openConnection() as HttpURLConnection).apply {
                 requestMethod = "PATCH"
                 setRequestProperty("Content-Type", "application/json")
-                connectTimeout = 5000
-                readTimeout = 5000
+                connectTimeout = 10000
+                readTimeout = 15000
                 doOutput = true
             }
             conn.outputStream.use { it.write(firestoreBody.toString().toByteArray(Charsets.UTF_8)) }
@@ -1100,9 +1121,7 @@ object FirestoreSyncService {
             put("email", clean)
             put("shows", JSONArray())
             put("movies", JSONArray())
-            put("actors", JSONArray())
             put("decidedIds", JSONArray())
-            put("followingUsers", JSONArray(listOf("partner")))
             put("friends", JSONArray())
             put("incomingFriendRequests", JSONArray())
             put("outgoingFriendRequests", JSONArray())
@@ -1138,11 +1157,12 @@ object FirestoreSyncService {
         val projectId = firebaseProjectId
         if (projectId.isNotBlank()) {
             try {
-                val listUrl = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/tvtime_state?pageSize=50"
+                val maskQuery = "mask.fieldPaths=userId&mask.fieldPaths=email&mask.fieldPaths=showCount&mask.fieldPaths=movieCount"
+                val listUrl = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/tvtime_state?pageSize=50&$maskQuery"
                 val conn = (URL(listUrl).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
-                    connectTimeout = 5000
-                    readTimeout = 5000
+                    connectTimeout = 8000
+                    readTimeout = 10000
                 }
                 if (conn.responseCode in 200..299) {
                     val text = conn.inputStream.bufferedReader().use { it.readText() }
@@ -1176,15 +1196,17 @@ object FirestoreSyncService {
 
         if (q.isNotEmpty() && q != me && !results.containsKey(q)) {
             val directPayload = readRawPayloadUnlocked(q)
-            val sCount = directPayload?.optJSONArray("shows")?.length() ?: 0
-            val mCount = directPayload?.optJSONArray("movies")?.length() ?: 0
-            results[q] = FriendUserSummary(
-                userId = q,
-                email = directPayload?.optString("email", q) ?: q,
-                showCount = sCount,
-                movieCount = mCount,
-                relation = relationFor(q)
-            )
+            if (directPayload != null) {
+                val sCount = directPayload.optJSONArray("shows")?.length() ?: 0
+                val mCount = directPayload.optJSONArray("movies")?.length() ?: 0
+                results[q] = FriendUserSummary(
+                    userId = q,
+                    email = directPayload.optString("email", q),
+                    showCount = sCount,
+                    movieCount = mCount,
+                    relation = relationFor(q)
+                )
+            }
         }
 
         results.values.take(20).toList()
@@ -1353,73 +1375,14 @@ object FirestoreSyncService {
         val parsedShows = mutableListOf<ShowEntity>()
         for (i in 0 until showsArr.length()) {
             val s = showsArr.optJSONObject(i) ?: continue
-            val watchedArr = s.optJSONArray("watchedEpisodes") ?: JSONArray()
-            val watchedCodes = (0 until watchedArr.length()).mapNotNull { watchedArr.optString(it) }
-            val genresArr = s.optJSONArray("genres") ?: JSONArray()
-            val genresCsv = (0 until genresArr.length()).mapNotNull { genresArr.optString(it) }.joinToString(", ")
-            val castArr = s.optJSONArray("cast") ?: JSONArray()
-            val castCsv = (0 until castArr.length()).mapNotNull { castArr.optString(it) }.joinToString(", ")
-            val epsArr = s.optJSONArray("episodes") ?: JSONArray()
-            parsedShows.add(
-                ShowEntity(
-                    userId = friend,
-                    externalId = s.optString("id", "show_$i"),
-                    tvmazeId = s.optInt("tvmazeId", 0),
-                    tmdbId = s.optInt("tmdbId", 0),
-                    title = s.optString("title", "Show"),
-                    year = s.optInt("year", 2024),
-                    network = s.optString("network", "Streaming"),
-                    status = s.optString("status", "Running"),
-                    runtimeMins = s.optInt("runtimeMins", 45),
-                    genresCsv = genresCsv.ifBlank { "Drama" },
-                    castCsv = castCsv,
-                    rating = s.optDouble("rating", 8.0),
-                    posterUrl = s.optString("posterUrl", ""),
-                    overview = s.optString("overview", ""),
-                    userStatus = s.optString("userStatus", "watching"),
-                    userRating = s.optInt("userRating", 0),
-                    reaction = s.optString("reaction", ""),
-                    isFavorite = s.optBoolean("isFavorite", false),
-                    rewatchCount = s.optInt("rewatchCount", 0),
-                    watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(watchedCodes),
-                    episodesJson = epsArr.toString(),
-                    lastWatchedAt = s.optString("lastWatchedAt", "")
-                )
-            )
+            parsedShows.add(parseShowJsonToEntity(s, friend, i))
         }
 
         val moviesArr = friendPayload.optJSONArray("movies") ?: JSONArray()
         val parsedMovies = mutableListOf<MovieEntity>()
         for (i in 0 until moviesArr.length()) {
             val m = moviesArr.optJSONObject(i) ?: continue
-            val genresArr = m.optJSONArray("genres") ?: JSONArray()
-            val genresCsv = (0 until genresArr.length()).mapNotNull { genresArr.optString(it) }.joinToString(", ")
-            val castArr = m.optJSONArray("cast") ?: JSONArray()
-            val castCsv = (0 until castArr.length()).mapNotNull { castArr.optString(it) }.joinToString(", ")
-            parsedMovies.add(
-                MovieEntity(
-                    userId = friend,
-                    externalId = m.optString("id", "movie_$i"),
-                    tmdbId = m.optInt("tmdbId", 0),
-                    title = m.optString("title", "Movie"),
-                    year = m.optInt("year", 2024),
-                    runtimeMins = m.optInt("runtimeMins", 120),
-                    genresCsv = genresCsv.ifBlank { "Movie" },
-                    castCsv = castCsv,
-                    director = m.optString("director", ""),
-                    streamingService = m.optString("streamingService", "Streaming"),
-                    rating = m.optDouble("rating", 8.0),
-                    posterUrl = m.optString("posterUrl", ""),
-                    overview = m.optString("overview", ""),
-                    watched = m.optBoolean("watched", false),
-                    watchedAt = m.optString("watchedAt", ""),
-                    userRating = m.optInt("userRating", 0),
-                    reaction = m.optString("reaction", ""),
-                    rewatchCount = m.optInt("rewatchCount", 0),
-                    isFavorite = m.optBoolean("isFavorite", false),
-                    notes = m.optString("notes", "")
-                )
-            )
+            parsedMovies.add(parseMovieJsonToEntity(m, friend, i))
         }
 
         Result.success(

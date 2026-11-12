@@ -52,28 +52,51 @@ fun ShowDetailBottomSheet(
     var activeTab by remember(show.id) {
         mutableStateOf(if (show.id == 0L || show.userStatus == "preview") "info" else "episodes")
     } // "info" | "episodes"
+    val initialCompacted = remember(show.id, show.episodesJson) {
+        TvTimeProgressCalculator.parseCompactedMeta(show.episodesJson)
+    }
     var episodes by remember(show.id, show.episodesJson) {
-        mutableStateOf(TvTimeProgressCalculator.parseEpisodeList(show.episodesJson))
+        mutableStateOf(initialCompacted.episodes)
+    }
+    var completedSeasons by remember(show.id, show.episodesJson) {
+        mutableStateOf(initialCompacted.completedSeasons)
+    }
+    var totalEpisodesOverride by remember(show.id, show.episodesJson) {
+        mutableIntStateOf(initialCompacted.totalEpisodes)
+    }
+    var showOverview by remember(show.id, show.overview) {
+        mutableStateOf(show.overview)
     }
     var watchedSet by remember(show.id, show.watchedCodesCsv) {
         mutableStateOf(TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv))
     }
     var userStatus by remember(show.id, show.userStatus, show.watchedCodesCsv) {
-        val initEps = TvTimeProgressCalculator.parseEpisodeList(show.episodesJson)
         val initWatched = TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv)
+        val initProg = TvTimeProgressCalculator.computeShowProgress(
+            episodes = initialCompacted.episodes,
+            watchedCodes = initWatched,
+            rawUserStatus = show.userStatus,
+            totalEpisodesOverride = initialCompacted.totalEpisodes,
+            completedSeasons = initialCompacted.completedSeasons
+        )
         val initStat = if (show.id == 0L || show.userStatus == "preview") {
             "preview"
         } else {
-            TvTimeProgressCalculator.deriveEffectiveShowStatus(initEps, initWatched, show.userStatus)
+            TvTimeProgressCalculator.deriveEffectiveShowStatus(initProg, show.userStatus)
         }
         mutableStateOf(initStat)
     }
     var isFavorite by remember(show.id, show.isFavorite) { mutableStateOf(show.isFavorite) }
     var castCsv by remember(show.id, show.castCsv) { mutableStateOf(show.castCsv) }
     var openSeasons by remember(show.id) {
-        val initEps = TvTimeProgressCalculator.parseEpisodeList(show.episodesJson)
         val initWatched = TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv)
-        val initProg = TvTimeProgressCalculator.computeShowProgress(initEps, initWatched)
+        val initProg = TvTimeProgressCalculator.computeShowProgress(
+            episodes = initialCompacted.episodes,
+            watchedCodes = initWatched,
+            rawUserStatus = show.userStatus,
+            totalEpisodesOverride = initialCompacted.totalEpisodes,
+            completedSeasons = initialCompacted.completedSeasons
+        )
         val initEff = TvTimeProgressCalculator.deriveEffectiveShowStatus(initProg, show.userStatus)
         val initialOpen = if (initEff == "in_progress" && initProg.nextEpisode != null) {
             setOf(initProg.nextEpisode.season)
@@ -88,7 +111,14 @@ fun ShowDetailBottomSheet(
         watched: Set<String>,
         current: String
     ): String {
-        return TvTimeProgressCalculator.deriveEffectiveShowStatus(eps, watched, current)
+        val p = TvTimeProgressCalculator.computeShowProgress(
+            episodes = eps,
+            watchedCodes = watched,
+            rawUserStatus = current,
+            totalEpisodesOverride = totalEpisodesOverride,
+            completedSeasons = completedSeasons
+        )
+        return TvTimeProgressCalculator.deriveEffectiveShowStatus(p, current)
     }
 
     fun persistUpdatedShow(
@@ -96,12 +126,25 @@ fun ShowDetailBottomSheet(
         nextWatchedSet: Set<String> = watchedSet,
         nextStatus: String = userStatus,
         nextFavorite: Boolean = isFavorite,
-        nextCastCsv: String = castCsv
+        nextCastCsv: String = castCsv,
+        nextCompletedSeasons: Map<Int, Int> = completedSeasons,
+        nextTotalOverride: Int = totalEpisodesOverride,
+        nextOverview: String = showOverview
     ) {
         val cleanStatus = if (nextStatus == "preview") "interested" else nextStatus
+        val serializedEpisodes = if (nextCompletedSeasons.isNotEmpty() || (nextTotalOverride > 0 && nextEpisodes.isEmpty())) {
+            TvTimeProgressCalculator.serializeCompactedMeta(
+                totalEpisodes = maxOf(nextTotalOverride, nextEpisodes.size),
+                completedSeasons = nextCompletedSeasons,
+                episodes = nextEpisodes
+            )
+        } else {
+            TvTimeProgressCalculator.serializeEpisodeList(nextEpisodes)
+        }
         val updated = show.copy(
             id = persistedShowId,
-            episodesJson = TvTimeProgressCalculator.serializeEpisodeList(nextEpisodes),
+            overview = nextOverview,
+            episodesJson = serializedEpisodes,
             watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(nextWatchedSet),
             userStatus = cleanStatus,
             isFavorite = nextFavorite,
@@ -119,8 +162,19 @@ fun ShowDetailBottomSheet(
         }
     }
 
-    // Fetch full episode guide from TMDB or TVMaze so all seasons & episodes can be marked watched
+    // Fetch full episode guide & live overview from TMDB or TVMaze so all seasons & episodes can be marked watched
     LaunchedEffect(show.id, show.tvmazeId, show.tmdbId, show.externalId) {
+        if (showOverview.isBlank()) {
+            val fetchedOv = LiveMediaCatalogService.fetchShowOverview(
+                tvmazeId = show.tvmazeId,
+                tmdbId = show.tmdbId,
+                title = show.title,
+                externalId = show.externalId
+            )
+            if (fetchedOv.isNotBlank()) {
+                showOverview = fetchedOv
+            }
+        }
         val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
             tvmazeId = show.tvmazeId,
             tmdbId = show.tmdbId,
@@ -129,18 +183,20 @@ fun ShowDetailBottomSheet(
         )
         val hadSeasonOne = episodes.any { it.season == 1 }
         val fetchedHasSeasonOne = fetchedEps.any { it.season == 1 }
-        if (fetchedEps.isNotEmpty() && (fetchedEps.size > episodes.size || (!hadSeasonOne && fetchedHasSeasonOne))) {
+        if (fetchedEps.isNotEmpty() && (fetchedEps.size > episodes.size || completedSeasons.isNotEmpty() || (!hadSeasonOne && fetchedHasSeasonOne))) {
             val sortedFetched = fetchedEps.sortedWith(compareBy({ it.season }, { it.number }))
-            episodes = sortedFetched
             val mergedCast = if (fetchedCast.isNotEmpty()) fetchedCast.joinToString(", ") else castCsv
+            val nextWatched = TvTimeProgressCalculator.expandWatchedSetWithCompletedSeasons(
+                episodes = sortedFetched,
+                watchedCodes = watchedSet,
+                completedSeasons = completedSeasons,
+                rawUserStatus = userStatus
+            )
+            episodes = sortedFetched
+            completedSeasons = emptyMap()
+            totalEpisodesOverride = sortedFetched.size
             castCsv = mergedCast
-            val validFetchedCodes = sortedFetched.map { it.code.trim().uppercase() }.toSet()
-            val nextWatched = if (userStatus.equals("completed", ignoreCase = true)) {
-                validFetchedCodes
-            } else {
-                watchedSet.filter { validFetchedCodes.contains(it.trim().uppercase()) }.toSet()
-            }
-            val nextProg = TvTimeProgressCalculator.computeShowProgress(sortedFetched, nextWatched)
+            val nextProg = TvTimeProgressCalculator.computeShowProgress(sortedFetched, nextWatched, userStatus)
             val nextEff = if (persistedShowId == 0L && userStatus == "preview") {
                 "preview"
             } else {
@@ -158,17 +214,26 @@ fun ShowDetailBottomSheet(
                     nextEpisodes = sortedFetched,
                     nextWatchedSet = nextWatched,
                     nextStatus = nextEff,
-                    nextCastCsv = mergedCast
+                    nextCastCsv = mergedCast,
+                    nextCompletedSeasons = emptyMap(),
+                    nextTotalOverride = sortedFetched.size,
+                    nextOverview = showOverview
                 )
             }
         }
     }
 
-    val prog = remember(episodes, watchedSet) {
-        TvTimeProgressCalculator.computeShowProgress(episodes, watchedSet)
+    val prog = remember(episodes, watchedSet, userStatus, totalEpisodesOverride, completedSeasons) {
+        TvTimeProgressCalculator.computeShowProgress(
+            episodes = episodes,
+            watchedCodes = watchedSet,
+            rawUserStatus = userStatus,
+            totalEpisodesOverride = totalEpisodesOverride,
+            completedSeasons = completedSeasons
+        )
     }
     val effectiveStatus = remember(prog, userStatus, persistedShowId) {
-        if (persistedShowId == 0L && userStatus == "preview" && watchedSet.isEmpty()) {
+        if (persistedShowId == 0L && userStatus == "preview" && watchedSet.isEmpty() && completedSeasons.isEmpty()) {
             "preview"
         } else {
             TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, userStatus)
@@ -208,13 +273,13 @@ fun ShowDetailBottomSheet(
                         )
                         val statusBadgeText = when (effectiveStatus) {
                             "completed" -> "✓ Completed"
-                            "in_progress" -> "▶ In Progress (${watchedSet.size}/${episodes.size} watched)"
+                            "in_progress" -> "▶ In Progress (${prog.watchedCount}/${prog.totalEpisodes} watched)"
                             "stopped" -> {
                                 val lastEp = prog.lastWatchedEpisode
                                 if (lastEp != null) {
-                                    "⏹ Stopped · Watched till ${lastEp.formattedDotCode} (${watchedSet.size}/${episodes.size} watched)"
+                                    "⏹ Stopped · Watched till ${lastEp.formattedDotCode} (${prog.watchedCount}/${prog.totalEpisodes} watched)"
                                 } else {
-                                    "⏹ Stopped (0/${episodes.size} watched)"
+                                    "⏹ Stopped (${prog.watchedCount}/${prog.totalEpisodes} watched)"
                                 }
                             }
                             "preview" -> "Not in library yet"
@@ -369,8 +434,8 @@ fun ShowDetailBottomSheet(
                 }
 
                 // Separate Watchlist Button (Hidden once any episode is watched or show is completed)
-                val canSetWatchlist = watchedSet.isEmpty() && effectiveStatus != "completed"
-                val isInWatchlist = effectiveStatus == "interested" && watchedSet.isEmpty()
+                val canSetWatchlist = prog.watchedCount == 0 && effectiveStatus != "completed"
+                val isInWatchlist = effectiveStatus == "interested" && prog.watchedCount == 0
                 if (canSetWatchlist) {
                     Surface(
                         onClick = {
@@ -431,7 +496,7 @@ fun ShowDetailBottomSheet(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = if (key == "episodes") "Episodes (${watchedSet.size}/${episodes.size})" else label,
+                            text = if (key == "episodes") "Episodes (${prog.watchedCount}/${prog.totalEpisodes})" else label,
                             style = MaterialTheme.typography.titleMedium,
                             color = if (selected) Color.White else TvTimePalette.TextSecondary,
                             maxLines = 1,
@@ -494,7 +559,7 @@ fun ShowDetailBottomSheet(
                     }
 
                     Text(
-                        text = show.overview.ifBlank { "No overview available." },
+                        text = showOverview.ifBlank { "No overview available." },
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color(0xFFD4D4D8)
                     )
@@ -740,9 +805,10 @@ fun MovieDetailBottomSheet(
     var runtimeMins by remember(movie.id, movie.runtimeMins) { mutableIntStateOf(movie.runtimeMins) }
     var director by remember(movie.id, movie.director) { mutableStateOf(movie.director) }
     var castCsv by remember(movie.id, movie.castCsv) { mutableStateOf(movie.castCsv) }
+    var movieOverview by remember(movie.id, movie.overview) { mutableStateOf(movie.overview) }
 
     LaunchedEffect(movie.id, movie.tmdbId, movie.title) {
-        if (LiveMediaCatalogService.isGenericStreamingLabel(streamingService) || castCsv.isBlank()) {
+        if (LiveMediaCatalogService.isGenericStreamingLabel(streamingService) || castCsv.isBlank() || movieOverview.isBlank()) {
             val enriched = LiveMediaCatalogService.fetchMovieDetails(
                 tmdbId = movie.tmdbId,
                 title = movie.title,
@@ -766,6 +832,10 @@ fun MovieDetailBottomSheet(
                     castCsv = enriched.castCsv
                     changed = true
                 }
+                if (enriched.overview.isNotBlank() && movieOverview.isBlank()) {
+                    movieOverview = enriched.overview
+                    changed = true
+                }
                 if (changed && persistedMovieId != 0L) {
                     dao.updateMovie(
                         movie.copy(
@@ -774,7 +844,8 @@ fun MovieDetailBottomSheet(
                             streamingService = streamingService,
                             runtimeMins = runtimeMins,
                             director = director,
-                            castCsv = castCsv
+                            castCsv = castCsv,
+                            overview = movieOverview
                         )
                     )
                     FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
@@ -793,6 +864,7 @@ fun MovieDetailBottomSheet(
             runtimeMins = runtimeMins,
             director = director,
             castCsv = castCsv,
+            overview = movieOverview,
             rewatchCount = 0,
             reaction = ""
         )
@@ -1017,7 +1089,7 @@ fun MovieDetailBottomSheet(
             }
 
             Text(
-                text = movie.overview.ifBlank { "No overview available." },
+                text = movieOverview.ifBlank { "No overview available." },
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color(0xFFD4D4D8)
             )

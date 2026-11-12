@@ -207,14 +207,12 @@ fun TvShowWatchCard(
     onCardClick: () -> Unit,
     onEyeClick: () -> Unit
 ) {
-    val episodes = remember(show.episodesJson) {
-        TvTimeProgressCalculator.parseEpisodeList(show.episodesJson)
-    }
-    val watchedSet = remember(show.watchedCodesCsv) {
-        TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv)
-    }
-    val progress = remember(episodes, watchedSet) {
-        TvTimeProgressCalculator.computeShowProgress(episodes, watchedSet)
+    val progress = remember(show.episodesJson, show.watchedCodesCsv, show.userStatus) {
+        TvTimeProgressCalculator.computeShowProgressFromJson(
+            show.episodesJson,
+            show.watchedCodesCsv,
+            show.userStatus
+        )
     }
     val statusKey = remember(show.userStatus, progress.isCompleted, progress.hasStarted) {
         TvTimeProgressCalculator.deriveEffectiveShowStatus(progress, show.userStatus)
