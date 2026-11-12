@@ -3648,6 +3648,7 @@ private fun FriendsFullPageScreen(
     var selectedFriendId by rememberSaveable { mutableStateOf("") }
     var selectedFriendLibrary by remember { mutableStateOf<FriendLibraryData?>(null) }
     var isLoadingLibrary by remember { mutableStateOf(false) }
+    var friendLoadError by remember { mutableStateOf("") }
     var librarySegment by rememberSaveable { mutableStateOf("shows") } // "shows" | "movies"
 
     val refreshFriends: () -> Unit = {
@@ -3670,15 +3671,14 @@ private fun FriendsFullPageScreen(
     val openFriendLibrary: (String) -> Unit = { friendId ->
         selectedFriendId = friendId
         isLoadingLibrary = true
+        friendLoadError = ""
         scope.launch {
             val res = FirestoreSyncService.fetchFriendLibrary(currentUserId, friendId)
             selectedFriendLibrary = res.getOrNull()
-            if (res.isFailure) {
-                Toast.makeText(
-                    context,
-                    res.exceptionOrNull()?.message ?: "Could not load friend library.",
-                    Toast.LENGTH_SHORT
-                ).show()
+            if (res.isFailure || selectedFriendLibrary == null) {
+                val errMsg = res.exceptionOrNull()?.message ?: "Could not load @$friendId's library."
+                friendLoadError = errMsg
+                Toast.makeText(context, errMsg, Toast.LENGTH_SHORT).show()
             }
             isLoadingLibrary = false
         }
@@ -4096,15 +4096,20 @@ private fun FriendsFullPageScreen(
                                 )
                                 val lib = selectedFriendLibrary
                                 Text(
-                                    text = if (isLoadingLibrary) "Loading..." else "${lib?.shows?.size ?: 0} series · ${lib?.movies?.size ?: 0} movies",
+                                    text = when {
+                                        isLoadingLibrary -> "Loading..."
+                                        lib == null -> "Unable to load library"
+                                        else -> "${lib.shows.size} series · ${lib.movies.size} movies"
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = TvTimePalette.TextSecondary
+                                    color = if (!isLoadingLibrary && lib == null) TvTimePalette.Error else TvTimePalette.TextSecondary
                                 )
                             }
                             TextButton(
                                 onClick = {
                                     selectedFriendId = ""
                                     selectedFriendLibrary = null
+                                    friendLoadError = ""
                                 }
                             ) {
                                 Text("✕ Close", color = Color.White, fontWeight = FontWeight.Bold)
@@ -4133,7 +4138,32 @@ private fun FriendsFullPageScreen(
 
                         val lib = selectedFriendLibrary
                         var friendFilter by rememberSaveable { mutableStateOf("all") }
-                        if (!isLoadingLibrary && lib != null) {
+                        if (!isLoadingLibrary && lib == null) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = friendLoadError.ifBlank { "Could not load @$selectedFriendId's library." },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TvTimePalette.Error,
+                                    textAlign = TextAlign.Center
+                                )
+                                Button(
+                                    onClick = { openFriendLibrary(selectedFriendId) },
+                                    shape = RoundedCornerShape(50),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = TvTimePalette.Yellow,
+                                        contentColor = TvTimePalette.OnYellow
+                                    )
+                                ) {
+                                    Text("↻ Retry", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                                }
+                            }
+                        } else if (!isLoadingLibrary && lib != null) {
                             val filterOptions = if (librarySegment == "movies") {
                                 listOf(
                                     "all" to "All (${lib.movies.size})",
@@ -4142,9 +4172,11 @@ private fun FriendsFullPageScreen(
                                 )
                             } else {
                                 val statuses = lib.shows.map { s ->
-                                    val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
-                                    val w = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
-                                    val prog = TvTimeProgressCalculator.computeShowProgress(eps, w)
+                                    val prog = TvTimeProgressCalculator.computeShowProgressFromJson(
+                                        s.episodesJson,
+                                        s.watchedCodesCsv,
+                                        s.userStatus
+                                    )
                                     s to TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus)
                                 }
                                 listOf(
@@ -4190,8 +4222,11 @@ private fun FriendsFullPageScreen(
                                     )
                                 } else {
                                     filteredFriendMovies.forEach { m ->
-                                        val myMovie = myMovies.firstOrNull {
-                                            it.externalId == m.externalId || it.title.equals(m.title, ignoreCase = true)
+                                        val myMovie = myMovies.firstOrNull { mine ->
+                                            TvTimeProgressCalculator.doesMovieMatch(
+                                                mine.externalId, mine.tmdbId, mine.title, mine.year,
+                                                m.externalId, m.tmdbId, m.title, m.year
+                                            )
                                         }
                                         Row(
                                             modifier = Modifier
@@ -4298,9 +4333,11 @@ private fun FriendsFullPageScreen(
                                 val filteredFriendShows = lib.shows.filter { s ->
                                     if (friendFilter == "all") true
                                     else {
-                                        val eps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
-                                        val w = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
-                                        val prog = TvTimeProgressCalculator.computeShowProgress(eps, w)
+                                        val prog = TvTimeProgressCalculator.computeShowProgressFromJson(
+                                            s.episodesJson,
+                                            s.watchedCodesCsv,
+                                            s.userStatus
+                                        )
                                         TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus) == friendFilter
                                     }
                                 }
@@ -4312,18 +4349,29 @@ private fun FriendsFullPageScreen(
                                     )
                                 } else {
                                     filteredFriendShows.forEach { s ->
-                                        val myShow = myShows.firstOrNull {
-                                            it.externalId == s.externalId || it.title.equals(s.title, ignoreCase = true)
+                                        val myShow = myShows.firstOrNull { mine ->
+                                            TvTimeProgressCalculator.doesShowMatch(
+                                                mine.externalId, mine.tmdbId, mine.tvmazeId, mine.title, mine.year,
+                                                s.externalId, s.tmdbId, s.tvmazeId, s.title, s.year
+                                            )
                                         }
                                         val myEff = myShow?.let { ms ->
-                                            val eps = TvTimeProgressCalculator.parseEpisodeList(ms.episodesJson)
-                                            val w = TvTimeProgressCalculator.parseWatchedSet(ms.watchedCodesCsv)
-                                            val prog = TvTimeProgressCalculator.computeShowProgress(eps, w)
+                                            val prog = TvTimeProgressCalculator.computeShowProgressFromJson(
+                                                ms.episodesJson,
+                                                ms.watchedCodesCsv,
+                                                ms.userStatus
+                                            )
                                             TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, ms.userStatus)
                                         } ?: ""
+                                        val sProg = TvTimeProgressCalculator.computeShowProgressFromJson(
+                                            s.episodesJson,
+                                            s.watchedCodesCsv,
+                                            s.userStatus
+                                        )
+                                        val sEff = TvTimeProgressCalculator.deriveEffectiveShowStatus(sProg, s.userStatus)
                                         val sEps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
-                                        val watchedCount = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv).size
-                                        val totalCount = sEps.size.coerceAtLeast(1)
+                                        val watchedCount = sProg.watchedCount
+                                        val totalCount = sProg.totalEpisodes.coerceAtLeast(1)
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -4352,9 +4400,9 @@ private fun FriendsFullPageScreen(
                                                         overflow = TextOverflow.Ellipsis
                                                     )
                                                     Text(
-                                                        text = "${s.year} · $watchedCount/$totalCount eps (${s.userStatus})",
+                                                        text = "${s.year} · $watchedCount/$totalCount eps ($sEff)",
                                                         style = MaterialTheme.typography.bodySmall,
-                                                        color = if (s.userStatus == "completed") Color(0xFF4ADE80) else TvTimePalette.Yellow
+                                                        color = if (sEff == "completed") Color(0xFF4ADE80) else TvTimePalette.Yellow
                                                     )
                                                 }
                                             }
@@ -4381,7 +4429,7 @@ private fun FriendsFullPageScreen(
                                                     TextButton(
                                                         onClick = {
                                                             scope.launch {
-                                                                val allCodes = sEps.map { it.code }.ifEmpty { listOf("S01E01") }
+                                                                val allCodes = sEps.map { it.code }
                                                                 dao.insertShow(
                                                                     s.copy(
                                                                         id = 0,
@@ -4402,7 +4450,7 @@ private fun FriendsFullPageScreen(
                                                         onClick = {
                                                             scope.launch {
                                                                 val myEps = TvTimeProgressCalculator.parseEpisodeList(myShow.episodesJson).ifEmpty { sEps }
-                                                                val allCodes = myEps.map { it.code }.ifEmpty { listOf("S01E01") }
+                                                                val allCodes = myEps.map { it.code }
                                                                 dao.updateShow(
                                                                     myShow.copy(
                                                                         userStatus = "completed",
