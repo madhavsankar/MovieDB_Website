@@ -191,6 +191,11 @@ object TvTimeProgressCalculator {
             .replace("sorcerers stone", "philosophers stone")
             .replace(Regex("[^a-z0-9]+"), " ")
             .trim()
+        if (clean.startsWith("im ")) {
+            clean = "i am " + clean.substring(3)
+        } else if (clean.startsWith("i m ")) {
+            clean = "i am " + clean.substring(4)
+        }
         if (clean.startsWith("the ") && clean.length > 5) {
             clean = clean.substring(4).trim()
         } else if (clean.startsWith("a ") && clean.length > 3) {
@@ -200,6 +205,26 @@ object TvTimeProgressCalculator {
             clean = clean.substring(0, clean.length - 10).trim()
         }
         return clean
+    }
+
+    fun translitSkeleton(raw: String): String {
+        val base = normalizeRecTitle(raw).replace(Regex("[^a-z0-9]+"), "")
+        if (base.isEmpty()) return ""
+        val folded = base
+            .replace("th", "t")
+            .replace("dh", "d")
+            .replace("kh", "k")
+            .replace("gh", "g")
+            .replace("bh", "b")
+            .replace("ph", "f")
+            .replace("sh", "s")
+            .replace("w", "v")
+        val combined = folded.first() + folded.substring(1).replace(Regex("[aeiouy]"), "")
+        val sb = StringBuilder()
+        for (i in combined.indices) {
+            if (i == 0 || combined[i] != combined[i - 1]) sb.append(combined[i])
+        }
+        return sb.toString()
     }
 
     fun doesRecMatchMovie(

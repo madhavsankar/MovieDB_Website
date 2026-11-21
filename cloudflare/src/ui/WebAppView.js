@@ -1706,6 +1706,34 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         return true;
       }
 
+      translitSkeleton(raw) {
+        let base = this.normalizeRecTitle(raw).replace(/[^a-z0-9]+/g, "");
+        if (!base) return "";
+        const pairs = [
+          ["th", "t"],
+          ["dh", "d"],
+          ["kh", "k"],
+          ["gh", "g"],
+          ["bh", "b"],
+          ["ph", "f"],
+          ["sh", "s"],
+          ["w", "v"],
+        ];
+        for (const [fromStr, toStr] of pairs) {
+          base = base.split(fromStr).join(toStr);
+        }
+        const head = base.charAt(0);
+        const tail = base.slice(1).replace(/[aeiouy]/g, "");
+        const combined = head + tail;
+        let collapsed = "";
+        for (let i = 0; i < combined.length; i++) {
+          if (i === 0 || combined.charAt(i) !== combined.charAt(i - 1)) {
+            collapsed += combined.charAt(i);
+          }
+        }
+        return collapsed;
+      }
+
       deduplicateState() {
         if (!this.state) return;
         const statusRank = { completed: 4, in_progress: 3, watching: 3, stopped: 2, interested: 1 };
@@ -1726,11 +1754,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const titleToKeys = new Map();
           for (const s of this.state.shows) {
             if (!s || typeof s !== "object") continue;
-            const titleKey = this.normalizeTitleKey(s.title);
+            let titleKey = this.normalizeRecTitle(s.title);
+            if (titleKey.startsWith("im ")) titleKey = "i am " + titleKey.slice(3);
+            else if (titleKey.startsWith("i m ")) titleKey = "i am " + titleKey.slice(4);
             const tmdbId = Number(s.tmdbId) || 0;
             const tvmazeId = Number(s.tvmazeId) || 0;
             const idKey = String(s.id || "").trim();
             const sYear = Number(s.year) || 0;
+            const isLegacyId = idKey.startsWith("csv_") || (idKey.startsWith("tvmaze_") && tmdbId === 0);
 
             let matchedKey = null;
             if (tmdbId > 0 && byKey.has("tmdb:" + tmdbId)) {
@@ -1744,9 +1775,16 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 const cTmdb = Number(cand.tmdbId) || 0;
                 const cMaze = Number(cand.tvmazeId) || 0;
                 const cYear = Number(cand.year) || 0;
+                const candLegacy =
+                  String(cand.id || "").startsWith("csv_") ||
+                  (String(cand.id || "").startsWith("tvmaze_") && cTmdb === 0);
                 if (tmdbId > 0 && cTmdb > 0 && tmdbId !== cTmdb) continue;
                 if (tvmazeId > 0 && cMaze > 0 && tvmazeId !== cMaze) continue;
-                if (sYear > 1900 && cYear > 1900 && Math.abs(sYear - cYear) > 1) continue;
+                if (sYear > 1900 && cYear > 1900 && Math.abs(sYear - cYear) > 1) {
+                  if (!(titleKey.length >= 6 && (isLegacyId || candLegacy) && (tmdbId === 0 || cTmdb === 0))) {
+                    continue;
+                  }
+                }
                 matchedKey = candKey;
                 break;
               }
@@ -1881,24 +1919,51 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
         if (Array.isArray(this.state.movies)) {
           const byKey = new Map();
-          const titleYearToKeys = new Map();
+          const titleToKeys = new Map();
+          const skelToKeys = new Map();
+          const extractNums = (txt) =>
+            String(txt || "")
+              .split(" ")
+              .filter((w) => w === "ii" || w === "iii" || w === "iv" || /^[0-9]+$/.test(w))
+              .join(",");
+
           for (const m of this.state.movies) {
             if (!m || typeof m !== "object") continue;
-            const titleKey = this.normalizeTitleKey(m.title);
+            const titleKey = this.normalizeRecTitle(m.title);
+            const skelKey = this.translitSkeleton(m.title);
             const idKey = String(m.id || "").trim();
-            const tmdbId = this.cleanMovieTmdbId(idKey, m.tmdbId);
-            const yearStr = String(Number(m.year) || "");
-            const tyKey = titleKey ? titleKey + ":" + yearStr : "";
+            const isCsv = idKey.startsWith("csv_");
+            const tmdbId =
+              isCsv && Number(m.tmdbId) === 241527 ? 0 : this.cleanMovieTmdbId(idKey, m.tmdbId);
+            const mYear = Number(m.year) || 0;
 
             let matchedKey = null;
             if (tmdbId > 0 && byKey.has("tmdb:" + tmdbId)) {
               matchedKey = "tmdb:" + tmdbId;
-            } else if (tyKey && titleYearToKeys.has(tyKey)) {
-              for (const candKey of titleYearToKeys.get(tyKey)) {
+            }
+            if (!matchedKey && titleKey && titleToKeys.has(titleKey)) {
+              for (const candKey of titleToKeys.get(titleKey)) {
                 const cand = byKey.get(candKey);
                 if (!cand) continue;
                 const cTmdb = Number(cand.tmdbId) || 0;
+                const cYear = Number(cand.year) || 0;
+                const candIsCsv = String(cand.id || "").startsWith("csv_");
+                if (tmdbId > 0 && cTmdb > 0 && tmdbId !== cTmdb && !isCsv && !candIsCsv) continue;
+                if (mYear > 1900 && cYear > 1900 && Math.abs(mYear - cYear) > 1) continue;
+                matchedKey = candKey;
+                break;
+              }
+            }
+            if (!matchedKey && skelKey.length >= 8 && skelToKeys.has(skelKey)) {
+              const mNums = extractNums(titleKey);
+              for (const candKey of skelToKeys.get(skelKey)) {
+                const cand = byKey.get(candKey);
+                if (!cand) continue;
+                const cTmdb = Number(cand.tmdbId) || 0;
+                const cYear = Number(cand.year) || 0;
                 if (tmdbId > 0 && cTmdb > 0 && tmdbId !== cTmdb) continue;
+                if (mYear > 1900 && cYear > 1900 && Math.abs(mYear - cYear) > 1) continue;
+                if (extractNums(this.normalizeRecTitle(cand.title)) !== mNums) continue;
                 matchedKey = candKey;
                 break;
               }
@@ -1908,22 +1973,43 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               const primaryKey =
                 tmdbId > 0
                   ? "tmdb:" + tmdbId
-                  : tyKey
-                    ? "title:" + tyKey
+                  : titleKey
+                    ? "title:" + titleKey + ":" + (mYear || "")
                     : idKey || "idx:" + byKey.size;
               byKey.set(primaryKey, { ...m, tmdbId, watched: Boolean(m.watched) });
-              if (tyKey) {
-                if (!titleYearToKeys.has(tyKey)) titleYearToKeys.set(tyKey, []);
-                titleYearToKeys.get(tyKey).push(primaryKey);
+              if (titleKey) {
+                if (!titleToKeys.has(titleKey)) titleToKeys.set(titleKey, []);
+                titleToKeys.get(titleKey).push(primaryKey);
+              }
+              if (skelKey.length >= 8) {
+                if (!skelToKeys.has(skelKey)) skelToKeys.set(skelKey, []);
+                skelToKeys.get(skelKey).push(primaryKey);
               }
             } else {
               const existing = byKey.get(matchedKey);
+              const exIsCsv = String(existing.id || "").startsWith("csv_") || Number(existing.tmdbId) <= 0;
+              const incHasRealTmdb = !isCsv && tmdbId > 0;
+              const bestTmdb = incHasRealTmdb ? tmdbId : existing.tmdbId || tmdbId || 0;
+              const bestId =
+                incHasRealTmdb && exIsCsv
+                  ? m.id
+                  : bestTmdb > 0 && String(existing.id || "").startsWith("csv_")
+                    ? "movie_" + bestTmdb
+                    : existing.id || m.id;
+              const bestTitle = incHasRealTmdb && exIsCsv ? m.title : existing.title || m.title;
+              const bestPoster = incHasRealTmdb && m.posterUrl ? m.posterUrl : existing.posterUrl || m.posterUrl || "";
+              const bestRuntime =
+                incHasRealTmdb && Number(m.runtimeMins) > 0 && Number(m.runtimeMins) !== 120
+                  ? m.runtimeMins
+                  : existing.runtimeMins || m.runtimeMins || 120;
               byKey.set(matchedKey, {
                 ...existing,
                 ...m,
-                id: existing.id || m.id,
-                tmdbId: existing.tmdbId || tmdbId || 0,
-                posterUrl: existing.posterUrl || m.posterUrl || "",
+                id: bestId,
+                tmdbId: bestTmdb,
+                title: bestTitle,
+                runtimeMins: bestRuntime,
+                posterUrl: bestPoster,
                 overview: existing.overview || m.overview || "",
                 watched: Boolean(existing.watched || m.watched),
                 watchedAt: existing.watchedAt || m.watchedAt || "",

@@ -1245,7 +1245,7 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                     })
                   };
                 }
-                return { ok: true, json: async () => ({ results: [] }) };
+                return { ok: true, json: async () => [] };
               };
 
               const recData = await LiveCatalogService.fetchRecommendations({
@@ -1624,6 +1624,110 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["progWatched"], 50)
         self.assertEqual(out["progLeft"], 0)
         self.assertEqual(out["eff"], "completed")
+
+    def test_transliteration_search_and_csv_library_deduplication(self):
+        """Verifies misspelled/transliterated Search ('ala vaikuntapuramloo') resolves to canonical TMDB movie_628241 without 'Ala Vykuntapurram Loo' dupes, and deduplicates CSV/edition library pairs."""
+        import re as _re
+
+        def load_cf_module(rel_path):
+            with open(os.path.join(ROOT_DIR, "cloudflare", "src", *rel_path), "r", encoding="utf-8") as f:
+                src = f.read()
+            src = _re.sub(r"^import\s+.*?;\s*$", "", src, flags=_re.MULTILINE)
+            return src.replace("export class ", "class ").replace("export function ", "function ").replace("export const ", "const ")
+
+        repo_src = load_cf_module(("repositories", "FirestoreRepository.js"))
+        svc_src = load_cf_module(("services", "LiveCatalogService.js"))
+        view_src = load_cf_module(("ui", "WebAppView.js"))
+
+        harness = (
+            repo_src
+            + "\n"
+            + svc_src
+            + "\n"
+            + view_src
+            + """
+            (async () => {
+              const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+              const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+              const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+              (new Function(clientJs))();
+              const app = Object.create(globalThis.TvTimeClientClass.prototype);
+
+              const mockFetch = async (url) => {
+                const u = String(url);
+                if (u.includes("/search/multi")) return { ok: true, json: async () => ({ results: [] }) };
+                if (u.includes("v3.sg.media-imdb.com")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      d: [
+                        { id: "tt9537292", l: "Ala Vaikunthapurramuloo", qid: "movie", y: 2020, s: "Allu Arjun" },
+                        { id: "tt11607018", l: "Ala Vykuntapurram Loo", qid: "movie", y: 2020, s: "Allu Arjun" }
+                      ]
+                    })
+                  };
+                }
+                if (u.includes("/find/tt9537292")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      movie_results: [
+                        { id: 628241, title: "Ala Vaikunthapurramuloo", release_date: "2020-01-12", vote_average: 7.3, poster_path: "/ala.jpg" }
+                      ]
+                    })
+                  };
+                }
+                return { ok: true, json: async () => [] };
+              };
+
+              const searchOut = await LiveCatalogService.searchMulti("ala vaikuntapuramloo", {
+                page: 1,
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
+
+              const dedupMovies = FirestoreRepository.deduplicateMovies([
+                { id: "csv_movie_lotr", tmdbId: 0, title: "Lord of the Rings: The Two Towers", year: 2002, watched: true },
+                { id: "movie_121", tmdbId: 121, title: "The Lord of the Rings: The Two Towers", year: 2002, watched: true },
+                { id: "csv_movie_hp", tmdbId: 241527, title: "Harry Potter and the Sorcerer's Stone", year: 2001, watched: true },
+                { id: "movie_671", tmdbId: 671, title: "Harry Potter and the Philosopher's Stone", year: 2001, watched: true },
+                { id: "csv_movie_f1", tmdbId: 0, title: "F1 The Movie", year: 2025, watched: true },
+                { id: "movie_911430", tmdbId: 911430, title: "F1", year: 2025, watched: true },
+                { id: "movie_8587", tmdbId: 8587, title: "The Lion King", year: 1994, watched: true },
+                { id: "movie_420818", tmdbId: 420818, title: "The Lion King", year: 2019, watched: true }
+              ]);
+              const dedupShows = FirestoreRepository.deduplicateShows([
+                { id: "tmdb_tv_74682", tmdbId: 74682, title: "I Am Not a Robot", year: 2017, userStatus: "completed", totalEpisodes: 32, episodes: [], watchedEpisodes: [] },
+                { id: "tvmaze_32272", tmdbId: 0, tvmazeId: 32272, title: "I'm Not a Robot", year: 2017, userStatus: "completed", totalEpisodes: 32, episodes: [], watchedEpisodes: [] }
+              ]);
+
+              app.state = {
+                movies: [
+                  { id: "csv_movie_scene_tamil", tmdbId: 0, title: "Scene (Tamil)", year: 2026, watched: true },
+                  { id: "movie_1402181", tmdbId: 1402181, title: "Scene", year: 2026, watched: true }
+                ],
+                shows: []
+              };
+              app.deduplicateState();
+
+              const out = JSON.stringify({
+                searchIds: searchOut.results.map((r) => r.id),
+                searchTitles: searchOut.results.map((r) => r.title),
+                dedupMovieIds: dedupMovies.map((m) => m.id),
+                dedupShowCount: dedupShows.length,
+                clientSceneIds: app.state.movies.map((m) => m.id)
+              });
+              if (typeof console !== "undefined" && console.log) console.log(out);
+              else if (typeof print !== "undefined") print(out);
+            })();
+            """
+        )
+        out = self._run_js(harness)
+        self.assertEqual(out["searchIds"], ["movie_628241"])
+        self.assertEqual(out["searchTitles"], ["Ala Vaikunthapurramuloo"])
+        self.assertEqual(out["dedupMovieIds"], ["movie_121", "movie_671", "movie_911430", "movie_8587", "movie_420818"])
+        self.assertEqual(out["dedupShowCount"], 1)
+        self.assertEqual(out["clientSceneIds"], ["movie_1402181"])
 
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""

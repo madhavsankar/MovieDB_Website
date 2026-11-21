@@ -416,6 +416,42 @@ export class FirestoreRepository {
       .trim();
   }
 
+  static normalizeDedupTitle(raw) {
+    let s = String(raw || "").toLowerCase();
+    const parenStripped = s.replace(/\([^)]*\)/g, " ").replace(/\[[^\]]*\]/g, " ").trim();
+    if (parenStripped) s = parenStripped;
+    s = s
+      .split("'")
+      .join("")
+      .split("\u2019")
+      .join("")
+      .replace(/&/g, " and ")
+      .replace(/sorcerers stone/g, "philosophers stone")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+    if (s.startsWith("im ")) s = "i am " + s.slice(3);
+    else if (s.startsWith("i m ")) s = "i am " + s.slice(4);
+    if (s.startsWith("the ") && s.length > 5) s = s.slice(4).trim();
+    else if (s.startsWith("a ") && s.length > 3) s = s.slice(2).trim();
+    if (s.endsWith(" the movie") && s.length > 11) s = s.slice(0, -10).trim();
+    return s;
+  }
+
+  static translitSkeleton(raw) {
+    const base = FirestoreRepository.normalizeDedupTitle(raw).replace(/[^a-z0-9]+/g, "");
+    if (!base) return "";
+    const folded = base
+      .replace(/th/g, "t")
+      .replace(/dh/g, "d")
+      .replace(/kh/g, "k")
+      .replace(/gh/g, "g")
+      .replace(/bh/g, "b")
+      .replace(/ph/g, "f")
+      .replace(/sh/g, "s")
+      .replace(/w/g, "v");
+    return (folded[0] + folded.slice(1).replace(/[aeiouy]/g, "")).replace(/(.)\1+/g, "$1");
+  }
+
   static deduplicateShows(shows) {
     if (!Array.isArray(shows)) return [];
     const byKey = new Map();
@@ -435,7 +471,7 @@ export class FirestoreRepository {
 
     for (const s of shows) {
       if (!s || typeof s !== "object") continue;
-      const titleKey = FirestoreRepository.normalizeTitleKey(s.title);
+      const titleKey = FirestoreRepository.normalizeDedupTitle(s.title);
       const tmdbId = Number(s.tmdbId) || 0;
       const tvmazeId = Number(s.tvmazeId) || 0;
       const idKey = String(s.id || "").trim();
@@ -447,15 +483,23 @@ export class FirestoreRepository {
         matchedKey = `tvmaze:${tvmazeId}`;
       } else if (titleKey && titleToKeys.has(titleKey)) {
         const sYear = Number(s.year) || 0;
+        const isLegacyId = idKey.startsWith("csv_") || (idKey.startsWith("tvmaze_") && tmdbId === 0);
         for (const candKey of titleToKeys.get(titleKey)) {
           const cand = byKey.get(candKey);
           if (!cand) continue;
           const cTmdb = Number(cand.tmdbId) || 0;
           const cMaze = Number(cand.tvmazeId) || 0;
           const cYear = Number(cand.year) || 0;
+          const candLegacy =
+            String(cand.id || "").startsWith("csv_") ||
+            (String(cand.id || "").startsWith("tvmaze_") && cTmdb === 0);
           if (tmdbId > 0 && cTmdb > 0 && tmdbId !== cTmdb) continue;
           if (tvmazeId > 0 && cMaze > 0 && tvmazeId !== cMaze) continue;
-          if (sYear > 1900 && cYear > 1900 && Math.abs(sYear - cYear) > 1) continue;
+          if (sYear > 1900 && cYear > 1900 && Math.abs(sYear - cYear) > 1) {
+            if (!(titleKey.length >= 6 && (isLegacyId || candLegacy) && (tmdbId === 0 || cTmdb === 0))) {
+              continue;
+            }
+          }
           matchedKey = candKey;
           break;
         }
@@ -580,10 +624,21 @@ export class FirestoreRepository {
           airedBest.length + compSum,
           compSum + mergedWatched.length
         );
+        const bestShowId =
+          (existing.tmdbId || tmdbId) > 0 &&
+          (String(existing.id || "").startsWith("csv_") || String(existing.id || "").startsWith("tvmaze_")) &&
+          String(s.id || "").startsWith("tmdb_tv_")
+            ? s.id
+            : existing.id || s.id;
+        const bestShowTitle =
+          String(existing.id || "").startsWith("csv_") && !String(s.id || "").startsWith("csv_") && s.title
+            ? s.title
+            : existing.title || s.title;
         const mergedEntry = {
           ...existing,
           ...s,
-          id: existing.id || s.id,
+          id: bestShowId,
+          title: bestShowTitle,
           tvmazeId: existing.tvmazeId || tvmazeId || 0,
           tmdbId: existing.tmdbId || tmdbId || 0,
           posterUrl: existing.posterUrl || s.posterUrl || "",
@@ -606,24 +661,46 @@ export class FirestoreRepository {
   static deduplicateMovies(movies) {
     if (!Array.isArray(movies)) return [];
     const byKey = new Map();
-    const titleYearToKeys = new Map();
+    const titleToKeys = new Map();
+    const skelToKeys = new Map();
+    const extractNums = (s) => (String(s || "").match(/\b(?:[0-9]+|ii|iii|iv)\b/g) || []).join(",");
+
     for (const m of movies) {
       if (!m || typeof m !== "object") continue;
-      const titleKey = FirestoreRepository.normalizeTitleKey(m.title);
+      const titleKey = FirestoreRepository.normalizeDedupTitle(m.title);
+      const skelKey = FirestoreRepository.translitSkeleton(m.title);
       const idKey = String(m.id || "").trim();
-      const tmdbId = FirestoreRepository.cleanMovieTmdbId(idKey, m.tmdbId);
-      const yearStr = String(Number(m.year) || "");
-      const tyKey = titleKey ? `${titleKey}:${yearStr}` : "";
+      const isCsv = idKey.startsWith("csv_");
+      const tmdbId = isCsv && Number(m.tmdbId) === 241527 ? 0 : FirestoreRepository.cleanMovieTmdbId(idKey, m.tmdbId);
+      const mYear = Number(m.year) || 0;
 
       let matchedKey = null;
       if (tmdbId > 0 && byKey.has(`tmdb:${tmdbId}`)) {
         matchedKey = `tmdb:${tmdbId}`;
-      } else if (tyKey && titleYearToKeys.has(tyKey)) {
-        for (const candKey of titleYearToKeys.get(tyKey)) {
+      }
+      if (!matchedKey && titleKey && titleToKeys.has(titleKey)) {
+        for (const candKey of titleToKeys.get(titleKey)) {
           const cand = byKey.get(candKey);
           if (!cand) continue;
           const cTmdb = Number(cand.tmdbId) || 0;
+          const cYear = Number(cand.year) || 0;
+          const candIsCsv = String(cand.id || "").startsWith("csv_");
+          if (tmdbId > 0 && cTmdb > 0 && tmdbId !== cTmdb && !isCsv && !candIsCsv) continue;
+          if (mYear > 1900 && cYear > 1900 && Math.abs(mYear - cYear) > 1) continue;
+          matchedKey = candKey;
+          break;
+        }
+      }
+      if (!matchedKey && skelKey.length >= 8 && skelToKeys.has(skelKey)) {
+        const mNums = extractNums(titleKey);
+        for (const candKey of skelToKeys.get(skelKey)) {
+          const cand = byKey.get(candKey);
+          if (!cand) continue;
+          const cTmdb = Number(cand.tmdbId) || 0;
+          const cYear = Number(cand.year) || 0;
           if (tmdbId > 0 && cTmdb > 0 && tmdbId !== cTmdb) continue;
+          if (mYear > 1900 && cYear > 1900 && Math.abs(mYear - cYear) > 1) continue;
+          if (extractNums(FirestoreRepository.normalizeDedupTitle(cand.title)) !== mNums) continue;
           matchedKey = candKey;
           break;
         }
@@ -633,22 +710,43 @@ export class FirestoreRepository {
         const primaryKey =
           tmdbId > 0
             ? `tmdb:${tmdbId}`
-            : tyKey
-              ? `title:${tyKey}`
+            : titleKey
+              ? `title:${titleKey}:${mYear || ""}`
               : idKey || `idx:${byKey.size}`;
         byKey.set(primaryKey, { ...m, tmdbId, watched: Boolean(m.watched) });
-        if (tyKey) {
-          if (!titleYearToKeys.has(tyKey)) titleYearToKeys.set(tyKey, []);
-          titleYearToKeys.get(tyKey).push(primaryKey);
+        if (titleKey) {
+          if (!titleToKeys.has(titleKey)) titleToKeys.set(titleKey, []);
+          titleToKeys.get(titleKey).push(primaryKey);
+        }
+        if (skelKey.length >= 8) {
+          if (!skelToKeys.has(skelKey)) skelToKeys.set(skelKey, []);
+          skelToKeys.get(skelKey).push(primaryKey);
         }
       } else {
         const existing = byKey.get(matchedKey);
+        const exIsCsv = String(existing.id || "").startsWith("csv_") || Number(existing.tmdbId) <= 0;
+        const incHasRealTmdb = !isCsv && tmdbId > 0;
+        const bestTmdb = incHasRealTmdb ? tmdbId : existing.tmdbId || tmdbId || 0;
+        const bestId =
+          incHasRealTmdb && exIsCsv
+            ? m.id
+            : bestTmdb > 0 && String(existing.id || "").startsWith("csv_")
+              ? `movie_${bestTmdb}`
+              : existing.id || m.id;
+        const bestTitle = incHasRealTmdb && exIsCsv ? m.title : existing.title || m.title;
+        const bestPoster = incHasRealTmdb && m.posterUrl ? m.posterUrl : existing.posterUrl || m.posterUrl || "";
+        const bestRuntime =
+          incHasRealTmdb && Number(m.runtimeMins) > 0 && Number(m.runtimeMins) !== 120
+            ? m.runtimeMins
+            : existing.runtimeMins || m.runtimeMins || 120;
         byKey.set(matchedKey, {
           ...existing,
           ...m,
-          id: existing.id || m.id,
-          tmdbId: existing.tmdbId || tmdbId || 0,
-          posterUrl: existing.posterUrl || m.posterUrl || "",
+          id: bestId,
+          tmdbId: bestTmdb,
+          title: bestTitle,
+          runtimeMins: bestRuntime,
+          posterUrl: bestPoster,
           watched: Boolean(existing.watched || m.watched),
           watchedAt: existing.watchedAt || m.watchedAt || "",
           streamingService:

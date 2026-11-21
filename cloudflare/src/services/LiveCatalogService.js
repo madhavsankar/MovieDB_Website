@@ -295,16 +295,41 @@ export class LiveCatalogService {
           .replace(/\([^)]*\)/g, " ")
           .replace(/\[[^\]]*\]/g, " ")
       );
+    const seenMovieSkeletonYears = new Map();
+    const translitSkeleton = (raw) => {
+      const compact = normalizeBaseTitle(raw).replace(/[^a-z0-9]+/g, "");
+      if (!compact) return "";
+      const folded = compact
+        .replace(/th/g, "t")
+        .replace(/dh/g, "d")
+        .replace(/kh/g, "k")
+        .replace(/gh/g, "g")
+        .replace(/bh/g, "b")
+        .replace(/ph/g, "f")
+        .replace(/sh/g, "s")
+        .replace(/w/g, "v");
+      return (folded[0] + folded.slice(1).replace(/[aeiouy]/g, "")).replace(/(.)\1+/g, "$1");
+    };
     const hasMovieNearYear = (baseTitle, yr) => {
       if (!baseTitle) return false;
       const yrs = seenMovieBaseTitleYears.get(baseTitle);
-      if (!yrs) return false;
-      return yrs.some((y) => Math.abs(y - yr) <= 1);
+      if (yrs && yrs.some((y) => Math.abs(y - yr) <= 1)) return true;
+      const skel = translitSkeleton(baseTitle);
+      if (skel.length >= 8) {
+        const sYrs = seenMovieSkeletonYears.get(skel);
+        if (sYrs && sYrs.some((y) => Math.abs(y - yr) <= 1)) return true;
+      }
+      return false;
     };
     const recordMovieTitleYear = (baseTitle, yr) => {
       if (!baseTitle) return;
       if (!seenMovieBaseTitleYears.has(baseTitle)) seenMovieBaseTitleYears.set(baseTitle, []);
       seenMovieBaseTitleYears.get(baseTitle).push(yr);
+      const skel = translitSkeleton(baseTitle);
+      if (skel.length >= 8) {
+        if (!seenMovieSkeletonYears.has(skel)) seenMovieSkeletonYears.set(skel, []);
+        seenMovieSkeletonYears.get(skel).push(yr);
+      }
     };
     const hasShowNearYear = (baseTitle, yr) => {
       if (!baseTitle) return false;
@@ -369,7 +394,8 @@ export class LiveCatalogService {
       const seenShowTvmazeIds = new Set();
       let showsData = [];
       if (showsRes.status === "fulfilled" && showsRes.value && showsRes.value.ok) {
-        showsData = (await showsRes.value.json()) || [];
+        const rawShows = await showsRes.value.json();
+        showsData = Array.isArray(rawShows) ? rawShows : [];
         for (const entry of showsData) {
           const s = entry?.show;
           if (s?.id && s?.name) {
@@ -708,7 +734,60 @@ export class LiveCatalogService {
 
       if (tmdbMovieCount < 5 && imdbRes.status === "fulfilled" && imdbRes.value && imdbRes.value.ok) {
         const imdbData = await imdbRes.value.json();
-        for (const item of imdbData?.d || []) {
+        const imdbItems = Array.isArray(imdbData?.d) ? imdbData.d : [];
+        // When TMDB missed a transliterated/misspelled movie query (e.g. "ala vaikuntapuramloo"),
+        // resolve IMDb's top tt* hit to its canonical TMDB movie ID via `/find/{ttId}?external_source=imdb_id`!
+        if (tmdbMovieCount === 0) {
+          const topImdbMovies = imdbItems
+            .filter((it) => {
+              const qid = String(it?.qid || "").toLowerCase();
+              return /^tt\d+$/i.test(String(it?.id || "")) && (qid === "movie" || qid === "feature" || qid === "tvmovie");
+            })
+            .slice(0, 2);
+          for (const imHit of topImdbMovies) {
+            const findReq = LiveCatalogService._buildTmdbRequest(
+              `/find/${encodeURIComponent(imHit.id)}?external_source=imdb_id&language=en-US`,
+              env
+            );
+            if (!findReq) continue;
+            try {
+              const fr = await fetchImpl(findReq.url, { headers: findReq.headers });
+              if (fr.ok) {
+                const fd = await fr.json();
+                for (const m of fd?.movie_results || []) {
+                  const mId = Number(m?.id) || 0;
+                  if (mId <= 0 || seenMovieTmdbIds.has(mId)) continue;
+                  const title = m.title || m.original_title || imHit.l || "Untitled Movie";
+                  const rel = String(m.release_date || "");
+                  const year = rel ? parseInt(rel.slice(0, 4), 10) || Number(imHit.y) || 2024 : Number(imHit.y) || 2024;
+                  const baseTitle = normalizeBaseTitle(title);
+                  const key = `${normalizeSearchTitle(title)}_${year}`;
+                  if (seenMovieTitles.has(key) || hasMovieNearYear(baseTitle, year)) continue;
+                  seenMovieTmdbIds.add(mId);
+                  seenMovieTitles.add(key);
+                  recordMovieTitleYear(baseTitle, year);
+                  tmdbMovieCount += 1;
+                  results.push({
+                    id: `movie_${mId}`,
+                    tmdbId: mId,
+                    mediaType: "movie",
+                    title,
+                    year,
+                    director: "",
+                    runtimeMins: 125,
+                    genres: ["Movie"],
+                    streamingService: "Theaters / Streaming",
+                    rating: m.vote_average ? Math.round(Number(m.vote_average) * 10) / 10 : 7.8,
+                    posterUrl: m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : imHit.i?.imageUrl || "",
+                    overview: stripHtml(m.overview || ""),
+                  });
+                }
+              }
+            } catch (_) {}
+          }
+        }
+
+        for (const item of imdbItems) {
           if (!item || !item.id || !item.l) continue;
           const qid = String(item.qid || "").toLowerCase();
           if (qid === "movie" || qid === "feature" || qid === "tvmovie") {

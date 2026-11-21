@@ -788,8 +788,10 @@ object LiveMediaCatalogService {
             if (tmdbId > 0 && !seenMovieTmdbIds.add(tmdbId)) return false
             val tKey = normBaseKey(title)
             if (tKey.isEmpty()) return false
+            val skel = TvTimeProgressCalculator.translitSkeleton(title)
             val dupByTitleYear = seenMovieTitleYears.any { (k, y) ->
-                k == tKey && (year <= 0 || y <= 0 || kotlin.math.abs(y - year) <= 1)
+                val sameTitle = k == tKey || (skel.length >= 8 && TvTimeProgressCalculator.translitSkeleton(k) == skel)
+                sameTitle && (year <= 0 || y <= 0 || kotlin.math.abs(y - year) <= 1)
             }
             if (dupByTitleYear) return false
             seenMovieTitleYears.add(tKey to year)
@@ -1168,6 +1170,61 @@ object LiveMediaCatalogService {
                     val text = conn.inputStream.bufferedReader().use { it.readText() }
                     val root = JSONObject(text)
                     val arr = root.optJSONArray("d") ?: JSONArray()
+                    // Resolve top IMDb tt* hit to canonical TMDB ID when TMDB direct search missed a transliterated spelling
+                    if (tmdbMovieCount == 0 && (tmdbToken.isNotEmpty() || tmdbKey.isNotEmpty())) {
+                        for (i in 0 until minOf(2, arr.length())) {
+                            val imObj = arr.optJSONObject(i) ?: continue
+                            val ttId = imObj.optString("id", "")
+                            val qid = imObj.optString("qid", "").lowercase()
+                            if (!ttId.startsWith("tt") || (qid != "movie" && qid != "feature" && qid != "tvmovie")) continue
+                            try {
+                                val findBase = "https://api.themoviedb.org/3/find/$ttId?external_source=imdb_id&language=en-US"
+                                val findUrl = if (tmdbToken.isNotEmpty()) findBase else "$findBase&api_key=$tmdbKey"
+                                val fConn = (URL(findUrl).openConnection() as HttpURLConnection).apply {
+                                    requestMethod = "GET"
+                                    setRequestProperty("Accept", "application/json")
+                                    if (tmdbToken.isNotEmpty()) setRequestProperty("Authorization", "Bearer $tmdbToken")
+                                    connectTimeout = 4000
+                                    readTimeout = 4000
+                                }
+                                if (fConn.responseCode in 200..299) {
+                                    val fRoot = JSONObject(fConn.inputStream.bufferedReader().use { it.readText() })
+                                    val movArr = fRoot.optJSONArray("movie_results") ?: JSONArray()
+                                    for (mi in 0 until movArr.length()) {
+                                        val tm = movArr.optJSONObject(mi) ?: continue
+                                        val mid = tm.optInt("id", 0)
+                                        val mTitle = tm.optString("title", tm.optString("original_title", imObj.optString("l", "")))
+                                        val mYear = tm.optString("release_date", "").take(4).toIntOrNull() ?: imObj.optInt("y", 2024)
+                                        if (mid <= 0 || !canAddMovie(mid, mTitle, mYear)) continue
+                                        tmdbMovieCount++
+                                        val pPath = tm.optString("poster_path", "")
+                                        val poster = if (pPath.isNotBlank() && pPath != "null") {
+                                            "https://image.tmdb.org/t/p/w500$pPath"
+                                        } else {
+                                            imObj.optJSONObject("i")?.optString("imageUrl", "") ?: ""
+                                        }
+                                        val rating = (tm.optDouble("vote_average", 7.8).takeIf { !it.isNaN() && it > 0 } ?: 7.8)
+                                        results.add(
+                                            SearchResultItem(
+                                                externalId = "movie_$mid",
+                                                tmdbId = mid,
+                                                mediaType = "movie",
+                                                title = mTitle,
+                                                year = mYear,
+                                                networkOrDirector = "TMDB Feature Film",
+                                                status = "Released",
+                                                runtimeMins = 125,
+                                                genresCsv = "Movie",
+                                                rating = Math.round(rating * 10.0) / 10.0,
+                                                posterUrl = poster,
+                                                overview = stripHtml(tm.optString("overview", ""))
+                                            )
+                                        )
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
                     for (i in 0 until arr.length()) {
                         val m = arr.optJSONObject(i) ?: continue
                         val id = m.optString("id", "")

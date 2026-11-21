@@ -346,7 +346,7 @@ object FirestoreSyncService {
         }
 
         for (s in shows) {
-            val titleKey = TvTimeProgressCalculator.normalizeTitleKey(s.title)
+            val titleKey = TvTimeProgressCalculator.normalizeRecTitle(s.title)
             var matchedKey: String? = null
             if (s.tmdbId > 0 && byKey.containsKey("tmdb:${s.tmdbId}")) {
                 matchedKey = "tmdb:${s.tmdbId}"
@@ -357,9 +357,10 @@ object FirestoreSyncService {
             } else if (titleKey.isNotEmpty() && titleToKeys.containsKey(titleKey)) {
                 for (candKey in titleToKeys[titleKey].orEmpty()) {
                     val cand = byKey[candKey] ?: continue
-                    if (TvTimeProgressCalculator.doesShowMatch(
-                            s.externalId, s.tmdbId, s.tvmazeId, s.title, s.year,
-                            cand.externalId, cand.tmdbId, cand.tvmazeId, cand.title, cand.year
+                    val bothHaveDiffTmdb = s.tmdbId > 0 && cand.tmdbId > 0 && s.tmdbId != cand.tmdbId
+                    if (!bothHaveDiffTmdb && TvTimeProgressCalculator.doesRecMatchShow(
+                            cand.externalId, cand.tmdbId, cand.tvmazeId, cand.title, cand.year,
+                            s.externalId, s.tmdbId, s.tvmazeId, s.title, s.year
                         )
                     ) {
                         matchedKey = candKey
@@ -451,27 +452,42 @@ object FirestoreSyncService {
     fun deduplicateMovies(movies: List<MovieEntity>): List<MovieEntity> {
         val byKey = LinkedHashMap<String, MovieEntity>()
         val titleToKeys = LinkedHashMap<String, MutableList<String>>()
+        val skelToKeys = LinkedHashMap<String, MutableList<String>>()
+        fun extractNums(s: String): String =
+            Regex("\\b(?:[0-9]+|ii|iii|iv)\\b").findAll(s).joinToString(",") { it.value }
+
         for (rawMovie in movies) {
-            val cleanTmdb = TvTimeProgressCalculator.cleanMovieTmdbId(rawMovie.externalId, rawMovie.tmdbId)
+            val isCsv = rawMovie.externalId.startsWith("csv_", ignoreCase = true)
+            val cleanTmdb = if (isCsv && rawMovie.tmdbId == 241527) 0 else TvTimeProgressCalculator.cleanMovieTmdbId(rawMovie.externalId, rawMovie.tmdbId)
             val m = if (cleanTmdb != rawMovie.tmdbId) rawMovie.copy(tmdbId = cleanTmdb) else rawMovie
-            val titleKey = TvTimeProgressCalculator.normalizeTitleKey(m.title)
+            val titleKey = TvTimeProgressCalculator.normalizeRecTitle(m.title)
+            val skelKey = TvTimeProgressCalculator.translitSkeleton(m.title)
 
             var matchedKey: String? = null
             if (cleanTmdb > 0 && byKey.containsKey("tmdb:$cleanTmdb")) {
                 matchedKey = "tmdb:$cleanTmdb"
             } else if (m.externalId.isNotBlank() && byKey.containsKey("ext:${m.externalId}")) {
                 matchedKey = "ext:${m.externalId}"
-            } else if (titleKey.isNotEmpty() && titleToKeys.containsKey(titleKey)) {
+            }
+            if (matchedKey == null && titleKey.isNotEmpty() && titleToKeys.containsKey(titleKey)) {
                 for (candKey in titleToKeys[titleKey].orEmpty()) {
                     val cand = byKey[candKey] ?: continue
-                    if (TvTimeProgressCalculator.doesMovieMatch(
-                            m.externalId, m.tmdbId, m.title, m.year,
-                            cand.externalId, cand.tmdbId, cand.title, cand.year
-                        )
-                    ) {
-                        matchedKey = candKey
-                        break
-                    }
+                    val candIsCsv = cand.externalId.startsWith("csv_", ignoreCase = true)
+                    if (cleanTmdb > 0 && cand.tmdbId > 0 && cleanTmdb != cand.tmdbId && !isCsv && !candIsCsv) continue
+                    if (m.year > 1900 && cand.year > 1900 && kotlin.math.abs(m.year - cand.year) > 1) continue
+                    matchedKey = candKey
+                    break
+                }
+            }
+            if (matchedKey == null && skelKey.length >= 8 && skelToKeys.containsKey(skelKey)) {
+                val mNums = extractNums(titleKey)
+                for (candKey in skelToKeys[skelKey].orEmpty()) {
+                    val cand = byKey[candKey] ?: continue
+                    if (cleanTmdb > 0 && cand.tmdbId > 0 && cleanTmdb != cand.tmdbId) continue
+                    if (m.year > 1900 && cand.year > 1900 && kotlin.math.abs(m.year - cand.year) > 1) continue
+                    if (extractNums(TvTimeProgressCalculator.normalizeRecTitle(cand.title)) != mNums) continue
+                    matchedKey = candKey
+                    break
                 }
             }
 
@@ -486,11 +502,25 @@ object FirestoreSyncService {
                 if (titleKey.isNotEmpty()) {
                     titleToKeys.getOrPut(titleKey) { mutableListOf() }.add(primaryKey)
                 }
+                if (skelKey.length >= 8) {
+                    skelToKeys.getOrPut(skelKey) { mutableListOf() }.add(primaryKey)
+                }
             } else {
                 val existing = byKey[matchedKey]!!
+                val exIsCsv = existing.externalId.startsWith("csv_", ignoreCase = true) || existing.tmdbId <= 0
+                val incHasRealTmdb = !isCsv && cleanTmdb > 0
+                val bestTmdb = if (incHasRealTmdb) cleanTmdb else if (existing.tmdbId > 0) existing.tmdbId else cleanTmdb
+                val bestExtId = when {
+                    incHasRealTmdb && exIsCsv -> m.externalId
+                    bestTmdb > 0 && existing.externalId.startsWith("csv_", ignoreCase = true) -> "movie_$bestTmdb"
+                    else -> existing.externalId
+                }
                 byKey[matchedKey] = existing.copy(
-                    tmdbId = if (existing.tmdbId > 0) existing.tmdbId else m.tmdbId,
-                    posterUrl = existing.posterUrl.ifBlank { m.posterUrl },
+                    externalId = bestExtId,
+                    tmdbId = bestTmdb,
+                    title = if (incHasRealTmdb && exIsCsv) m.title else existing.title,
+                    runtimeMins = if (incHasRealTmdb && m.runtimeMins > 0 && m.runtimeMins != 120) m.runtimeMins else existing.runtimeMins,
+                    posterUrl = if (incHasRealTmdb && m.posterUrl.isNotBlank()) m.posterUrl else existing.posterUrl.ifBlank { m.posterUrl },
                     overview = existing.overview.ifBlank { m.overview },
                     watched = existing.watched || m.watched,
                     watchedAt = existing.watchedAt.ifBlank { m.watchedAt },

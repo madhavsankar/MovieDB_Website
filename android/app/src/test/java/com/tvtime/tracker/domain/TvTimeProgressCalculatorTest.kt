@@ -532,5 +532,12 @@ class TvTimeProgressCalculatorTest {
         )
         val airedOnly = TvTimeProgressCalculator.filterAiredEpisodes(s5AndTbaS6, "2026-11-21")
         assertEquals(listOf("S05E09", "S05E10"), airedOnly.map { it.code })
+
+        // Indian transliteration skeleton matches spelling variants of Ala Vaikunthapurramuloo
+        val skel1 = TvTimeProgressCalculator.translitSkeleton("Ala Vaikunthapurramuloo")
+        val skel2 = TvTimeProgressCalculator.translitSkeleton("Ala Vykuntapurram Loo")
+        val skel3 = TvTimeProgressCalculator.translitSkeleton("Ala Vaikuntapuramloo")
+        assertEquals(skel1, skel2)
+        assertEquals(skel1, skel3)
     }
 }
