@@ -367,10 +367,24 @@ export class HttpRouter {
           .filter(Boolean)
           .map((entry) => {
             const idx = entry.indexOf(":");
-            if (idx === -1) return { tmdbId: Number(entry) || 0, title: entry };
+            if (idx === -1) return { tmdbId: Number(entry) || 0, year: 0, title: entry };
+            const tmdbId = Number(entry.slice(0, idx)) || 0;
+            const rest = entry.slice(idx + 1).trim();
+            const idx2 = rest.indexOf(":");
+            if (idx2 !== -1) {
+              const maybeYear = rest.slice(0, idx2).trim();
+              if (/^(?:0|(?:19|20)\d{2})$/.test(maybeYear)) {
+                return {
+                  tmdbId,
+                  year: Number(maybeYear) || 0,
+                  title: rest.slice(idx2 + 1).trim(),
+                };
+              }
+            }
             return {
-              tmdbId: Number(entry.slice(0, idx)) || 0,
-              title: entry.slice(idx + 1).trim(),
+              tmdbId,
+              year: 0,
+              title: rest,
             };
           });
       const tvSeeds = parseSeeds(url.searchParams.get("tvSeeds") || "");

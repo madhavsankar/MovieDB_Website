@@ -685,10 +685,20 @@ def fetch_recommendations(tv_seeds_raw, mv_seeds_raw, page=1):
             if not entry:
                 continue
             if ":" in entry:
-                tid, ttitle = entry.split(":", 1)
-                out.append((int(tid) if tid.isdigit() else 0, ttitle.strip()))
+                tid_str, rest = entry.split(":", 1)
+                tid = int(tid_str) if tid_str.isdigit() else 0
+                rest = rest.strip()
+                yr = 0
+                ttitle = rest
+                if ":" in rest:
+                    maybe_yr, tail = rest.split(":", 1)
+                    maybe_yr = maybe_yr.strip()
+                    if maybe_yr == "0" or (len(maybe_yr) == 4 and maybe_yr.isdigit()):
+                        yr = int(maybe_yr)
+                        ttitle = tail.strip()
+                out.append((tid, yr, ttitle))
             else:
-                out.append((int(entry) if entry.isdigit() else 0, entry))
+                out.append((int(entry) if entry.isdigit() else 0, 0, entry))
         return out[:5]
 
     if tmdb_token or tmdb_key:
@@ -697,10 +707,11 @@ def fetch_recommendations(tv_seeds_raw, mv_seeds_raw, page=1):
             req_headers["Authorization"] = f"Bearer {tmdb_token}"
         key_suffix = "" if tmdb_token else f"&api_key={urllib.parse.quote(tmdb_key)}"
 
-        for tid, ttitle in parse_seeds(tv_seeds_raw):
+        for tid, tyr, ttitle in parse_seeds(tv_seeds_raw):
             if tid <= 0 and ttitle:
                 try:
-                    s_url = f"https://api.themoviedb.org/3/search/tv?query={urllib.parse.quote(ttitle)}&language=en-US&page=1{key_suffix}"
+                    yr_q = f"&first_air_date_year={tyr}" if tyr > 1900 else ""
+                    s_url = f"https://api.themoviedb.org/3/search/tv?query={urllib.parse.quote(ttitle)}{yr_q}&language=en-US&page=1{key_suffix}"
                     req = urllib.request.Request(s_url, headers=req_headers)
                     with urllib.request.urlopen(req, timeout=6) as r:
                         d = json.loads(r.read().decode("utf-8"))
@@ -708,14 +719,17 @@ def fetch_recommendations(tv_seeds_raw, mv_seeds_raw, page=1):
                 except Exception:
                     pass
             if tid > 0:
+                seen.add(f"tmdb_tv_{tid}")
                 try:
                     rec_url = f"https://api.themoviedb.org/3/tv/{tid}/recommendations?language=en-US&page={safe_page}{key_suffix}"
                     req = urllib.request.Request(rec_url, headers=req_headers)
                     with urllib.request.urlopen(req, timeout=6) as r:
                         rec_data = json.loads(r.read().decode("utf-8"))
-                    for s in (rec_data.get("results") or [])[:8]:
+                    for s in (rec_data.get("results") or []):
                         title = s.get("name") or s.get("original_name")
                         if not s.get("id") or not title or not s.get("poster_path"):
+                            continue
+                        if int(s.get("vote_count") or 0) < 15 or float(s.get("vote_average") or 0) < 5.5:
                             continue
                         item_id = f"tmdb_tv_{s['id']}"
                         if item_id in seen:
@@ -742,10 +756,11 @@ def fetch_recommendations(tv_seeds_raw, mv_seeds_raw, page=1):
                 except Exception:
                     pass
 
-        for mid, mtitle in parse_seeds(mv_seeds_raw):
+        for mid, myr, mtitle in parse_seeds(mv_seeds_raw):
             if mid <= 0 and mtitle:
                 try:
-                    s_url = f"https://api.themoviedb.org/3/search/movie?query={urllib.parse.quote(mtitle)}&language=en-US&page=1{key_suffix}"
+                    yr_q = f"&year={myr}" if myr > 1900 else ""
+                    s_url = f"https://api.themoviedb.org/3/search/movie?query={urllib.parse.quote(mtitle)}{yr_q}&language=en-US&page=1{key_suffix}"
                     req = urllib.request.Request(s_url, headers=req_headers)
                     with urllib.request.urlopen(req, timeout=6) as r:
                         d = json.loads(r.read().decode("utf-8"))
@@ -753,14 +768,17 @@ def fetch_recommendations(tv_seeds_raw, mv_seeds_raw, page=1):
                 except Exception:
                     pass
             if mid > 0:
+                seen.add(f"movie_{mid}")
                 try:
                     rec_url = f"https://api.themoviedb.org/3/movie/{mid}/recommendations?language=en-US&page={safe_page}{key_suffix}"
                     req = urllib.request.Request(rec_url, headers=req_headers)
                     with urllib.request.urlopen(req, timeout=6) as r:
                         rec_data = json.loads(r.read().decode("utf-8"))
-                    for m in (rec_data.get("results") or [])[:8]:
+                    for m in (rec_data.get("results") or []):
                         title = m.get("title") or m.get("original_title")
                         if not m.get("id") or not title or not m.get("poster_path"):
+                            continue
+                        if int(m.get("vote_count") or 0) < 15 or float(m.get("vote_average") or 0) < 5.5:
                             continue
                         item_id = f"movie_{m['id']}"
                         if item_id in seen:

@@ -180,8 +180,27 @@ object LiveMediaCatalogService {
 
         fun addCandidate(item: SearchResultItem, isIndian: Boolean) {
             if (item.title.isBlank() || item.posterUrl.isBlank()) return
+            val isMovieItem = item.mediaType.equals("movie", ignoreCase = true) || item.externalId.startsWith("movie_")
+            val alreadyInLibrary = if (isMovieItem) {
+                val cleanTmdb = TvTimeProgressCalculator.cleanMovieTmdbId(item.externalId, item.tmdbId)
+                movies.any { m ->
+                    TvTimeProgressCalculator.doesRecMatchMovie(
+                        m.externalId, m.tmdbId, m.title, m.year,
+                        item.externalId, cleanTmdb, item.title, item.year
+                    )
+                }
+            } else {
+                shows.any { s ->
+                    TvTimeProgressCalculator.doesRecMatchShow(
+                        s.externalId, s.tmdbId, s.tvmazeId, s.title, s.year,
+                        item.externalId, item.tmdbId, item.tvmazeId, item.title, item.year
+                    )
+                }
+            }
+            if (alreadyInLibrary) return
+
             val idKey = if (item.tmdbId > 0) "${item.mediaType}_${item.tmdbId}" else item.externalId
-            val baseKey = "${item.mediaType}_${TvTimeProgressCalculator.normalizeTitleKey(stripEditionSuffix(item.title))}"
+            val baseKey = "${item.mediaType}_${TvTimeProgressCalculator.normalizeRecTitle(stripEditionSuffix(item.title))}"
             val yearKeys = if (item.year > 0) {
                 listOf("${baseKey}_${item.year}", "${baseKey}_${item.year - 1}", "${baseKey}_${item.year + 1}")
             } else {
@@ -222,11 +241,97 @@ object LiveMediaCatalogService {
                 }
             }
 
-            // Sample randomly across the user's ENTIRE watched library (not just .take(4))
-            val watchedShows = shows.filter { it.watchedCodesCsv.isNotBlank() || it.userStatus == "completed" }
-            val seedShows = (watchedShows.ifEmpty { shows }).shuffled().take(5)
+            fun pickMatchingTmdbHit(resultsArr: JSONArray?, targetTitle: String, targetYear: Int, dateField: String): JSONObject? {
+                if (resultsArr == null) return null
+                val wantNorm = TvTimeProgressCalculator.normalizeRecTitle(targetTitle)
+                if (wantNorm.isEmpty()) return null
+                val matches = mutableListOf<JSONObject>()
+                for (i in 0 until resultsArr.length()) {
+                    val obj = resultsArr.optJSONObject(i) ?: continue
+                    val pNorm = TvTimeProgressCalculator.normalizeRecTitle(
+                        obj.optString("title", obj.optString("name", ""))
+                    )
+                    val oNorm = TvTimeProgressCalculator.normalizeRecTitle(
+                        obj.optString("original_title", obj.optString("original_name", ""))
+                    )
+                    if (pNorm == wantNorm || (oNorm.isNotEmpty() && oNorm == wantNorm)) {
+                        matches.add(obj)
+                    }
+                }
+                if (matches.isEmpty()) return null
+                if (targetYear > 1900) {
+                    val strictHit = matches.firstOrNull { hit ->
+                        val yr = hit.optString(dateField, "").take(4).toIntOrNull() ?: 0
+                        yr > 1900 && kotlin.math.abs(yr - targetYear) <= 1
+                    }
+                    if (strictHit != null) return strictHit
+                    if (dateField == "first_air_date") {
+                        val looseTvHit = matches.firstOrNull { hit ->
+                            val yr = hit.optString(dateField, "").take(4).toIntOrNull() ?: 0
+                            yr > 1900 && kotlin.math.abs(yr - targetYear) <= 2
+                        }
+                        if (looseTvHit != null) return looseTvHit
+                    }
+                    return null
+                }
+                return matches.first()
+            }
+
+            fun isRelevantSeedRec(item: JSONObject, seedGenres: Set<Int>, seedLang: String): Boolean {
+                val voteCount = item.optInt("vote_count", 0)
+                val voteAvg = item.optDouble("vote_average", 0.0)
+                if (voteCount < 15 || voteAvg.isNaN() || voteAvg < 5.5) return false
+                val gArr = item.optJSONArray("genre_ids")
+                val itemGenres = mutableSetOf<Int>()
+                if (gArr != null) {
+                    for (gi in 0 until gArr.length()) {
+                        val gid = gArr.optInt(gi, 0)
+                        if (gid > 0) itemGenres.add(gid)
+                    }
+                }
+                val sharedGenres = if (seedGenres.isNotEmpty()) itemGenres.count { seedGenres.contains(it) } else 1
+                if (seedGenres.isNotEmpty() && sharedGenres < 1) return false
+
+                val itemLang = item.optString("original_language", "").trim().lowercase()
+                if (seedLang.isNotEmpty()) {
+                    if (INDIAN_LANG_CODES.contains(seedLang)) {
+                        if (!INDIAN_LANG_CODES.contains(itemLang)) {
+                            if (!(sharedGenres >= 2 && voteCount >= 1500 && voteAvg >= 7.4)) return false
+                        }
+                    } else if (itemLang.isNotEmpty() && itemLang != seedLang) {
+                        if (!(sharedGenres >= 2 && voteCount >= 300 && voteAvg >= 6.8)) return false
+                    }
+                }
+                return true
+            }
+
+            val langLabels = mapOf(
+                "hi" to "Hindi", "ml" to "Malayalam", "ta" to "Tamil", "te" to "Telugu",
+                "kn" to "Kannada", "bn" to "Bengali", "mr" to "Marathi", "pa" to "Punjabi",
+                "gu" to "Gujarati", "ur" to "Urdu"
+            )
+            val genreLabels = mapOf(
+                28 to "Action", 12 to "Adventure", 16 to "Animation", 35 to "Comedy",
+                80 to "Crime", 99 to "Documentary", 18 to "Drama", 10751 to "Family",
+                14 to "Fantasy", 36 to "History", 27 to "Horror", 9648 to "Mystery",
+                10749 to "Romance", 878 to "Sci-Fi", 53 to "Thriller",
+                10759 to "Action & Adventure", 10765 to "Sci-Fi & Fantasy"
+            )
+
+            // Sample randomly across watched library items ONLY (never unwatched watchlist entries)
+            val watchedShows = shows.filter { s ->
+                val prog = TvTimeProgressCalculator.computeShowProgressFromJson(
+                    s.episodesJson,
+                    s.watchedCodesCsv,
+                    s.userStatus
+                )
+                prog.watchedCount > 0 ||
+                    s.userStatus.equals("completed", ignoreCase = true) ||
+                    s.userStatus.equals("in_progress", ignoreCase = true)
+            }
+            val seedShows = watchedShows.shuffled().take(5)
             val watchedMovies = movies.filter { it.watched }
-            val seedMovies = (watchedMovies.ifEmpty { movies }).shuffled().take(8)
+            val seedMovies = watchedMovies.shuffled().take(8)
             val regionalCounts = mutableMapOf<String, Int>()
 
             for (s in seedShows) {
@@ -234,17 +339,37 @@ object LiveMediaCatalogService {
                 var seedLang = ""
                 if (tid <= 0 && s.title.isNotBlank()) {
                     val enc = URLEncoder.encode(s.title, "UTF-8")
-                    val firstHit = getTmdbJson("/search/tv?query=$enc&language=en-US&page=1")
-                        ?.optJSONArray("results")
-                        ?.optJSONObject(0)
-                    tid = firstHit?.optInt("id", 0) ?: 0
-                    seedLang = firstHit?.optString("original_language", "")?.lowercase().orEmpty()
+                    val yrParam = if (s.year > 1900) "&first_air_date_year=${s.year}" else ""
+                    val matchedHit = pickMatchingTmdbHit(
+                        getTmdbJson("/search/tv?query=$enc$yrParam&language=en-US&page=1")?.optJSONArray("results"),
+                        s.title,
+                        s.year,
+                        "first_air_date"
+                    ) ?: if (yrParam.isNotEmpty()) {
+                        pickMatchingTmdbHit(
+                            getTmdbJson("/search/tv?query=$enc&language=en-US&page=1")?.optJSONArray("results"),
+                            s.title,
+                            s.year,
+                            "first_air_date"
+                        )
+                    } else null
+                    tid = matchedHit?.optInt("id", 0) ?: 0
+                    seedLang = matchedHit?.optString("original_language", "")?.lowercase().orEmpty()
                 }
                 if (tid > 0) {
-                    val detail = getTmdbJson("/tv/$tid?append_to_response=recommendations,similar&language=en-US")
+                    seenIds.add("show_$tid")
+                    val detail = getTmdbJson("/tv/$tid?append_to_response=recommendations&language=en-US")
                     if (detail != null) {
                         if (seedLang.isEmpty()) {
                             seedLang = detail.optString("original_language", "").lowercase()
+                        }
+                        val seedGenres = mutableSetOf<Int>()
+                        val detailGenres = detail.optJSONArray("genres")
+                        if (detailGenres != null) {
+                            for (gi in 0 until detailGenres.length()) {
+                                val gid = detailGenres.optJSONObject(gi)?.optInt("id", 0) ?: 0
+                                if (gid > 0) seedGenres.add(gid)
+                            }
                         }
                         resolvedSeedCount++
                         val seedIsIndian = INDIAN_LANG_CODES.contains(seedLang)
@@ -252,12 +377,15 @@ object LiveMediaCatalogService {
                             indianSeedCount++
                             regionalCounts[seedLang] = (regionalCounts[seedLang] ?: 0) + 1
                         }
-                        val recArr = detail.optJSONObject("recommendations")?.optJSONArray("results") ?: JSONArray()
-                        val simArr = detail.optJSONObject("similar")?.optJSONArray("results") ?: JSONArray()
-                        val combined = mutableListOf<JSONObject>()
-                        for (i in 0 until minOf(recArr.length(), 6)) recArr.optJSONObject(i)?.let { combined.add(it) }
-                        for (i in 0 until minOf(simArr.length(), 5)) simArr.optJSONObject(i)?.let { combined.add(it) }
-                        for (item in combined) {
+                        var recArr = detail.optJSONObject("recommendations")?.optJSONArray("results") ?: JSONArray()
+                        if (safePage > 1) {
+                            val pageArr = getTmdbJson("/tv/$tid/recommendations?language=en-US&page=$safePage")?.optJSONArray("results")
+                            if (pageArr != null && pageArr.length() > 0) recArr = pageArr
+                        }
+                        var validAdded = 0
+                        for (i in 0 until recArr.length()) {
+                            val item = recArr.optJSONObject(i) ?: continue
+                            if (!isRelevantSeedRec(item, seedGenres, seedLang)) continue
                             val id = item.optInt("id", 0)
                             val posterPath = item.optString("poster_path", "")
                             if (id <= 0 || posterPath.isBlank() || posterPath == "null") continue
@@ -283,6 +411,44 @@ object LiveMediaCatalogService {
                                 ),
                                 isIndian = seedIsIndian || INDIAN_LANG_CODES.contains(itemLang)
                             )
+                            validAdded++
+                            if (validAdded >= 8) break
+                        }
+                        if (validAdded < 3 && seedLang.isNotEmpty() && seedGenres.isNotEmpty()) {
+                            val primaryGenre = seedGenres.first()
+                            val fbLabel = listOfNotNull(langLabels[seedLang], genreLabels[primaryGenre], "Series")
+                                .filter { it.isNotBlank() }
+                                .joinToString(" ")
+                            val fbArr = getTmdbJson(
+                                "/discover/tv?with_original_language=$seedLang&with_genres=$primaryGenre&sort_by=popularity.desc&vote_count.gte=20&vote_average.gte=6.2&include_adult=false&language=en-US&page=$safePage"
+                            )?.optJSONArray("results") ?: JSONArray()
+                            for (i in 0 until minOf(fbArr.length(), 6)) {
+                                val item = fbArr.optJSONObject(i) ?: continue
+                                val id = item.optInt("id", 0)
+                                val posterPath = item.optString("poster_path", "")
+                                if (id <= 0 || posterPath.isBlank() || posterPath == "null") continue
+                                val title = item.optString("name", item.optString("original_name", ""))
+                                val year = item.optString("first_air_date", "").take(4).toIntOrNull() ?: 2024
+                                val rating = (item.optDouble("vote_average", 7.8).takeIf { !it.isNaN() && it > 0 } ?: 7.8)
+                                addCandidate(
+                                    SearchResultItem(
+                                        externalId = "tmdb_tv_$id",
+                                        tvmazeId = 0,
+                                        tmdbId = id,
+                                        mediaType = "show",
+                                        title = title,
+                                        year = year,
+                                        networkOrDirector = "Popular $fbLabel",
+                                        status = "Running",
+                                        runtimeMins = 45,
+                                        genresCsv = "TV Series",
+                                        rating = Math.round(rating * 10.0) / 10.0,
+                                        posterUrl = "https://image.tmdb.org/t/p/w500$posterPath",
+                                        overview = stripHtml(item.optString("overview", ""))
+                                    ),
+                                    isIndian = seedIsIndian
+                                )
+                            }
                         }
                     }
                 }
@@ -294,20 +460,36 @@ object LiveMediaCatalogService {
                 if (mid <= 0 && m.title.isNotBlank()) {
                     val enc = URLEncoder.encode(m.title, "UTF-8")
                     val yearQuery = if (m.year > 1900) "&year=${m.year}" else ""
-                    val firstHit = getTmdbJson("/search/movie?query=$enc$yearQuery&language=en-US&page=1")
-                        ?.optJSONArray("results")
-                        ?.optJSONObject(0)
-                        ?: getTmdbJson("/search/movie?query=$enc&language=en-US&page=1")
-                            ?.optJSONArray("results")
-                            ?.optJSONObject(0)
-                    mid = firstHit?.optInt("id", 0) ?: 0
-                    seedLang = firstHit?.optString("original_language", "")?.lowercase().orEmpty()
+                    val matchedHit = pickMatchingTmdbHit(
+                        getTmdbJson("/search/movie?query=$enc$yearQuery&language=en-US&page=1")?.optJSONArray("results"),
+                        m.title,
+                        m.year,
+                        "release_date"
+                    ) ?: if (yearQuery.isNotEmpty()) {
+                        pickMatchingTmdbHit(
+                            getTmdbJson("/search/movie?query=$enc&language=en-US&page=1")?.optJSONArray("results"),
+                            m.title,
+                            m.year,
+                            "release_date"
+                        )
+                    } else null
+                    mid = matchedHit?.optInt("id", 0) ?: 0
+                    seedLang = matchedHit?.optString("original_language", "")?.lowercase().orEmpty()
                 }
                 if (mid > 0) {
-                    val detail = getTmdbJson("/movie/$mid?append_to_response=recommendations,similar&language=en-US")
+                    seenIds.add("movie_$mid")
+                    val detail = getTmdbJson("/movie/$mid?append_to_response=recommendations&language=en-US")
                     if (detail != null) {
                         if (seedLang.isEmpty()) {
                             seedLang = detail.optString("original_language", "").lowercase()
+                        }
+                        val seedGenres = mutableSetOf<Int>()
+                        val detailGenres = detail.optJSONArray("genres")
+                        if (detailGenres != null) {
+                            for (gi in 0 until detailGenres.length()) {
+                                val gid = detailGenres.optJSONObject(gi)?.optInt("id", 0) ?: 0
+                                if (gid > 0) seedGenres.add(gid)
+                            }
                         }
                         resolvedSeedCount++
                         val seedIsIndian = INDIAN_LANG_CODES.contains(seedLang)
@@ -315,12 +497,15 @@ object LiveMediaCatalogService {
                             indianSeedCount++
                             regionalCounts[seedLang] = (regionalCounts[seedLang] ?: 0) + 1
                         }
-                        val recArr = detail.optJSONObject("recommendations")?.optJSONArray("results") ?: JSONArray()
-                        val simArr = detail.optJSONObject("similar")?.optJSONArray("results") ?: JSONArray()
-                        val combined = mutableListOf<JSONObject>()
-                        for (i in 0 until minOf(recArr.length(), 6)) recArr.optJSONObject(i)?.let { combined.add(it) }
-                        for (i in 0 until minOf(simArr.length(), 5)) simArr.optJSONObject(i)?.let { combined.add(it) }
-                        for (item in combined) {
+                        var recArr = detail.optJSONObject("recommendations")?.optJSONArray("results") ?: JSONArray()
+                        if (safePage > 1) {
+                            val pageArr = getTmdbJson("/movie/$mid/recommendations?language=en-US&page=$safePage")?.optJSONArray("results")
+                            if (pageArr != null && pageArr.length() > 0) recArr = pageArr
+                        }
+                        var validAdded = 0
+                        for (i in 0 until recArr.length()) {
+                            val item = recArr.optJSONObject(i) ?: continue
+                            if (!isRelevantSeedRec(item, seedGenres, seedLang)) continue
                             val id = item.optInt("id", 0)
                             val posterPath = item.optString("poster_path", "")
                             if (id <= 0 || posterPath.isBlank() || posterPath == "null") continue
@@ -345,6 +530,43 @@ object LiveMediaCatalogService {
                                 ),
                                 isIndian = seedIsIndian || INDIAN_LANG_CODES.contains(itemLang)
                             )
+                            validAdded++
+                            if (validAdded >= 8) break
+                        }
+                        if (validAdded < 3 && seedLang.isNotEmpty() && seedGenres.isNotEmpty()) {
+                            val primaryGenre = seedGenres.first()
+                            val fbLabel = listOfNotNull(langLabels[seedLang], genreLabels[primaryGenre], "Cinema")
+                                .filter { it.isNotBlank() }
+                                .joinToString(" ")
+                            val fbArr = getTmdbJson(
+                                "/discover/movie?with_original_language=$seedLang&with_genres=$primaryGenre&sort_by=popularity.desc&vote_count.gte=30&vote_average.gte=6.2&include_adult=false&language=en-US&page=$safePage"
+                            )?.optJSONArray("results") ?: JSONArray()
+                            for (i in 0 until minOf(fbArr.length(), 6)) {
+                                val item = fbArr.optJSONObject(i) ?: continue
+                                val id = item.optInt("id", 0)
+                                val posterPath = item.optString("poster_path", "")
+                                if (id <= 0 || posterPath.isBlank() || posterPath == "null") continue
+                                val title = item.optString("title", item.optString("original_title", ""))
+                                val year = item.optString("release_date", "").take(4).toIntOrNull() ?: 2024
+                                val rating = (item.optDouble("vote_average", 7.6).takeIf { !it.isNaN() && it > 0 } ?: 7.6)
+                                addCandidate(
+                                    SearchResultItem(
+                                        externalId = "movie_$id",
+                                        tmdbId = id,
+                                        mediaType = "movie",
+                                        title = title,
+                                        year = year,
+                                        networkOrDirector = "Popular $fbLabel",
+                                        status = "Released",
+                                        runtimeMins = 120,
+                                        genresCsv = "Movie",
+                                        rating = Math.round(rating * 10.0) / 10.0,
+                                        posterUrl = "https://image.tmdb.org/t/p/w500$posterPath",
+                                        overview = stripHtml(item.optString("overview", ""))
+                                    ),
+                                    isIndian = seedIsIndian
+                                )
+                            }
                         }
                     }
                 }

@@ -1119,6 +1119,207 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertFalse(out["dadDiffYearNoTmdbMatches"])
         self.assertTrue(out["dadExactMatches"])
 
+    def test_recommendations_relevance_and_completed_exclusion(self):
+        """Verifies Swipe recommendations never use noisy /similar, reject unrelated cross-language/0-genre items, preserve colons/years, and exclude completed CSV/TVMaze items."""
+        import re as _re
+
+        def load_cf_module(rel_path):
+            with open(os.path.join(ROOT_DIR, "cloudflare", "src", *rel_path), "r", encoding="utf-8") as f:
+                src = f.read()
+            src = _re.sub(r"^import\s+.*?;\s*$", "", src, flags=_re.MULTILINE)
+            src = src.replace("export class ", "class ").replace("export function ", "function ").replace("export const ", "const ")
+            return src
+
+        svc_src = load_cf_module(("services", "LiveCatalogService.js"))
+        router_src = load_cf_module(("controllers", "HttpRouter.js"))
+        view_src = load_cf_module(("ui", "WebAppView.js"))
+
+        harness = (
+            """
+            class FirestoreRepository { constructor() {} }
+            class McpRouter { constructor() {} }
+            if (typeof Response === "undefined") {
+              globalThis.Response = class Response {
+                constructor(body, init) { this.body = body; this.status = (init && init.status) || 200; }
+              };
+            }
+            if (typeof URL === "undefined") {
+              globalThis.URL = class URL {
+                constructor(raw) {
+                  const qIdx = raw.indexOf("?");
+                  const pathPart = qIdx === -1 ? raw : raw.slice(0, qIdx);
+                  const qsPart = qIdx === -1 ? "" : raw.slice(qIdx + 1);
+                  const schemeEnd = pathPart.indexOf("://");
+                  const slashIdx = pathPart.indexOf("/", schemeEnd + 3);
+                  this.pathname = slashIdx === -1 ? "/" : pathPart.slice(slashIdx);
+                  const map = {};
+                  for (const pair of qsPart.split("&")) {
+                    if (!pair) continue;
+                    const eq = pair.indexOf("=");
+                    const k = decodeURIComponent(eq === -1 ? pair : pair.slice(0, eq));
+                    const v = decodeURIComponent(eq === -1 ? "" : pair.slice(eq + 1));
+                    map[k] = v;
+                  }
+                  this.searchParams = { get: (k) => (k in map ? map[k] : null) };
+                }
+              };
+            }
+            """
+            + "\n"
+            + svc_src
+            + "\n"
+            + view_src
+            + "\n"
+            + router_src
+            + """
+            (async () => {
+              const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+              const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+              const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+              (new Function(clientJs))();
+
+              const requestedUrls = [];
+              const mockFetch = async (url) => {
+                requestedUrls.push(String(url));
+                const u = String(url);
+                if (u.includes("/search/movie") && u.includes("Youth")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      results: [
+                        { id: 293660, title: "Youth", release_date: "2015-05-20", original_language: "it" },
+                        { id: 1388999, title: "Youth", release_date: "2026-02-14", original_language: "ta" }
+                      ]
+                    })
+                  };
+                }
+                if (u.includes("/movie/284289?")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      id: 284289,
+                      original_language: "ta",
+                      genres: [{ id: 28, name: "Action" }, { id: 53, name: "Thriller" }],
+                      recommendations: {
+                        results: [
+                          { id: 290555, title: "Thuppakki", release_date: "2012-11-13", original_language: "ta", genre_ids: [28, 53], vote_count: 240, vote_average: 7.5, poster_path: "/thuppakki.jpg" },
+                          { id: 26690, title: "Mr. Majestyk", release_date: "1974-07-17", original_language: "en", genre_ids: [80], vote_count: 95, vote_average: 6.5, poster_path: "/majestyk.jpg" },
+                          { id: 777111, title: "Random Romance", release_date: "2021-01-01", original_language: "ta", genre_ids: [10749], vote_count: 80, vote_average: 6.8, poster_path: "/rom.jpg" }
+                        ]
+                      },
+                      similar: {
+                        results: [
+                          { id: 484444, title: "Marry Me at Christmas", release_date: "2017-11-04", original_language: "en", genre_ids: [10749], vote_count: 55, vote_average: 6.4, poster_path: "/xmas.jpg" }
+                        ]
+                      }
+                    })
+                  };
+                }
+                if (u.includes("/movie/1388999?")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      id: 1388999,
+                      original_language: "ta",
+                      genres: [{ id: 35, name: "Comedy" }],
+                      recommendations: { results: [] }
+                    })
+                  };
+                }
+                if (u.includes("/movie/617126?")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      id: 617126,
+                      original_language: "en",
+                      genres: [{ id: 28, name: "Action" }, { id: 878, name: "Sci-Fi" }],
+                      recommendations: {
+                        results: [
+                          { id: 986056, title: "Thunderbolts*", release_date: "2025-05-02", original_language: "en", genre_ids: [28, 878], vote_count: 900, vote_average: 7.4, poster_path: "/tb.jpg" }
+                        ]
+                      }
+                    })
+                  };
+                }
+                return { ok: true, json: async () => ({ results: [] }) };
+              };
+
+              const recData = await LiveCatalogService.fetchRecommendations({
+                tvSeeds: [],
+                movieSeeds: [
+                  { tmdbId: 284289, year: 2014, title: "Kaththi" },
+                  { tmdbId: 0, year: 2026, title: "Youth" },
+                  { tmdbId: 617126, year: 2025, title: "The Fantastic 4: First Steps" }
+                ],
+                page: 1,
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "dummy_key" }
+              });
+
+              let parsedRouterSeeds = null;
+              const origFetchRecs = LiveCatalogService.fetchRecommendations;
+              LiveCatalogService.fetchRecommendations = async (opts) => {
+                parsedRouterSeeds = opts.movieSeeds;
+                return { results: [] };
+              };
+              const router = new HttpRouter({ TMDB_API_KEY: "dummy_key" });
+              await router.handle({
+                method: "GET",
+                url: "https://example.com/api/recommendations?movieSeeds=" +
+                  encodeURIComponent("617126:2025:The Fantastic 4: First Steps|0:2026:Youth")
+              });
+              LiveCatalogService.fetchRecommendations = origFetchRecs;
+
+              const app = Object.create(globalThis.TvTimeClientClass.prototype);
+              app.state = {
+                decidedIds: [],
+                movies: [
+                  { id: "csv_movie_lotr_1", tmdbId: 0, title: "Lord of the Rings: The Fellowship of the Ring", year: 2001, watched: true },
+                  { id: "csv_movie_hp_1", tmdbId: 0, title: "Harry Potter and the Sorcerer's Stone", year: 2001, watched: true },
+                  { id: "csv_movie_f1", tmdbId: 0, title: "F1 The Movie", year: 2025, watched: true },
+                  { id: "movie_21291", tmdbId: 21291, title: "Dad", year: 1989, watched: true }
+                ],
+                shows: [
+                  { id: "tvmaze_4712", tmdbId: 0, tvmazeId: 4712, title: "Death Note", year: 2015, userStatus: "completed", totalEpisodes: 37, episodes: [], watchedEpisodes: [] }
+                ]
+              };
+
+              const out = JSON.stringify({
+                usedSimilarParam: requestedUrls.some((u) => u.includes("similar")),
+                resolvedIndianYouth2026: requestedUrls.some((u) => u.includes("/movie/1388999?")),
+                resolvedWrongItalianYouth: requestedUrls.some((u) => u.includes("/movie/293660?")),
+                recTitles: recData.results.map((r) => r.title),
+                recReasons: recData.results.map((r) => r.becauseOf),
+                parsedColonTitle: parsedRouterSeeds ? parsedRouterSeeds[0].title : "",
+                parsedYear: parsedRouterSeeds ? parsedRouterSeeds[0].year : 0,
+                lotrExcluded: app.isItemInDbOrDecided({ id: "movie_120", tmdbId: 120, mediaType: "movie", title: "The Lord of the Rings: The Fellowship of the Ring", year: 2001 }),
+                hpExcluded: app.isItemInDbOrDecided({ id: "movie_671", tmdbId: 671, mediaType: "movie", title: "Harry Potter and the Philosopher's Stone", year: 2001 }),
+                f1Excluded: app.isItemInDbOrDecided({ id: "movie_911430", tmdbId: 911430, mediaType: "movie", title: "F1", year: 2025 }),
+                deathNoteExcluded: app.isItemInDbOrDecided({ id: "tmdb_tv_13916", tmdbId: 13916, mediaType: "show", title: "Death Note", year: 2006 }),
+                otherDadNotExcluded: !app.isItemInDbOrDecided({ id: "movie_88888", tmdbId: 88888, mediaType: "movie", title: "Dad", year: 2024 })
+              });
+              if (typeof console !== "undefined" && console.log) console.log(out);
+              else if (typeof print !== "undefined") print(out);
+            })();
+            """
+        )
+        out = self._run_js(harness)
+        self.assertFalse(out["usedSimilarParam"])
+        self.assertTrue(out["resolvedIndianYouth2026"])
+        self.assertFalse(out["resolvedWrongItalianYouth"])
+        self.assertIn("Thuppakki", out["recTitles"])
+        self.assertNotIn("Mr. Majestyk", out["recTitles"])
+        self.assertNotIn("Random Romance", out["recTitles"])
+        self.assertNotIn("Marry Me at Christmas", out["recTitles"])
+        self.assertIn("Because you watched The Fantastic 4: First Steps", out["recReasons"])
+        self.assertEqual(out["parsedColonTitle"], "The Fantastic 4: First Steps")
+        self.assertEqual(out["parsedYear"], 2025)
+        self.assertTrue(out["lotrExcluded"])
+        self.assertTrue(out["hpExcluded"])
+        self.assertTrue(out["f1Excluded"])
+        self.assertTrue(out["deathNoteExcluded"])
+        self.assertTrue(out["otherDadNotExcluded"])
+
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""
         proc = subprocess.run(

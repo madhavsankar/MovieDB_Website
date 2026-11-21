@@ -453,5 +453,37 @@ class TvTimeProgressCalculatorTest {
                 "tmdb_movie_21291", 21291, "Dad", 1989
             )
         )
+
+        // Recommendation library exclusion catches completed CSV/TVMaze items with leading "The", Sorcerer/Philosopher, "F1 The Movie", and TVMaze year offsets, while keeping distinct "Dad" movies separate
+        assertTrue(
+            TvTimeProgressCalculator.doesRecMatchMovie(
+                "csv_movie_lotr_1", 0, "Lord of the Rings: The Fellowship of the Ring", 2001,
+                "movie_120", 120, "The Lord of the Rings: The Fellowship of the Ring", 2001
+            )
+        )
+        assertTrue(
+            TvTimeProgressCalculator.doesRecMatchMovie(
+                "csv_movie_hp_1", 0, "Harry Potter and the Sorcerer's Stone", 2001,
+                "movie_671", 671, "Harry Potter and the Philosopher's Stone", 2001
+            )
+        )
+        assertTrue(
+            TvTimeProgressCalculator.doesRecMatchMovie(
+                "csv_movie_f1", 0, "F1 The Movie", 2025,
+                "movie_911430", 911430, "F1", 2025
+            )
+        )
+        assertTrue(
+            TvTimeProgressCalculator.doesRecMatchShow(
+                "tvmaze_4712", 0, 4712, "Death Note", 2015,
+                "tmdb_tv_13916", 13916, 0, "Death Note", 2006
+            )
+        )
+        assertFalse(
+            TvTimeProgressCalculator.doesRecMatchMovie(
+                "movie_21291", 21291, "Dad", 1989,
+                "movie_88888", 88888, "Dad", 2024
+            )
+        )
     }
 }

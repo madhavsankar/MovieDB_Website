@@ -180,6 +180,90 @@ object TvTimeProgressCalculator {
         return true
     }
 
+    fun normalizeRecTitle(raw: String): String {
+        var clean = raw.lowercase()
+        val parenStripped = clean.replace(Regex("\\([^)]*\\)"), " ").replace(Regex("\\[[^\\]]*\\]"), " ").trim()
+        if (parenStripped.isNotEmpty()) clean = parenStripped
+        clean = clean
+            .replace("'", "")
+            .replace("\u2019", "")
+            .replace("&", " and ")
+            .replace("sorcerers stone", "philosophers stone")
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
+        if (clean.startsWith("the ") && clean.length > 5) {
+            clean = clean.substring(4).trim()
+        } else if (clean.startsWith("a ") && clean.length > 3) {
+            clean = clean.substring(2).trim()
+        }
+        if (clean.endsWith(" the movie") && clean.length > 11) {
+            clean = clean.substring(0, clean.length - 10).trim()
+        }
+        return clean
+    }
+
+    fun doesRecMatchMovie(
+        libExternalId: String,
+        libTmdbId: Int,
+        libTitle: String,
+        libYear: Int,
+        recExternalId: String,
+        recTmdbId: Int,
+        recTitle: String,
+        recYear: Int
+    ): Boolean {
+        if (doesMovieMatch(libExternalId, libTmdbId, libTitle, libYear, recExternalId, recTmdbId, recTitle, recYear)) {
+            return true
+        }
+        val cleanLib = cleanMovieTmdbId(libExternalId, libTmdbId)
+        val cleanRec = cleanMovieTmdbId(recExternalId, recTmdbId)
+        val normLib = normalizeRecTitle(libTitle)
+        val normRec = normalizeRecTitle(recTitle)
+        if (normLib.isEmpty() || normLib != normRec) return false
+        if (cleanLib > 0 && cleanRec > 0) {
+            return normLib.length >= 6 && libYear > 1900 && recYear > 1900 && kotlin.math.abs(libYear - recYear) <= 1
+        }
+        if (normLib.length >= 5 && libExternalId.startsWith("csv_", ignoreCase = true)) {
+            return true
+        }
+        if (libYear > 1900 && recYear > 1900) {
+            val tol = if (normLib.length >= 5) 2 else 1
+            return kotlin.math.abs(libYear - recYear) <= tol
+        }
+        return true
+    }
+
+    fun doesRecMatchShow(
+        libExternalId: String,
+        libTmdbId: Int,
+        libTvmazeId: Int,
+        libTitle: String,
+        libYear: Int,
+        recExternalId: String,
+        recTmdbId: Int,
+        recTvmazeId: Int,
+        recTitle: String,
+        recYear: Int
+    ): Boolean {
+        if (doesShowMatch(libExternalId, libTmdbId, libTvmazeId, libTitle, libYear, recExternalId, recTmdbId, recTvmazeId, recTitle, recYear)) {
+            return true
+        }
+        val normLib = normalizeRecTitle(libTitle)
+        val normRec = normalizeRecTitle(recTitle)
+        if (normLib.isEmpty() || normLib != normRec) return false
+        if (libTmdbId > 0 && recTmdbId > 0) {
+            return normLib.length >= 6 && libYear > 1900 && recYear > 1900 && kotlin.math.abs(libYear - recYear) <= 1
+        }
+        if (normLib.length >= 5 && (libExternalId.startsWith("tvmaze_", ignoreCase = true) || libExternalId.startsWith("csv_", ignoreCase = true))) {
+            return true
+        }
+        if (libYear > 1900 && recYear > 1900) {
+            val tol = if (normLib.length >= 5) 2 else 1
+            return kotlin.math.abs(libYear - recYear) <= tol
+        }
+        return true
+    }
+
     fun doesShowMatch(
         aExternalId: String,
         aTmdbId: Int,

@@ -2149,6 +2149,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 false
               );
             }
+            this.recPool = (this.recPool || []).filter((it) => !this.isItemInDbOrDecided(it));
             const hasLibraryItems =
               ((this.state.shows || []).length > 0 || (this.state.movies || []).length > 0);
             if (this.recPool.length === 0 || (hasLibraryItems && !this._recsSeededFromLibrary)) {
@@ -4824,6 +4825,91 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         return String(item.id || "").trim();
       }
 
+      normalizeRecTitle(raw) {
+        const stripGroup = (input, openCh, closeCh) => {
+          let s = input;
+          while (true) {
+            const start = s.indexOf(openCh);
+            if (start === -1) break;
+            const end = s.indexOf(closeCh, start + 1);
+            if (end === -1) break;
+            const candidate = (s.slice(0, start) + " " + s.slice(end + 1)).trim();
+            if (!candidate) break;
+            s = candidate;
+          }
+          return s;
+        };
+        let clean = String(raw || "").toLowerCase();
+        clean = stripGroup(clean, "(", ")");
+        clean = stripGroup(clean, "[", "]");
+        clean = clean
+          .split("'")
+          .join("")
+          .split(String.fromCharCode(8217))
+          .join("")
+          .replace(/&/g, " and ")
+          .replace(/sorcerers stone/g, "philosophers stone")
+          .replace(/[^a-z0-9]+/g, " ")
+          .trim();
+        if (clean.startsWith("the ") && clean.length > 5) {
+          clean = clean.slice(4).trim();
+        } else if (clean.startsWith("a ") && clean.length > 3) {
+          clean = clean.slice(2).trim();
+        }
+        if (clean.endsWith(" the movie") && clean.length > 11) {
+          clean = clean.slice(0, -10).trim();
+        }
+        return clean;
+      }
+
+      doesRecMatchMovie(libMovie, recItem) {
+        if (!libMovie || !recItem) return false;
+        if (this.doesMovieMatchItem(libMovie, recItem)) return true;
+        const libTmdb = this.cleanMovieTmdbId(libMovie.id, libMovie.tmdbId);
+        const recTmdb = this.cleanMovieTmdbId(recItem.id, recItem.tmdbId);
+        const libNorm = this.normalizeRecTitle(libMovie.title);
+        const recNorm = this.normalizeRecTitle(recItem.title);
+        if (!libNorm || libNorm !== recNorm) return false;
+        const libYear = Number(libMovie.year) || 0;
+        const recYear = Number(recItem.year) || 0;
+        if (libTmdb > 0 && recTmdb > 0) {
+          return libNorm.length >= 6 && libYear > 1900 && recYear > 1900 && Math.abs(libYear - recYear) <= 1;
+        }
+        const libIdStr = String(libMovie.id || "");
+        if (libNorm.length >= 5 && libIdStr.startsWith("csv_")) {
+          return true;
+        }
+        if (libYear > 1900 && recYear > 1900) {
+          const tol = libNorm.length >= 5 ? 2 : 1;
+          return Math.abs(libYear - recYear) <= tol;
+        }
+        return true;
+      }
+
+      doesRecMatchShow(libShow, recItem) {
+        if (!libShow || !recItem) return false;
+        if (this.doesShowMatchItem(libShow, recItem)) return true;
+        const libTmdb = Number(libShow.tmdbId) || 0;
+        const recTmdb = Number(recItem.tmdbId) || 0;
+        const libNorm = this.normalizeRecTitle(libShow.title);
+        const recNorm = this.normalizeRecTitle(recItem.title);
+        if (!libNorm || libNorm !== recNorm) return false;
+        const libYear = Number(libShow.year) || 0;
+        const recYear = Number(recItem.year) || 0;
+        if (libTmdb > 0 && recTmdb > 0) {
+          return libNorm.length >= 6 && libYear > 1900 && recYear > 1900 && Math.abs(libYear - recYear) <= 1;
+        }
+        const libIdStr = String(libShow.id || "");
+        if (libNorm.length >= 5 && (libIdStr.startsWith("tvmaze_") || libIdStr.startsWith("csv_"))) {
+          return true;
+        }
+        if (libYear > 1900 && recYear > 1900) {
+          const tol = libNorm.length >= 5 ? 2 : 1;
+          return Math.abs(libYear - recYear) <= tol;
+        }
+        return true;
+      }
+
       isItemInDbOrDecided(item) {
         if (!item) return true;
         const isMovie = item.mediaType === "movie" || String(item.id || "").startsWith("movie_");
@@ -4840,10 +4926,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
         if (isMovie) {
           const movies = Array.isArray(this.state.movies) ? this.state.movies : [];
-          return movies.some((m) => this.doesMovieMatchItem(m, item));
+          return movies.some((m) => this.doesRecMatchMovie(m, item));
         }
         const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
-        return shows.some((s) => this.doesShowMatchItem(s, item));
+        return shows.some((s) => this.doesRecMatchShow(s, item));
       }
 
       markItemDecided(item) {
@@ -4901,26 +4987,37 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
           const movies = Array.isArray(this.state.movies) ? this.state.movies : [];
 
-          // Sample across the user's ENTIRE watched library so Hindi/regional & older titles are equally represented
+          // Sample across the user's watched library ONLY so unwatched watchlist items are never labeled "Because you watched..."
           const watchedShows = shows.filter((s) => {
             const eff = this.getEffectiveShowStatus(s);
             const prog = this.computeShowProgress(s);
             return eff === "completed" || eff === "in_progress" || prog.watchedCount > 0;
           });
-          const seedShows = this.sampleDiverseItems(watchedShows.length > 0 ? watchedShows : shows, 6);
+          const seedShows = this.sampleDiverseItems(watchedShows, 6);
           const watchedMovies = movies.filter((m) => m.watched);
-          const seedMovies = this.sampleDiverseItems(watchedMovies.length > 0 ? watchedMovies : movies, 8);
-          if (seedShows.length > 0 || seedMovies.length > 0) {
+          const seedMovies = this.sampleDiverseItems(watchedMovies, 8);
+          if (shows.length > 0 || movies.length > 0) {
             this._recsSeededFromLibrary = true;
           }
 
           const tvSeedsParam = seedShows
-            .map((s) => (Number(s.tmdbId) || 0) + ":" + String(s.title || "").replace(/[|:]/g, " "))
+            .map(
+              (s) =>
+                (Number(s.tmdbId) || 0) +
+                ":" +
+                (Number(s.year) || 0) +
+                ":" +
+                String(s.title || "").split("|").join(" ").trim()
+            )
             .join("|");
           const movieSeedsParam = seedMovies
             .map(
               (m) =>
-                this.cleanMovieTmdbId(m.id, m.tmdbId) + ":" + String(m.title || "").replace(/[|:]/g, " ")
+                this.cleanMovieTmdbId(m.id, m.tmdbId) +
+                ":" +
+                (Number(m.year) || 0) +
+                ":" +
+                String(m.title || "").split("|").join(" ").trim()
             )
             .join("|");
 
@@ -4934,7 +5031,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const res = await fetch(url);
           if (res.ok) {
             const data = await res.json();
-            const existingPool = Array.isArray(this.recPool) ? this.recPool : [];
+            const existingPool = (Array.isArray(this.recPool) ? this.recPool : []).filter(
+              (ex) => !this.isItemInDbOrDecided(ex)
+            );
             const existingIds = new Set(existingPool.map((r) => r.id));
             for (const item of (data.results || [])) {
               if (!item || !item.id || existingIds.has(item.id)) continue;
@@ -4943,7 +5042,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               const dupInPool = existingPool.some((ex) => {
                 const exMovie = ex.mediaType === "movie" || String(ex.id || "").startsWith("movie_");
                 if (isMovie !== exMovie) return false;
-                return isMovie ? this.doesMovieMatchItem(ex, item) : this.doesShowMatchItem(ex, item);
+                return isMovie ? this.doesRecMatchMovie(ex, item) : this.doesRecMatchShow(ex, item);
               });
               if (dupInPool) continue;
               existingIds.add(item.id);

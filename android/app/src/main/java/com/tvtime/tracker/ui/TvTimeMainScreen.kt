@@ -2526,11 +2526,11 @@ private fun SwipeRecommendationsTabScreen(
                 for (cand in fetched) {
                     val isDup = merged.any { ex ->
                         ex.externalId == cand.externalId ||
-                            (ex.mediaType == "movie" && cand.mediaType == "movie" && TvTimeProgressCalculator.doesMovieMatch(
+                            (ex.mediaType == "movie" && cand.mediaType == "movie" && TvTimeProgressCalculator.doesRecMatchMovie(
                                 ex.externalId, ex.tmdbId, ex.title, ex.year,
                                 cand.externalId, cand.tmdbId, cand.title, cand.year
                             )) ||
-                            (ex.mediaType != "movie" && cand.mediaType != "movie" && TvTimeProgressCalculator.doesShowMatch(
+                            (ex.mediaType != "movie" && cand.mediaType != "movie" && TvTimeProgressCalculator.doesRecMatchShow(
                                 ex.externalId, ex.tmdbId, ex.tvmazeId, ex.title, ex.year,
                                 cand.externalId, cand.tmdbId, cand.tvmazeId, cand.title, cand.year
                             ))
@@ -2563,14 +2563,14 @@ private fun SwipeRecommendationsTabScreen(
             val alreadyInLibrary = if (isMovieItem) {
                 val cleanTmdb = TvTimeProgressCalculator.cleanMovieTmdbId(item.externalId, item.tmdbId)
                 movies.any { m ->
-                    TvTimeProgressCalculator.doesMovieMatch(
+                    TvTimeProgressCalculator.doesRecMatchMovie(
                         m.externalId, m.tmdbId, m.title, m.year,
                         item.externalId, cleanTmdb, item.title, item.year
                     )
                 }
             } else {
                 shows.any { s ->
-                    TvTimeProgressCalculator.doesShowMatch(
+                    TvTimeProgressCalculator.doesRecMatchShow(
                         s.externalId, s.tmdbId, s.tvmazeId, s.title, s.year,
                         item.externalId, item.tmdbId, item.tvmazeId, item.title, item.year
                     )
