@@ -484,63 +484,64 @@ def search_multi(query, page=1):
                     })
             except Exception:
                 pass
-        try:
-            imdb_data = http_get_json(f"https://v3.sg.media-imdb.com/suggestion/x/{enc}.json")
-            for item in (imdb_data.get("d") or []):
-                if not item.get("id") or not item.get("l"):
-                    continue
-                qid = str(item.get("qid") or "").lower()
-                if qid in ("movie", "feature", "tvmovie"):
-                    key = f"{item['l'].lower()}_{item.get('y') or 2024}"
+        if safe_page == 1 and len(out) < 5:
+            try:
+                imdb_data = http_get_json(f"https://v3.sg.media-imdb.com/suggestion/x/{enc}.json")
+                for item in (imdb_data.get("d") or []):
+                    if not item.get("id") or not item.get("l"):
+                        continue
+                    qid = str(item.get("qid") or "").lower()
+                    if qid in ("movie", "feature", "tvmovie"):
+                        key = f"{item['l'].lower()}_{item.get('y') or 2024}"
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        cast_list = [c.strip() for c in str(item.get("s") or "").split(",") if c.strip()]
+                        out.append({
+                            "id": f"movie_{item['id']}",
+                            "tmdbId": 0,
+                            "mediaType": "movie",
+                            "title": item["l"],
+                            "year": int(item.get("y") or 2024),
+                            "runtimeMins": 125,
+                            "genres": ["Movie"],
+                            "cast": cast_list,
+                            "director": cast_list[0] if cast_list else "",
+                            "streamingService": "Theaters / Streaming",
+                            "rating": 8.0,
+                            "posterUrl": (item.get("i") or {}).get("imageUrl") or "",
+                            "overview": f"Starring {item.get('s')}" if item.get("s") else "Feature Film",
+                        })
+            except Exception:
+                pass
+            try:
+                data = http_get_json(f"https://itunes.apple.com/search?term={enc}&country=US&entity=movie&limit=10")
+                for m in (data.get("results") or []):
+                    if not m.get("trackId") or not m.get("trackName"):
+                        continue
+                    rel = str(m.get("releaseDate") or "2024")[:4]
+                    yr = int(rel) if rel.isdigit() else 2024
+                    key = f"{m['trackName'].lower()}_{yr}"
                     if key in seen:
                         continue
                     seen.add(key)
-                    cast_list = [c.strip() for c in str(item.get("s") or "").split(",") if c.strip()]
+                    art = re.sub(r"100x100bb\.jpg$", "600x900bb.jpg", str(m.get("artworkUrl100") or ""))
                     out.append({
-                        "id": f"movie_{item['id']}",
-                        "tmdbId": int(re.sub(r"\D", "", str(item["id"])) or "0"),
+                        "id": f"movie_itunes_{m['trackId']}",
+                        "tmdbId": 0,
                         "mediaType": "movie",
-                        "title": item["l"],
-                        "year": int(item.get("y") or 2024),
-                        "runtimeMins": 125,
-                        "genres": ["Movie"],
-                        "cast": cast_list,
-                        "director": cast_list[0] if cast_list else "",
-                        "streamingService": "Theaters / Streaming",
-                        "rating": 8.0,
-                        "posterUrl": (item.get("i") or {}).get("imageUrl") or "",
-                        "overview": f"Starring {item.get('s')}" if item.get("s") else "Feature Film",
+                        "title": m["trackName"],
+                        "year": yr,
+                        "runtimeMins": max(45, round(int(m.get("trackTimeMillis") or 7200000) / 60000)),
+                        "genres": [m["primaryGenreName"]] if m.get("primaryGenreName") else ["Movie"],
+                        "director": m.get("artistName") or "",
+                        "streamingService": "Apple TV / Digital",
+                        "rating": 7.8,
+                        "posterUrl": art,
+                        "overview": m.get("longDescription") or m.get("shortDescription") or "",
                     })
-        except Exception:
-            pass
-        try:
-            data = http_get_json(f"https://itunes.apple.com/search?term={enc}&country=US&entity=movie&limit=10")
-            for m in (data.get("results") or []):
-                if not m.get("trackId") or not m.get("trackName"):
-                    continue
-                rel = str(m.get("releaseDate") or "2024")[:4]
-                yr = int(rel) if rel.isdigit() else 2024
-                key = f"{m['trackName'].lower()}_{yr}"
-                if key in seen:
-                    continue
-                seen.add(key)
-                art = re.sub(r"100x100bb\.jpg$", "600x900bb.jpg", str(m.get("artworkUrl100") or ""))
-                out.append({
-                    "id": f"movie_{m['trackId']}",
-                    "tmdbId": m["trackId"],
-                    "mediaType": "movie",
-                    "title": m["trackName"],
-                    "year": yr,
-                    "runtimeMins": max(45, round(int(m.get("trackTimeMillis") or 7200000) / 60000)),
-                    "genres": [m["primaryGenreName"]] if m.get("primaryGenreName") else ["Movie"],
-                    "director": m.get("artistName") or "",
-                    "streamingService": "Apple TV / Digital",
-                    "rating": 7.8,
-                    "posterUrl": art,
-                    "overview": m.get("longDescription") or m.get("shortDescription") or "",
-                })
-        except Exception:
-            pass
+            except Exception:
+                pass
         return out
 
     with ThreadPoolExecutor(max_workers=2) as pool:

@@ -337,16 +337,38 @@ fun ShowDetailBottomSheet(
 
                     Surface(
                         onClick = {
+                            var nextComp = completedSeasons
                             val nextWatched = when {
-                                watchedSet.isEmpty() && episodes.isNotEmpty() -> setOf(episodes.first().code.uppercase())
-                                isCompleted && episodes.size > 1 -> episodes.dropLast(1).map { it.code.uppercase() }.toSet()
+                                isCompleted && episodes.size > 1 -> {
+                                    val aired = TvTimeProgressCalculator.filterAiredEpisodes(episodes)
+                                    val list = if (aired.size > 1) aired else episodes
+                                    nextComp = emptyMap()
+                                    list.dropLast(1).map { it.code.uppercase() }.toSet()
+                                }
+                                isCompleted && episodes.size <= 1 && totalEpisodesOverride > 1 -> {
+                                    nextComp = mapOf(1 to (totalEpisodesOverride - 1))
+                                    emptySet()
+                                }
+                                watchedSet.isEmpty() && completedSeasons.isEmpty() && episodes.isNotEmpty() ->
+                                    setOf(episodes.first().code.uppercase())
                                 else -> watchedSet
                             }
                             watchedSet = nextWatched
+                            completedSeasons = nextComp
                             userStatus = "in_progress"
-                            val nextProg = TvTimeProgressCalculator.computeShowProgress(episodes, nextWatched)
+                            val nextProg = TvTimeProgressCalculator.computeShowProgress(
+                                episodes = episodes,
+                                watchedCodes = nextWatched,
+                                rawUserStatus = "in_progress",
+                                totalEpisodesOverride = totalEpisodesOverride,
+                                completedSeasons = nextComp
+                            )
                             openSeasons = if (nextProg.nextEpisode != null) setOf(nextProg.nextEpisode.season) else emptySet()
-                            persistUpdatedShow(nextWatchedSet = nextWatched, nextStatus = "in_progress")
+                            persistUpdatedShow(
+                                nextWatchedSet = nextWatched,
+                                nextStatus = "in_progress",
+                                nextCompletedSeasons = nextComp
+                            )
                         },
                         shape = RoundedCornerShape(50),
                         color = if (isInProgress) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
@@ -413,19 +435,33 @@ fun ShowDetailBottomSheet(
 
                     Surface(
                         onClick = {
-                            val nextWatched = if (isCompleted && episodes.size > 1) {
-                                episodes.dropLast(1).map { it.code.uppercase() }.toSet()
-                            } else {
-                                watchedSet
+                            var nextComp = completedSeasons
+                            val nextWatched = when {
+                                isCompleted && episodes.size > 1 -> {
+                                    val aired = TvTimeProgressCalculator.filterAiredEpisodes(episodes)
+                                    val list = if (aired.size > 1) aired else episodes
+                                    nextComp = emptyMap()
+                                    list.dropLast(1).map { it.code.uppercase() }.toSet()
+                                }
+                                isCompleted && episodes.size <= 1 && totalEpisodesOverride > 1 -> {
+                                    nextComp = mapOf(1 to (totalEpisodesOverride - 1))
+                                    emptySet()
+                                }
+                                else -> watchedSet
                             }
                             val nextStat = if (isStopped) {
-                                if (nextWatched.isNotEmpty()) "in_progress" else "interested"
+                                if (nextWatched.isNotEmpty() || nextComp.isNotEmpty()) "in_progress" else "interested"
                             } else {
                                 "stopped"
                             }
                             watchedSet = nextWatched
+                            completedSeasons = nextComp
                             userStatus = nextStat
-                            persistUpdatedShow(nextWatchedSet = nextWatched, nextStatus = nextStat)
+                            persistUpdatedShow(
+                                nextWatchedSet = nextWatched,
+                                nextStatus = nextStat,
+                                nextCompletedSeasons = nextComp
+                            )
                         },
                         shape = RoundedCornerShape(50),
                         color = if (isStopped) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
@@ -647,12 +683,14 @@ fun ShowDetailBottomSheet(
                                                         .filter { validCodes.isEmpty() || validCodes.contains(it) }
                                                         .toMutableSet()
                                                     if (allSeasonWatched) {
+                                                        val nextComp = completedSeasons.toMutableMap().apply { remove(seasonNum) }
                                                         seasonEps.forEach { nextSet.remove(it.code.trim().uppercase()) }
                                                         val baseStatus = if (userStatus == "completed") "in_progress" else userStatus
-                                                        if (nextSet.isEmpty() && baseStatus != "stopped") {
+                                                        if (nextSet.isEmpty() && nextComp.isEmpty() && baseStatus != "stopped") {
                                                             val toDeleteId = persistedShowId
                                                             persistedShowId = 0L
                                                             watchedSet = emptySet()
+                                                            completedSeasons = emptyMap()
                                                             userStatus = "preview"
                                                             if (toDeleteId != 0L) {
                                                                 scope.launch {
@@ -661,10 +699,15 @@ fun ShowDetailBottomSheet(
                                                                 }
                                                             }
                                                         } else {
+                                                            completedSeasons = nextComp
                                                             val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
                                                             watchedSet = nextSet
                                                             userStatus = nextStat
-                                                            persistUpdatedShow(nextWatchedSet = nextSet, nextStatus = nextStat)
+                                                            persistUpdatedShow(
+                                                                nextWatchedSet = nextSet,
+                                                                nextStatus = nextStat,
+                                                                nextCompletedSeasons = nextComp
+                                                            )
                                                         }
                                                     } else {
                                                         val baseStatus = if (userStatus == "stopped") "in_progress" else userStatus
@@ -716,12 +759,18 @@ fun ShowDetailBottomSheet(
                                         .filter { validCodes.isEmpty() || validCodes.contains(it) }
                                         .toMutableSet()
                                     if (isWatched) {
+                                        val nextComp = completedSeasons.toMutableMap()
+                                        if (nextComp.containsKey(ep.season)) {
+                                            seasonEps.forEach { nextSet.add(it.code.trim().uppercase()) }
+                                            nextComp.remove(ep.season)
+                                        }
                                         nextSet.remove(epCodeUpper)
                                         val baseStatus = if (userStatus == "completed") "in_progress" else userStatus
-                                        if (nextSet.isEmpty() && baseStatus != "stopped") {
+                                        if (nextSet.isEmpty() && nextComp.isEmpty() && baseStatus != "stopped") {
                                             val toDeleteId = persistedShowId
                                             persistedShowId = 0L
                                             watchedSet = emptySet()
+                                            completedSeasons = emptyMap()
                                             userStatus = "preview"
                                             if (toDeleteId != 0L) {
                                                 scope.launch {
@@ -730,10 +779,15 @@ fun ShowDetailBottomSheet(
                                                 }
                                             }
                                         } else {
+                                            completedSeasons = nextComp
                                             val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
                                             watchedSet = nextSet
                                             userStatus = nextStat
-                                            persistUpdatedShow(nextWatchedSet = nextSet, nextStatus = nextStat)
+                                            persistUpdatedShow(
+                                                nextWatchedSet = nextSet,
+                                                nextStatus = nextStat,
+                                                nextCompletedSeasons = nextComp
+                                            )
                                         }
                                     } else {
                                         val baseStatus = if (userStatus == "stopped") "in_progress" else userStatus

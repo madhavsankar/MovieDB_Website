@@ -409,4 +409,49 @@ class TvTimeProgressCalculatorTest {
         assertEquals("S01E04", progOnAirDay.nextEpisode?.code)
         assertEquals("in_progress", TvTimeProgressCalculator.deriveEffectiveShowStatus(progOnAirDay, "completed"))
     }
+
+    @Test
+    fun `50 season windowed show preserves 1250 total episodes and Dad movie matching requires exact ID or exact year`() {
+        val completedSeasons = (1..11).associateWith { 25 }
+        val activeSeason12 = (1..25).map { epNum ->
+            EpisodeModel(EpisodeModel.formatCode(12, epNum), 12, epNum, "Episode $epNum", "2010-01-01")
+        }
+        val watchedS12 = (1..7).map { EpisodeModel.formatCode(12, it) }.toSet()
+        val compactedJson = TvTimeProgressCalculator.serializeCompactedMeta(
+            totalEpisodes = 1250,
+            completedSeasons = completedSeasons,
+            episodes = activeSeason12
+        )
+
+        val prog = TvTimeProgressCalculator.computeShowProgressFromJson(
+            episodesJson = compactedJson,
+            watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(watchedS12),
+            rawUserStatus = "in_progress"
+        )
+        assertEquals(282, prog.watchedCount)
+        assertEquals(1250, prog.totalEpisodes)
+        assertEquals(968, prog.leftCount)
+        assertEquals("S12E08", prog.nextEpisode?.code)
+        assertEquals("in_progress", TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, "in_progress"))
+
+        // Strict "Dad" matching: different tmdbId or different year never cross-ticks
+        assertFalse(
+            TvTimeProgressCalculator.doesMovieMatch(
+                "movie_21291", 21291, "Dad", 1989,
+                "movie_99999", 99999, "Dad", 1989
+            )
+        )
+        assertFalse(
+            TvTimeProgressCalculator.doesMovieMatch(
+                "csv_movie_dad", 0, "Dad", 1989,
+                "movie_tt1111111", 0, "Dad", 1990
+            )
+        )
+        assertTrue(
+            TvTimeProgressCalculator.doesMovieMatch(
+                "movie_21291", 21291, "Dad", 1989,
+                "tmdb_movie_21291", 21291, "Dad", 1989
+            )
+        )
+    }
 }

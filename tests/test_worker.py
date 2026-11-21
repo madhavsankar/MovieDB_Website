@@ -990,6 +990,135 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["nextEpOnAirDay"], "S01E04")
         self.assertEqual(out["leftOnAirDay"], 1)
 
+    def test_50_season_window_and_pass2_ongoing_compaction_and_dad_isolation(self):
+        """Verifies 50-season windowed progress/uncheck, Pass-2 completed+future compaction stability, and Dad strict matching."""
+        repo_path = os.path.join(ROOT_DIR, "cloudflare", "src", "repositories", "FirestoreRepository.js")
+        view_path = os.path.join(ROOT_DIR, "cloudflare", "src", "ui", "WebAppView.js")
+        with open(repo_path, "r", encoding="utf-8") as f:
+            repo_src = (
+                f.read()
+                .replace("export const STARTER_SHOWS", "const STARTER_SHOWS")
+                .replace("export const STARTER_MOVIES", "const STARTER_MOVIES")
+                .replace("export const STARTER_ACTORS", "const STARTER_ACTORS")
+                .replace("export class FirestoreRepository", "class FirestoreRepository")
+            )
+        with open(view_path, "r", encoding="utf-8") as f:
+            view_src = f.read().replace("export const WEB_APP_HTML", "const WEB_APP_HTML")
+
+        harness = (
+            repo_src
+            + "\n"
+            + view_src
+            + """
+            (async () => {
+              const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+              const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+              const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+              (new Function(clientJs))();
+              const app = Object.create(globalThis.TvTimeClientClass.prototype);
+
+              // 1. 50-season x 25-ep (1,250 eps) show watched through S12E07 (282 watched)
+              const full50 = [];
+              const watched50 = [];
+              for (let s = 1; s <= 50; s++) {
+                for (let e = 1; e <= 25; e++) {
+                  const code = "S" + String(s).padStart(2, "0") + "E" + String(e).padStart(2, "0");
+                  full50.push({ code, season: s, number: e, title: "Episode " + e, airDate: "2010-01-01", runtimeMins: 42 });
+                  if (s < 12 || (s === 12 && e <= 7)) watched50.push(code);
+                }
+              }
+              const comp50 = FirestoreRepository.compactShowForStorage({
+                id: "tmdb_tv_2734",
+                tmdbId: 2734,
+                title: "50 Season Drama",
+                year: 1999,
+                status: "Returning Series",
+                userStatus: "in_progress",
+                watchedEpisodes: watched50,
+                episodes: full50
+              });
+              const prog50 = app.computeShowProgress(comp50, "2026-11-21");
+
+              // Uncheck S05E03 from full50 and re-compact -> must remain 281/1250 in_progress
+              const watchedAfterUncheck = watched50.filter((c) => c !== "S05E03");
+              const recomp50 = app.compactShowForStorage({
+                ...comp50,
+                episodes: full50,
+                completedSeasons: {},
+                watchedEpisodes: watchedAfterUncheck,
+                userStatus: "in_progress"
+              });
+              const progAfterUncheck = app.computeShowProgress(recomp50, "2026-11-21");
+              const effAfterUncheck = app.getEffectiveShowStatus(recomp50, "2026-11-21");
+
+              // 2. Pass-2 compaction & deduplication of completed ongoing show with 1 future episode
+              const ongoingRaw = {
+                id: "tmdb_tv_95557",
+                tmdbId: 95557,
+                title: "Invincible",
+                year: 2021,
+                status: "Returning Series",
+                userStatus: "completed",
+                watchedEpisodes: Array.from({ length: 24 }, (_, i) => "S01E" + String(i + 1).padStart(2, "0")),
+                episodes: [
+                  ...Array.from({ length: 24 }, (_, i) => ({
+                    code: "S01E" + String(i + 1).padStart(2, "0"),
+                    season: 1,
+                    number: i + 1,
+                    title: "Aired " + (i + 1),
+                    airDate: "2024-03-01"
+                  })),
+                  { code: "S04E01", season: 4, number: 1, title: "Season 4 Premiere", airDate: "2099-06-01" }
+                ]
+              };
+              const pass1Server = FirestoreRepository.compactShowForStorage(ongoingRaw);
+              const deduped = FirestoreRepository.deduplicateShows([pass1Server])[0];
+              const pass2Server = FirestoreRepository.compactShowForStorage(deduped);
+              const pass1Client = app.compactShowForStorage(ongoingRaw);
+              const pass2Client = app.compactShowForStorage(pass1Client);
+
+              // 3. Dad strict matching isolation
+              const dad1989 = { id: "movie_21291", tmdbId: 21291, title: "Dad", year: 1989 };
+              const dad2005 = { id: "movie_99999", tmdbId: 99999, title: "Dad", year: 2005 };
+              const dadFallbackDiffYear = { id: "movie_tt1111111", tmdbId: 0, title: "Dad", year: 1990 };
+
+              const out = JSON.stringify({
+                comp50Bytes: JSON.stringify(comp50).length,
+                prog50Watched: prog50.watchedCount,
+                prog50Total: prog50.total,
+                afterUncheckWatched: progAfterUncheck.watchedCount,
+                afterUncheckTotal: progAfterUncheck.total,
+                effAfterUncheck,
+                pass1Total: pass1Server.totalEpisodes,
+                pass2Total: pass2Server.totalEpisodes,
+                pass2FutureLen: pass2Server.episodes.length,
+                pass2ClientTotal: pass2Client.totalEpisodes,
+                pass2ClientFutureLen: pass2Client.episodes.length,
+                dadDiffTmdbMatches: app.doesMovieMatchItem(dad1989, dad2005),
+                dadDiffYearNoTmdbMatches: app.doesMovieMatchItem({ id: "csv_dad", tmdbId: 0, title: "Dad", year: 1989 }, dadFallbackDiffYear),
+                dadExactMatches: app.doesMovieMatchItem(dad1989, { id: "tmdb_movie_21291", tmdbId: 21291, title: "Dad", year: 1989 })
+              });
+              if (typeof console !== "undefined" && console.log) console.log(out);
+              else if (typeof print !== "undefined") print(out);
+            })();
+            """
+        )
+        out = self._run_js(harness)
+        self.assertLess(out["comp50Bytes"], 3200)
+        self.assertEqual(out["prog50Watched"], 282)
+        self.assertEqual(out["prog50Total"], 1250)
+        self.assertEqual(out["afterUncheckWatched"], 281)
+        self.assertEqual(out["afterUncheckTotal"], 1250)
+        self.assertEqual(out["effAfterUncheck"], "in_progress")
+        self.assertEqual(out["pass1Total"], 24)
+        self.assertEqual(out["pass2Total"], 24)
+        self.assertEqual(out["pass2FutureLen"], 1)
+        self.assertEqual(out["pass2ClientTotal"], 24)
+        self.assertEqual(out["pass2ClientFutureLen"], 1)
+        self.assertFalse(out["dadDiffTmdbMatches"])
+        self.assertFalse(out["dadDiffYearNoTmdbMatches"])
+        self.assertTrue(out["dadExactMatches"])
+
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""
         proc = subprocess.run(

@@ -197,7 +197,13 @@ object FirestoreSyncService {
             .minWithOrNull(compareBy<EpisodeModel> { it.airDate.take(10) }.thenBy { it.season }.thenBy { it.number })
 
         if (effStatus == "completed") {
-            obj.put("totalEpisodes", prog.watchedCount.coerceAtLeast(1))
+            val airedInMeta = TvTimeProgressCalculator.filterAiredEpisodes(meta.episodes, todayIso)
+            val completedTotal = if (airedInMeta.isNotEmpty() && !isSyntheticEpisodeList(meta.episodes) && meta.totalEpisodes <= meta.episodes.size) {
+                maxOf(airedInMeta.size + meta.completedSeasons.values.sum(), 1)
+            } else {
+                maxOf(meta.totalEpisodes, prog.watchedCount, 1)
+            }
+            obj.put("totalEpisodes", completedTotal)
             obj.put("watchedEpisodes", JSONArray())
             val futureArr = JSONArray()
             if (earliestFutureOverall != null) {
@@ -349,10 +355,16 @@ object FirestoreSyncService {
 
             val meta = TvTimeProgressCalculator.parseCompactedMeta(s.episodesJson)
             val eps = meta.episodes
+            val airedEps = TvTimeProgressCalculator.filterAiredEpisodes(eps)
             var watched = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
-            if (s.userStatus.equals("completed", ignoreCase = true) && eps.isNotEmpty() && meta.completedSeasons.isEmpty() && watched.size < eps.size) {
-                watched = eps.map { it.code.uppercase() }.toSet()
-            } else if (eps.isNotEmpty() && meta.completedSeasons.isEmpty() && !isSyntheticEpisodeList(eps)) {
+            if (s.userStatus.equals("completed", ignoreCase = true) &&
+                airedEps.isNotEmpty() &&
+                meta.completedSeasons.isEmpty() &&
+                meta.totalEpisodes <= eps.size &&
+                watched.size < airedEps.size
+            ) {
+                watched = airedEps.map { it.code.uppercase() }.toSet()
+            } else if (eps.isNotEmpty() && meta.completedSeasons.isEmpty() && meta.totalEpisodes <= eps.size && !isSyntheticEpisodeList(eps)) {
                 val validCodes = eps.map { it.code.uppercase() }.toSet()
                 watched = watched.filter { validCodes.contains(it) }.toSet()
             }
@@ -390,10 +402,16 @@ object FirestoreSyncService {
                 }
                 val bestTotal = maxOf(existingMeta.totalEpisodes, meta.totalEpisodes, mergedComp.values.sum() + bestEps.size)
                 val bestStatus = if (statusRank(s.userStatus) > statusRank(existing.userStatus)) s.userStatus else existing.userStatus
+                val airedBestEps = TvTimeProgressCalculator.filterAiredEpisodes(bestEps)
+                val prevMaxTotal = maxOf(existingMeta.totalEpisodes, meta.totalEpisodes)
                 var mergedWatched = TvTimeProgressCalculator.parseWatchedSet(existing.watchedCodesCsv) + watched
-                if (bestStatus.equals("completed", ignoreCase = true) && bestEps.isNotEmpty() && mergedComp.isEmpty()) {
-                    mergedWatched = bestEps.map { it.code.uppercase() }.toSet()
-                } else if (bestEps.isNotEmpty() && mergedComp.isEmpty() && !isSyntheticEpisodeList(bestEps)) {
+                if (bestStatus.equals("completed", ignoreCase = true) &&
+                    airedBestEps.isNotEmpty() &&
+                    mergedComp.isEmpty() &&
+                    prevMaxTotal <= bestEps.size
+                ) {
+                    mergedWatched = airedBestEps.map { it.code.uppercase() }.toSet()
+                } else if (bestEps.isNotEmpty() && mergedComp.isEmpty() && prevMaxTotal <= bestEps.size && !isSyntheticEpisodeList(bestEps)) {
                     val validCodes = bestEps.map { it.code.uppercase() }.toSet()
                     val filtered = mergedWatched.filter { validCodes.contains(it) }.toSet()
                     if (filtered.isNotEmpty()) mergedWatched = filtered
@@ -998,7 +1016,7 @@ object FirestoreSyncService {
                 if (slashParts.size >= 2) {
                     val wNum = slashParts[0].replace(Regex("[^0-9]"), "").toIntOrNull()
                     val tNum = slashParts[1].replace(Regex("[^0-9]"), "").toIntOrNull()
-                    if (tNum != null && tNum > 0) totalCount = tNum.coerceAtMost(500)
+                    if (tNum != null && tNum > 0) totalCount = tNum.coerceAtMost(5000)
                     if (wNum != null && wNum >= 0) watchedCount = wNum.coerceAtMost(totalCount)
                 }
 
@@ -1077,22 +1095,31 @@ object FirestoreSyncService {
         importedCount
     }
 
-    private fun readRawPayloadUnlocked(userId: String): JSONObject? {
+    private fun readRawPayloadStrictUnlocked(userId: String): JSONObject? {
         val clean = sanitizeUserId(userId)
-        val docUrl = docUrlForUser(clean) ?: return null
+        val docUrl = docUrlForUser(clean)
+            ?: throw java.io.IOException("Firebase project ID is not configured.")
+        val conn = (URL(docUrl).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 10000
+            readTimeout = 15000
+        }
+        val code = conn.responseCode
+        if (code == 404) return null
+        if (code !in 200..299) {
+            throw java.io.IOException("Firestore read failed for $clean (HTTP $code)")
+        }
+        val docText = conn.inputStream.bufferedReader().use { it.readText() }
+        val docJson = JSONObject(docText)
+        val payloadStr = docJson.optJSONObject("fields")
+            ?.optJSONObject("payload")
+            ?.optString("stringValue", "") ?: ""
+        return if (payloadStr.isBlank()) null else JSONObject(payloadStr)
+    }
+
+    private fun readRawPayloadUnlocked(userId: String): JSONObject? {
         return try {
-            val conn = (URL(docUrl).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 10000
-                readTimeout = 15000
-            }
-            if (conn.responseCode !in 200..299) return null
-            val docText = conn.inputStream.bufferedReader().use { it.readText() }
-            val docJson = JSONObject(docText)
-            val payloadStr = docJson.optJSONObject("fields")
-                ?.optJSONObject("payload")
-                ?.optString("stringValue", "") ?: ""
-            if (payloadStr.isBlank()) null else JSONObject(payloadStr)
+            readRawPayloadStrictUnlocked(userId)
         } catch (_: Exception) {
             null
         }
@@ -1252,8 +1279,14 @@ object FirestoreSyncService {
                 return@withLock Result.failure(IllegalArgumentException("You cannot send a friend request to yourself."))
             }
 
-            val myPayload = readRawPayloadUnlocked(me) ?: defaultPayloadForUser(me)
-            val targetPayload = readRawPayloadUnlocked(target) ?: defaultPayloadForUser(target)
+            val myPayload: JSONObject
+            val targetPayload: JSONObject
+            try {
+                myPayload = readRawPayloadStrictUnlocked(me) ?: defaultPayloadForUser(me)
+                targetPayload = readRawPayloadStrictUnlocked(target) ?: defaultPayloadForUser(target)
+            } catch (e: Exception) {
+                return@withLock Result.failure(e)
+            }
 
             val mySocial = extractSocialFromPayload(myPayload, me)
             val targetSocial = extractSocialFromPayload(targetPayload, target)
@@ -1309,8 +1342,14 @@ object FirestoreSyncService {
                 return@withLock Result.failure(IllegalArgumentException("Invalid username."))
             }
 
-            val myPayload = readRawPayloadUnlocked(me) ?: defaultPayloadForUser(me)
-            val reqPayload = readRawPayloadUnlocked(requester) ?: defaultPayloadForUser(requester)
+            val myPayload: JSONObject
+            val reqPayload: JSONObject
+            try {
+                myPayload = readRawPayloadStrictUnlocked(me) ?: defaultPayloadForUser(me)
+                reqPayload = readRawPayloadStrictUnlocked(requester) ?: defaultPayloadForUser(requester)
+            } catch (e: Exception) {
+                return@withLock Result.failure(e)
+            }
 
             val mySocial = extractSocialFromPayload(myPayload, me)
             val reqSocial = extractSocialFromPayload(reqPayload, requester)
@@ -1359,8 +1398,14 @@ object FirestoreSyncService {
                 return@withLock Result.failure(IllegalArgumentException("Invalid username."))
             }
 
-            val myPayload = readRawPayloadUnlocked(me) ?: defaultPayloadForUser(me)
-            val otherPayload = readRawPayloadUnlocked(other) ?: defaultPayloadForUser(other)
+            val myPayload: JSONObject
+            val otherPayload: JSONObject
+            try {
+                myPayload = readRawPayloadStrictUnlocked(me) ?: defaultPayloadForUser(me)
+                otherPayload = readRawPayloadStrictUnlocked(other) ?: defaultPayloadForUser(other)
+            } catch (e: Exception) {
+                return@withLock Result.failure(e)
+            }
 
             val mySocial = extractSocialFromPayload(myPayload, me)
             val otherSocial = extractSocialFromPayload(otherPayload, other)

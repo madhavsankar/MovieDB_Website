@@ -202,10 +202,11 @@ export class FirestoreRepository {
     const airedEps = eps.filter((ep) => !isFutureEp(ep));
 
     if (statusLower === "completed") {
+      const storedTotalNum = Number(s.totalEpisodes) || 0;
       const airedCompletedTotal =
-        eps.length > 0 && !FirestoreRepository.isSyntheticEpisodeList(eps)
+        airedEps.length > 0 && !FirestoreRepository.isSyntheticEpisodeList(eps) && storedTotalNum <= eps.length
           ? Math.max(1, airedEps.length + missingCompEps)
-          : Math.max(1, computedTotal);
+          : Math.max(1, storedTotalNum, airedEps.length + missingCompEps);
       return {
         ...base,
         userStatus: "completed",
@@ -272,12 +273,16 @@ export class FirestoreRepository {
         })
         .sort();
 
+      const storedTotalNum = Number(s.totalEpisodes) || 0;
       const airedFinalTotal = Math.max(
         1,
         airedEps.length + missingCompEps + nonPresentWatchedCount
       );
+      const finalTotal = Math.max(storedTotalNum, airedFinalTotal);
       const allAiredWatched =
-        airedEps.length > 0 && airedEps.every((ep) => watchedSet.has(ep.code));
+        airedEps.length > 0 &&
+        airedEps.every((ep) => watchedSet.has(ep.code)) &&
+        airedFinalTotal >= storedTotalNum;
 
       if (
         activeSeasonNum === null &&
@@ -288,13 +293,12 @@ export class FirestoreRepository {
         return {
           ...base,
           userStatus: "completed",
-          totalEpisodes: airedFinalTotal,
+          totalEpisodes: finalTotal,
           watchedEpisodes: [],
           episodes: nextUpcomingEp ? [nextUpcomingEp] : [],
         };
       }
 
-      const finalTotal = Math.max(computedTotal, airedFinalTotal);
       const out = {
         ...base,
         totalEpisodes: Math.max(1, finalTotal),
@@ -433,13 +437,23 @@ export class FirestoreRepository {
         watched = Array.from(new Set(watched)).sort();
         const presentS = new Set(incomingEps.map((e) => String(Number(e.season) || 1)));
         for (const sk of presentS) delete incomingComp[sk];
-        if (s.userStatus === "completed" && incomingEps.length > 0 && watched.length < incomingEps.length) {
-          watched = incomingEps.map((e) => e.code).sort();
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const airedIncoming = incomingEps.filter(
+          (e) => !(e.airDate && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(e.airDate) && e.airDate > todayIso)
+        );
+        const rawStoredTotal = Number(s.totalEpisodes) || 0;
+        if (
+          s.userStatus === "completed" &&
+          airedIncoming.length > 0 &&
+          rawStoredTotal <= incomingEps.length &&
+          watched.length < airedIncoming.length
+        ) {
+          watched = airedIncoming.map((e) => e.code).sort();
         }
         const compSum = Object.values(incomingComp).reduce((a, b) => a + b, 0);
         const totalEpisodes = Math.max(
-          Number(s.totalEpisodes) || 0,
-          incomingEps.length + compSum,
+          rawStoredTotal,
+          airedIncoming.length + compSum,
           compSum + watched.length
         );
         const entry = {
@@ -492,14 +506,18 @@ export class FirestoreRepository {
         mergedWatched = Array.from(new Set(mergedWatched)).sort();
         const presentS = new Set(bestEps.map((e) => String(Number(e.season) || 1)));
         for (const sk of presentS) delete mergedComp[sk];
-        if (bestStatus === "completed" && bestEps.length > 0) {
-          mergedWatched = bestEps.map((e) => e.code).sort();
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const airedBest = bestEps.filter(
+          (e) => !(e.airDate && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(e.airDate) && e.airDate > todayIso)
+        );
+        const prevMaxTotal = Math.max(Number(existing.totalEpisodes) || 0, Number(s.totalEpisodes) || 0);
+        if (bestStatus === "completed" && airedBest.length > 0 && prevMaxTotal <= bestEps.length) {
+          mergedWatched = airedBest.map((e) => e.code).sort();
         }
         const compSum = Object.values(mergedComp).reduce((a, b) => a + b, 0);
         const bestTotalEpisodes = Math.max(
-          Number(existing.totalEpisodes) || 0,
-          Number(s.totalEpisodes) || 0,
-          bestEps.length + compSum,
+          prevMaxTotal,
+          airedBest.length + compSum,
           compSum + mergedWatched.length
         );
         const mergedEntry = {
@@ -831,62 +849,53 @@ export class FirestoreRepository {
       return "none";
     };
 
-    try {
-      const maskParams = [
-        "pageSize=100",
-        "mask.fieldPaths=userId",
-        "mask.fieldPaths=email",
-        "mask.fieldPaths=showCount",
-        "mask.fieldPaths=movieCount",
-      ].join("&");
-      const listUrl = `https://firestore.googleapis.com/v1/projects/${this.projectId}/databases/(default)/documents/tvtime_state?${maskParams}`;
-      const resp = await fetch(listUrl, { method: "GET" });
-      if (resp.ok) {
-        const data = await resp.json();
-        const docs = Array.isArray(data?.documents) ? data.documents : [];
-        for (const doc of docs) {
-          const docName = String(doc?.name || "");
-          const docId = docName.split("/").pop() || "";
-          if (!docId.startsWith("user_state_")) continue;
-          const uid = FirestoreRepository.sanitizeUserId(
-            doc?.fields?.userId?.stringValue || docId.slice("user_state_".length)
-          );
-          if (!uid || uid === "default" || uid === me) continue;
-          const email = String(doc?.fields?.email?.stringValue || uid);
-          const showCount = Number(doc?.fields?.showCount?.integerValue || 0);
-          const movieCount = Number(doc?.fields?.movieCount?.integerValue || 0);
-          if (!q || uid.includes(q) || email.toLowerCase().includes(q) || (cleanQ && uid.includes(cleanQ))) {
-            usersById.set(uid, {
-              userId: uid,
-              email,
-              showCount,
-              movieCount,
-              relation: annotateRelation(uid),
-            });
-          }
-        }
+    const maskParams = [
+      "pageSize=100",
+      "mask.fieldPaths=userId",
+      "mask.fieldPaths=email",
+      "mask.fieldPaths=showCount",
+      "mask.fieldPaths=movieCount",
+    ].join("&");
+    const listUrl = `https://firestore.googleapis.com/v1/projects/${this.projectId}/databases/(default)/documents/tvtime_state?${maskParams}`;
+    const resp = await fetch(listUrl, { method: "GET" });
+    if (!resp.ok) {
+      throw new Error(`Firestore user search failed (${resp.status})`);
+    }
+    const data = await resp.json();
+    const docs = Array.isArray(data?.documents) ? data.documents : [];
+    for (const doc of docs) {
+      const docName = String(doc?.name || "");
+      const docId = docName.split("/").pop() || "";
+      if (!docId.startsWith("user_state_")) continue;
+      const uid = FirestoreRepository.sanitizeUserId(
+        doc?.fields?.userId?.stringValue || docId.slice("user_state_".length)
+      );
+      if (!uid || uid === "default" || uid === me) continue;
+      const email = String(doc?.fields?.email?.stringValue || uid);
+      const showCount = Number(doc?.fields?.showCount?.integerValue || 0);
+      const movieCount = Number(doc?.fields?.movieCount?.integerValue || 0);
+      if (!q || uid.includes(q) || email.toLowerCase().includes(q) || (cleanQ && uid.includes(cleanQ))) {
+        usersById.set(uid, {
+          userId: uid,
+          email,
+          showCount,
+          movieCount,
+          relation: annotateRelation(uid),
+        });
       }
-    } catch (_) {}
+    }
 
     if (cleanQ && cleanQ !== "default" && cleanQ !== me && !usersById.has(cleanQ)) {
-      let showCount = 0;
-      let movieCount = 0;
-      let email = cleanQ;
-      try {
-        const directDoc = await this._readUserDocStrict(cleanQ);
-        if (directDoc.exists) {
-          showCount = directDoc.state.shows.length;
-          movieCount = directDoc.state.movies.length;
-          email = directDoc.state.email || cleanQ;
-        }
-      } catch (_) {}
-      usersById.set(cleanQ, {
-        userId: cleanQ,
-        email,
-        showCount,
-        movieCount,
-        relation: annotateRelation(cleanQ),
-      });
+      const directDoc = await this._readUserDocStrict(cleanQ);
+      if (directDoc.exists) {
+        usersById.set(cleanQ, {
+          userId: cleanQ,
+          email: directDoc.state.email || cleanQ,
+          showCount: directDoc.state.shows.length,
+          movieCount: directDoc.state.movies.length,
+          relation: annotateRelation(cleanQ),
+        });
+      }
     }
 
     return Array.from(usersById.values());

@@ -176,7 +176,7 @@ object TvTimeProgressCalculator {
         val normA = normalizeTitleKey(aTitle)
         val normB = normalizeTitleKey(bTitle)
         if (normA.isEmpty() || normA != normB) return false
-        if (aYear > 1900 && bYear > 1900 && kotlin.math.abs(aYear - bYear) > 1) return false
+        if (aYear > 1900 && bYear > 1900 && aYear != bYear) return false
         return true
     }
 
@@ -198,7 +198,7 @@ object TvTimeProgressCalculator {
         val normA = normalizeTitleKey(aTitle)
         val normB = normalizeTitleKey(bTitle)
         if (normA.isEmpty() || normA != normB) return false
-        if (aYear > 1900 && bYear > 1900 && kotlin.math.abs(aYear - bYear) > 1) return false
+        if (aYear > 1900 && bYear > 1900 && aYear != bYear) return false
         return true
     }
 
@@ -434,14 +434,16 @@ object TvTimeProgressCalculator {
         } else {
             epsOutsideComp.size
         }
+        val isWindowedMultiSeason = totalEpisodesOverride > episodes.size + compTotal
         val total = when {
-            totalEpisodesOverride > 0 && episodes.isEmpty() -> maxOf(totalEpisodesOverride, compTotal, watchedCount)
+            (totalEpisodesOverride > 0 && episodes.isEmpty()) || isWindowedMultiSeason ->
+                maxOf(totalEpisodesOverride, compTotal + effectiveAiredWindowCount, watchedCount)
             episodes.isNotEmpty() || compTotal > 0 -> maxOf(
                 compTotal + effectiveAiredWindowCount,
                 watchedCount,
                 if (compTotal == 0 && effectiveAiredWindowCount == 0) 1 else 0
             )
-            else -> maxOf(10, watchedCount)
+            else -> maxOf(totalEpisodesOverride, 10, watchedCount)
         }
         val leftCount = (total - watchedCount).coerceAtLeast(0)
         val nextEp = airedOutsideComp.firstOrNull { !normWatched.contains(it.code.trim().uppercase()) }

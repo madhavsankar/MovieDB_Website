@@ -364,8 +364,9 @@ export class LiveCatalogService {
           ),
         ]);
 
-      // Map TVMaze shows by normalized title so TMDB TV results can also carry tvmazeId for instant full-episode lookup
+      // Map TVMaze shows by normalized title + year so TMDB TV results only attach matching-year tvmazeId
       const tvmazeByTitle = new Map();
+      const seenShowTvmazeIds = new Set();
       let showsData = [];
       if (showsRes.status === "fulfilled" && showsRes.value && showsRes.value.ok) {
         showsData = (await showsRes.value.json()) || [];
@@ -373,7 +374,10 @@ export class LiveCatalogService {
           const s = entry?.show;
           if (s?.id && s?.name) {
             const k = normalizeSearchTitle(s.name);
-            if (k && !tvmazeByTitle.has(k)) tvmazeByTitle.set(k, s);
+            if (k) {
+              if (!tvmazeByTitle.has(k)) tvmazeByTitle.set(k, []);
+              tvmazeByTitle.get(k).push(s);
+            }
           }
         }
       }
@@ -545,7 +549,12 @@ export class LiveCatalogService {
           if (tvId > 0) seenShowTmdbIds.add(tvId);
           seenShowTitles.add(showKey);
           recordShowTitleYear(normalizeBaseTitle(title), year);
-          const matchedTvMaze = tvmazeByTitle.get(normTitle);
+          const candidates = tvmazeByTitle.get(normTitle) || [];
+          const matchedTvMaze = candidates.find((cand) => {
+            const mYear = parseInt(String(cand?.premiered || "").slice(0, 4), 10) || 0;
+            return !seenShowTvmazeIds.has(cand.id) && mYear > 0 && year > 0 && Math.abs(mYear - year) <= 1;
+          }) || null;
+          if (matchedTvMaze?.id) seenShowTvmazeIds.add(matchedTvMaze.id);
           const posterUrl = item.poster_path
             ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
             : (matchedTvMaze?.image?.medium || "").replace(/^http:\/\//i, "https://");
@@ -601,13 +610,14 @@ export class LiveCatalogService {
       if (!actorIsPrimary || actorMovieItems.length === 0) {
         for (const entry of showsData) {
           const show = entry?.show;
-          if (!show || !show.id) continue;
+          if (!show || !show.id || seenShowTvmazeIds.has(show.id)) continue;
           const normTitle = normalizeSearchTitle(show.name || "");
           const premiered = String(show.premiered || "");
           const year = premiered ? parseInt(premiered.slice(0, 4), 10) || 2024 : 2024;
           const showKey = `${normTitle}_${year}`;
           const baseShowTitle = normalizeBaseTitle(show.name || "");
           if (!normTitle || seenShowTitles.has(showKey) || hasShowNearYear(baseShowTitle, year)) continue;
+          seenShowTvmazeIds.add(show.id);
           seenShowTitles.add(showKey);
           recordShowTitleYear(baseShowTitle, year);
           const network = show.network?.name || show.webChannel?.name || "Streaming";
@@ -908,24 +918,33 @@ export class LiveCatalogService {
 
       const seedFetchJobs = [];
       for (const seed of resolvedTvSeeds) {
-        const path =
-          safePage === 1
-            ? `/tv/${seed.tmdbId}?append_to_response=recommendations,similar&language=en-US`
-            : `/tv/${seed.tmdbId}/recommendations?language=en-US&page=${safePage}`;
+        // Always include base TV detail with append_to_response so original_language is available on every page
+        const path = `/tv/${seed.tmdbId}?append_to_response=recommendations,similar&language=en-US`;
         const req = LiveCatalogService._buildTmdbRequest(path, env);
         if (req) {
           seedFetchJobs.push(
             fetchImpl(req.url, { headers: req.headers })
               .then((r) => (r.ok ? r.json() : null))
-              .then((data) => {
+              .then(async (data) => {
                 const lang = String(data?.original_language || seed.lang || "").toLowerCase();
                 recordSeedLang(lang);
-                const recs = Array.isArray(data?.recommendations?.results)
-                  ? data.recommendations.results
-                  : Array.isArray(data?.results)
-                    ? data.results
-                    : [];
+                let recs = Array.isArray(data?.recommendations?.results) ? data.recommendations.results : [];
                 const sim = Array.isArray(data?.similar?.results) ? data.similar.results : [];
+                if (safePage > 1) {
+                  const pReq = LiveCatalogService._buildTmdbRequest(
+                    `/tv/${seed.tmdbId}/recommendations?language=en-US&page=${safePage}`,
+                    env
+                  );
+                  if (pReq) {
+                    try {
+                      const pr = await fetchImpl(pReq.url, { headers: pReq.headers });
+                      if (pr.ok) {
+                        const pd = await pr.json();
+                        if (Array.isArray(pd?.results) && pd.results.length > 0) recs = pd.results;
+                      }
+                    } catch (_) {}
+                  }
+                }
                 return { type: "tv", seedTitle: seed.title, items: [...recs, ...sim] };
               })
               .catch(() => null)
@@ -934,24 +953,32 @@ export class LiveCatalogService {
       }
 
       for (const seed of resolvedMovieSeeds) {
-        const path =
-          safePage === 1
-            ? `/movie/${seed.tmdbId}?append_to_response=recommendations,similar&language=en-US`
-            : `/movie/${seed.tmdbId}/recommendations?language=en-US&page=${safePage}`;
+        const path = `/movie/${seed.tmdbId}?append_to_response=recommendations,similar&language=en-US`;
         const req = LiveCatalogService._buildTmdbRequest(path, env);
         if (req) {
           seedFetchJobs.push(
             fetchImpl(req.url, { headers: req.headers })
               .then((r) => (r.ok ? r.json() : null))
-              .then((data) => {
+              .then(async (data) => {
                 const lang = String(data?.original_language || seed.lang || "").toLowerCase();
                 recordSeedLang(lang);
-                const recs = Array.isArray(data?.recommendations?.results)
-                  ? data.recommendations.results
-                  : Array.isArray(data?.results)
-                    ? data.results
-                    : [];
+                let recs = Array.isArray(data?.recommendations?.results) ? data.recommendations.results : [];
                 const sim = Array.isArray(data?.similar?.results) ? data.similar.results : [];
+                if (safePage > 1) {
+                  const pReq = LiveCatalogService._buildTmdbRequest(
+                    `/movie/${seed.tmdbId}/recommendations?language=en-US&page=${safePage}`,
+                    env
+                  );
+                  if (pReq) {
+                    try {
+                      const pr = await fetchImpl(pReq.url, { headers: pReq.headers });
+                      if (pr.ok) {
+                        const pd = await pr.json();
+                        if (Array.isArray(pd?.results) && pd.results.length > 0) recs = pd.results;
+                      }
+                    } catch (_) {}
+                  }
+                }
                 return { type: "movie", seedTitle: seed.title, items: [...recs, ...sim] };
               })
               .catch(() => null)

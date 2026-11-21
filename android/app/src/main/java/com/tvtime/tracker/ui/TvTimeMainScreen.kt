@@ -391,7 +391,7 @@ fun TvTimeMainScreen(
                     }
                     searchResults = merged
                     searchPage = nextPage
-                    hasMoreSearchResults = paged.hasMore && incoming.isNotEmpty()
+                    hasMoreSearchResults = paged.hasMore && paged.items.isNotEmpty()
                 }
                 isLoadingMoreSearch = false
             }
@@ -2319,7 +2319,7 @@ private fun SearchTabScreen(
         androidx.compose.runtime.derivedStateOf {
             val totalItems = listState.layoutInfo.totalItemsCount
             val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            totalItems > 4 && lastVisible >= totalItems - 5
+            totalItems > 2 && lastVisible >= totalItems - 5
         }
     }
 
@@ -2417,7 +2417,7 @@ private fun SearchTabScreen(
                     )
                 }
                 Text(
-                    text = if (isSearching) "Searching..." else "${sortedResults.size} results",
+                    text = if (isSearching) "Searching..." else "${sortedResults.size}${if (hasMoreResults) "+" else ""} results",
                     style = MaterialTheme.typography.bodySmall,
                     color = TvTimePalette.TextSecondary
                 )
@@ -2506,20 +2506,23 @@ private fun SwipeRecommendationsTabScreen(
 ) {
     val scope = rememberCoroutineScope()
     var rawDeck by remember { mutableStateOf<List<SearchResultItem>>(emptyList()) }
+    var deckWasSeeded by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
     var currentPage by remember { mutableStateOf(1) }
     var localDismissedIds by remember { mutableStateOf(emptySet<String>()) }
 
-    val loadMore: (Int) -> Unit = { pageToFetch ->
+    val loadMore: (Int, Boolean) -> Unit = { pageToFetch, resetExisting ->
         if (!isLoading) {
             isLoading = true
+            val hasSeedsNow = shows.isNotEmpty() || movies.isNotEmpty()
             scope.launch {
                 val fetched = LiveMediaCatalogService.fetchRecommendations(
                     shows = shows,
                     movies = movies,
                     page = pageToFetch
                 )
-                val merged = rawDeck.toMutableList()
+                val baseList = if (resetExisting) emptyList() else rawDeck
+                val merged = baseList.toMutableList()
                 for (cand in fetched) {
                     val isDup = merged.any { ex ->
                         ex.externalId == cand.externalId ||
@@ -2535,14 +2538,17 @@ private fun SwipeRecommendationsTabScreen(
                     if (!isDup) merged.add(cand)
                 }
                 rawDeck = merged
+                if (hasSeedsNow) deckWasSeeded = true
                 isLoading = false
             }
         }
     }
 
     LaunchedEffect(shows.size, movies.size) {
-        if (rawDeck.isEmpty()) {
-            loadMore(1)
+        val hasLibrary = shows.isNotEmpty() || movies.isNotEmpty()
+        if (rawDeck.isEmpty() || (hasLibrary && !deckWasSeeded)) {
+            currentPage = 1
+            loadMore(1, hasLibrary && !deckWasSeeded)
         }
     }
 
@@ -2589,7 +2595,7 @@ private fun SwipeRecommendationsTabScreen(
         if (filteredDeck.size <= 3 && !isLoading && rawDeck.isNotEmpty() && currentPage < 10) {
             val nextPage = currentPage + 1
             currentPage = nextPage
-            loadMore(nextPage)
+            loadMore(nextPage, false)
         }
     }
 
@@ -2693,7 +2699,7 @@ private fun SwipeRecommendationsTabScreen(
                             onClick = {
                                 val next = currentPage + 1
                                 currentPage = next
-                                loadMore(next)
+                                loadMore(next, false)
                             },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = TvTimePalette.Yellow,
@@ -4426,12 +4432,18 @@ private fun FriendsFullPageScreen(
                                                     TextButton(
                                                         onClick = {
                                                             scope.launch {
+                                                                val cleanWatchlistJson = TvTimeProgressCalculator.serializeCompactedMeta(
+                                                                    totalEpisodes = totalCount,
+                                                                    completedSeasons = emptyMap(),
+                                                                    episodes = sEps
+                                                                )
                                                                 dao.insertShow(
                                                                     s.copy(
                                                                         id = 0,
                                                                         userId = currentUserId,
                                                                         userStatus = "interested",
-                                                                        watchedCodesCsv = ""
+                                                                        watchedCodesCsv = "",
+                                                                        episodesJson = cleanWatchlistJson
                                                                     )
                                                                 )
                                                                 FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
@@ -4444,13 +4456,23 @@ private fun FriendsFullPageScreen(
                                                     TextButton(
                                                         onClick = {
                                                             scope.launch {
-                                                                val allCodes = sEps.map { it.code }
+                                                                val airedEps = TvTimeProgressCalculator.filterAiredEpisodes(sEps)
+                                                                val futureEps = sEps.filter { TvTimeProgressCalculator.isFutureEpisode(it) }
+                                                                val compJson = TvTimeProgressCalculator.serializeCompactedMeta(
+                                                                    totalEpisodes = totalCount,
+                                                                    completedSeasons = emptyMap(),
+                                                                    episodes = if (airedEps.size >= totalCount) sEps else futureEps
+                                                                )
+                                                                val watchedCsv = if (airedEps.size >= totalCount) {
+                                                                    TvTimeProgressCalculator.serializeWatchedSet(airedEps.map { it.code })
+                                                                } else ""
                                                                 dao.insertShow(
                                                                     s.copy(
                                                                         id = 0,
                                                                         userId = currentUserId,
                                                                         userStatus = "completed",
-                                                                        watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(allCodes)
+                                                                        watchedCodesCsv = watchedCsv,
+                                                                        episodesJson = compJson
                                                                     )
                                                                 )
                                                                 FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
@@ -4464,12 +4486,29 @@ private fun FriendsFullPageScreen(
                                                     TextButton(
                                                         onClick = {
                                                             scope.launch {
-                                                                val myEps = TvTimeProgressCalculator.parseEpisodeList(myShow.episodesJson).ifEmpty { sEps }
-                                                                val allCodes = myEps.map { it.code }
+                                                                val myMeta = TvTimeProgressCalculator.parseCompactedMeta(myShow.episodesJson)
+                                                                val mergedTotal = maxOf(myMeta.totalEpisodes, totalCount, 1)
+                                                                val myAired = TvTimeProgressCalculator.filterAiredEpisodes(myMeta.episodes)
+                                                                val compJson = if (myAired.size >= mergedTotal) {
+                                                                    myShow.episodesJson
+                                                                } else {
+                                                                    val futureOnly = (myMeta.episodes + sEps)
+                                                                        .filter { TvTimeProgressCalculator.isFutureEpisode(it) }
+                                                                        .distinctBy { it.code }
+                                                                    TvTimeProgressCalculator.serializeCompactedMeta(
+                                                                        totalEpisodes = mergedTotal,
+                                                                        completedSeasons = emptyMap(),
+                                                                        episodes = futureOnly
+                                                                    )
+                                                                }
+                                                                val watchedCsv = if (myAired.size >= mergedTotal) {
+                                                                    TvTimeProgressCalculator.serializeWatchedSet(myAired.map { it.code })
+                                                                } else ""
                                                                 dao.updateShow(
                                                                     myShow.copy(
                                                                         userStatus = "completed",
-                                                                        watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(allCodes)
+                                                                        watchedCodesCsv = watchedCsv,
+                                                                        episodesJson = compJson
                                                                     )
                                                                 )
                                                                 FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
