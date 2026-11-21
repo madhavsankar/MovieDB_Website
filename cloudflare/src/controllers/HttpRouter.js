@@ -359,6 +359,29 @@ export class HttpRouter {
       return this.json(data);
     }
 
+    if (request.method === "GET" && path === "/api/discover-categories") {
+      const mediaType = url.searchParams.get("mediaType") || "movie";
+      const language = url.searchParams.get("language") || "";
+      const year = Number(url.searchParams.get("year") || 0) || 0;
+      const yearFrom = Number(url.searchParams.get("yearFrom") || 0) || 0;
+      const yearTo = Number(url.searchParams.get("yearTo") || 0) || 0;
+      const genre = url.searchParams.get("genre") || "";
+      const sort = url.searchParams.get("sort") || "popularity";
+      const page = Number(url.searchParams.get("page") || 1) || 1;
+      const data = await LiveCatalogService.discoverByCategory({
+        mediaType,
+        language,
+        year,
+        yearFrom,
+        yearTo,
+        genre,
+        sort,
+        page,
+        env: this.env,
+      });
+      return this.json(data);
+    }
+
     if (request.method === "GET" && path === "/api/recommendations") {
       const parseSeeds = (raw) =>
         String(raw || "")

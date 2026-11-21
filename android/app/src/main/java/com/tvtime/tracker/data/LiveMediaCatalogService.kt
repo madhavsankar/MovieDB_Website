@@ -167,6 +167,140 @@ object LiveMediaCatalogService {
         SearchPageResult(items = results, hasMore = hasMore)
     }
 
+    suspend fun discoverByCategoryPaged(
+        mediaType: String = "movie",
+        language: String = "",
+        year: Int = 0,
+        yearFrom: Int = 0,
+        yearTo: Int = 0,
+        genre: String = "",
+        sort: String = "popularity",
+        page: Int = 1
+    ): SearchPageResult = withContext(Dispatchers.IO) {
+        val safePage = page.coerceIn(1, 50)
+        val isShow = mediaType.equals("show", ignoreCase = true) || mediaType.equals("tv", ignoreCase = true)
+        val tmdbToken = BuildConfig.TMDB_READ_TOKEN.trim()
+        val tmdbKey = BuildConfig.TMDB_API_KEY.trim()
+        val results = mutableListOf<SearchResultItem>()
+        var hasMore = false
+
+        if (tmdbToken.isNotEmpty() || tmdbKey.isNotEmpty()) {
+            try {
+                val sortParam = when (sort.lowercase()) {
+                    "votes" -> "vote_count.desc"
+                    "rating" -> "vote_average.desc"
+                    "newest" -> if (isShow) "first_air_date.desc" else "primary_release_date.desc"
+                    else -> "popularity.desc"
+                }
+                val params = mutableListOf(
+                    "sort_by=${URLEncoder.encode(sortParam, "UTF-8")}",
+                    "include_adult=false",
+                    "language=en-US",
+                    "page=$safePage"
+                )
+                if (sort.equals("rating", ignoreCase = true)) {
+                    params.add("vote_count.gte=5")
+                }
+                val cleanLang = language.trim().lowercase()
+                val cleanGenre = genre.trim()
+                if (isShow) {
+                    var y1 = yearFrom
+                    var y2 = yearTo
+                    if (y1 > 1900 && y2 > 1900 && y1 > y2) {
+                        val tmp = y1
+                        y1 = y2
+                        y2 = tmp
+                    }
+                    if (y1 > 1900) params.add("first_air_date.gte=$y1-01-01")
+                    if (y2 > 1900) params.add("first_air_date.lte=$y2-12-31")
+                    if (cleanGenre.isNotEmpty() && cleanGenre != "all") {
+                        params.add("with_genres=${URLEncoder.encode(cleanGenre, "UTF-8")}")
+                    }
+                } else {
+                    if (year > 1900) params.add("primary_release_year=$year")
+                    if (cleanLang.isNotEmpty() && cleanLang != "all") {
+                        params.add("with_original_language=${URLEncoder.encode(cleanLang, "UTF-8")}")
+                    }
+                }
+
+                val endpoint = if (isShow) "tv" else "movie"
+                val base = "https://api.themoviedb.org/3/discover/$endpoint?${params.joinToString("&")}"
+                val url = if (tmdbToken.isNotEmpty()) base else "$base&api_key=$tmdbKey"
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    setRequestProperty("Accept", "application/json")
+                    if (tmdbToken.isNotEmpty()) setRequestProperty("Authorization", "Bearer $tmdbToken")
+                    connectTimeout = 6000
+                    readTimeout = 6000
+                }
+                if (conn.responseCode in 200..299) {
+                    val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                    val totalPages = json.optInt("total_pages", 1).coerceAtLeast(1)
+                    val arr = json.optJSONArray("results") ?: JSONArray()
+                    val seenIds = mutableSetOf<Int>()
+                    for (i in 0 until arr.length()) {
+                        val item = arr.optJSONObject(i) ?: continue
+                        val id = item.optInt("id", 0)
+                        if (id <= 0 || !seenIds.add(id)) continue
+                        val posterPath = item.optString("poster_path", "")
+                        val poster = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else ""
+                        val overview = stripHtml(item.optString("overview", ""))
+                        if (isShow) {
+                            val title = item.optString("name", item.optString("original_name", "")).trim()
+                            if (title.isEmpty()) continue
+                            val itemYear = item.optString("first_air_date", "").take(4).toIntOrNull()
+                                ?: yearFrom.takeIf { it > 1900 }
+                                ?: 2024
+                            val rating = (item.optDouble("vote_average", 7.8).takeIf { !it.isNaN() && it > 0 } ?: 7.8)
+                            results.add(
+                                SearchResultItem(
+                                    externalId = "tmdb_tv_$id",
+                                    tvmazeId = 0,
+                                    tmdbId = id,
+                                    mediaType = "show",
+                                    title = title,
+                                    year = itemYear,
+                                    networkOrDirector = "Streaming",
+                                    status = "Running",
+                                    runtimeMins = 45,
+                                    genresCsv = "TV Series",
+                                    rating = Math.round(rating * 10.0) / 10.0,
+                                    posterUrl = poster,
+                                    overview = overview
+                                )
+                            )
+                        } else {
+                            val title = item.optString("title", item.optString("original_title", "")).trim()
+                            if (title.isEmpty()) continue
+                            val itemYear = item.optString("release_date", "").take(4).toIntOrNull()
+                                ?: year.takeIf { it > 1900 }
+                                ?: 2024
+                            val rating = (item.optDouble("vote_average", 7.5).takeIf { !it.isNaN() && it > 0 } ?: 7.5)
+                            results.add(
+                                SearchResultItem(
+                                    externalId = "movie_$id",
+                                    tmdbId = id,
+                                    mediaType = "movie",
+                                    title = title,
+                                    year = itemYear,
+                                    networkOrDirector = "Theaters / Streaming",
+                                    status = "Released",
+                                    runtimeMins = 125,
+                                    genresCsv = "Movie",
+                                    rating = Math.round(rating * 10.0) / 10.0,
+                                    posterUrl = poster,
+                                    overview = overview
+                                )
+                            )
+                        }
+                    }
+                    hasMore = results.isNotEmpty() && safePage < minOf(50, totalPages)
+                }
+            } catch (_: Exception) {}
+        }
+        SearchPageResult(items = results, hasMore = hasMore)
+    }
+
     suspend fun fetchRecommendations(
         shows: List<ShowEntity>,
         movies: List<MovieEntity>,

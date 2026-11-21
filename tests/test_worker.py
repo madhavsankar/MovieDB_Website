@@ -1729,6 +1729,121 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["dedupShowCount"], 1)
         self.assertEqual(out["clientSceneIds"], ["movie_1402181"])
 
+    def test_categories_discover_movies_year_lang_and_shows_year_range_genre_untracked_only(self):
+        """Verifies Categories tab discovers Movies by Year+Language (e.g. 2004 Tamil/Malayalam/Marathi) and Shows by Year Range+Genre, while hiding both Completed and Watchlist library items."""
+        import re as _re
+
+        def load_cf_module(rel_path):
+            with open(os.path.join(ROOT_DIR, "cloudflare", "src", *rel_path), "r", encoding="utf-8") as f:
+                src = f.read()
+            src = _re.sub(r"^import\s+.*?;\s*$", "", src, flags=_re.MULTILINE)
+            return src.replace("export class ", "class ").replace("export function ", "function ").replace("export const ", "const ")
+
+        svc_src = load_cf_module(("services", "LiveCatalogService.js"))
+        view_src = load_cf_module(("ui", "WebAppView.js"))
+
+        harness = (
+            svc_src
+            + "\n"
+            + view_src
+            + """
+            (async () => {
+              const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+              const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+              const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+              (new Function(clientJs))();
+              const app = Object.create(globalThis.TvTimeClientClass.prototype);
+
+              const requestedUrls = [];
+              const mockFetch = async (url) => {
+                const u = String(url);
+                requestedUrls.push(u);
+                if (u.includes("/discover/movie?")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      total_pages: 4,
+                      results: [
+                        { id: 50001, title: "Ghilli", release_date: "2004-04-17", vote_average: 7.8, poster_path: "/ghilli.jpg" },
+                        { id: 50002, title: "Kaadhal", release_date: "2004-12-17", vote_average: 7.7, poster_path: "/kaadhal.jpg" },
+                        { id: 50003, title: "Autograph", release_date: "2004-02-14", vote_average: 7.6, poster_path: "/auto.jpg" }
+                      ]
+                    })
+                  };
+                }
+                if (u.includes("/discover/tv?")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      total_pages: 2,
+                      results: [
+                        { id: 1396, name: "Breaking Bad", first_air_date: "2008-01-20", vote_average: 8.9, poster_path: "/bb.jpg" },
+                        { id: 1405, name: "Dexter", first_air_date: "2006-10-01", vote_average: 8.2, poster_path: "/dex.jpg" }
+                      ]
+                    })
+                  };
+                }
+                return { ok: true, json: async () => ({ results: [] }) };
+              };
+
+              const movCat = await LiveCatalogService.discoverByCategory({
+                mediaType: "movie",
+                language: "ta",
+                year: 2004,
+                sort: "popularity",
+                page: 1,
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
+
+              const showCat = await LiveCatalogService.discoverByCategory({
+                mediaType: "show",
+                yearFrom: 2005,
+                yearTo: 2010,
+                genre: "80",
+                sort: "votes",
+                page: 1,
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
+
+              // Verify Web Categories filters out BOTH watched (completed) AND watchlist (interested) items
+              app.state = {
+                movies: [
+                  { id: "movie_50001", tmdbId: 50001, title: "Ghilli", year: 2004, watched: true },
+                  { id: "movie_50002", tmdbId: 50002, title: "Kaadhal", year: 2004, watched: false }
+                ],
+                shows: [
+                  { id: "tmdb_tv_1396", tmdbId: 1396, title: "Breaking Bad", year: 2008, userStatus: "interested", totalEpisodes: 62, episodes: [], watchedEpisodes: [] }
+                ]
+              };
+              const untrackedMov = movCat.results.filter((it) => !app.isItemAlreadyInLibrary(it));
+              const untrackedShows = showCat.results.filter((it) => !app.isItemAlreadyInLibrary(it));
+
+              const out = JSON.stringify({
+                movUrl: requestedUrls[0],
+                showUrl: requestedUrls[1],
+                movHasMore: movCat.hasMore,
+                untrackedMovTitles: untrackedMov.map((m) => m.title),
+                untrackedShowTitles: untrackedShows.map((s) => s.title),
+                hasDrawerCategoriesBtn: WEB_APP_HTML.includes("switchTab('categories')")
+              });
+              if (typeof console !== "undefined" && console.log) console.log(out);
+              else if (typeof print !== "undefined") print(out);
+            })();
+            """
+        )
+        out = self._run_js(harness)
+        self.assertIn("primary_release_year=2004", out["movUrl"])
+        self.assertIn("with_original_language=ta", out["movUrl"])
+        self.assertIn("first_air_date.gte=2005-01-01", out["showUrl"])
+        self.assertIn("first_air_date.lte=2010-12-31", out["showUrl"])
+        self.assertIn("with_genres=80", out["showUrl"])
+        self.assertTrue(out["movHasMore"])
+        self.assertEqual(out["untrackedMovTitles"], ["Autograph"])
+        self.assertEqual(out["untrackedShowTitles"], ["Dexter"])
+        self.assertTrue(out["hasDrawerCategoriesBtn"])
+
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""
         proc = subprocess.run(

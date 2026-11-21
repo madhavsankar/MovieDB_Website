@@ -952,6 +952,145 @@ export class LiveCatalogService {
   }
 
   /**
+   * Discovers Movies (by Language + Exact Release Year) or TV Series (by Year Range + Genre)
+   * for the Categories browser tab.
+   */
+  static async discoverByCategory({
+    mediaType = "movie",
+    language = "",
+    year = 0,
+    yearFrom = 0,
+    yearTo = 0,
+    genre = "",
+    sort = "popularity",
+    page = 1,
+    fetchImpl = fetch,
+    env = null,
+  } = {}) {
+    const safePage = Math.max(1, Math.min(50, Number(page) || 1));
+    const isShow = String(mediaType || "").toLowerCase() === "show" || String(mediaType || "").toLowerCase() === "tv";
+    const cleanLang = String(language || "").trim().toLowerCase();
+    const cleanGenre = String(genre || "").trim();
+    const sortKey = String(sort || "popularity").toLowerCase();
+
+    const sortByParam =
+      sortKey === "votes"
+        ? "vote_count.desc"
+        : sortKey === "rating"
+          ? "vote_average.desc"
+          : sortKey === "newest"
+            ? isShow
+              ? "first_air_date.desc"
+              : "primary_release_date.desc"
+            : "popularity.desc";
+
+    const queryParts = [
+      `sort_by=${encodeURIComponent(sortByParam)}`,
+      "include_adult=false",
+      "language=en-US",
+      `page=${safePage}`,
+    ];
+    if (sortKey === "rating") {
+      queryParts.push("vote_count.gte=5");
+    }
+
+    if (isShow) {
+      let yStart = Number(yearFrom) || 0;
+      let yEnd = Number(yearTo) || 0;
+      if (yStart > 1900 && yEnd > 1900 && yStart > yEnd) {
+        const tmp = yStart;
+        yStart = yEnd;
+        yEnd = tmp;
+      }
+      if (yStart > 1900) queryParts.push(`first_air_date.gte=${yStart}-01-01`);
+      if (yEnd > 1900) queryParts.push(`first_air_date.lte=${yEnd}-12-31`);
+      if (cleanGenre && cleanGenre !== "all") {
+        queryParts.push(`with_genres=${encodeURIComponent(cleanGenre)}`);
+      }
+      if (cleanLang && cleanLang !== "all") {
+        queryParts.push(`with_original_language=${encodeURIComponent(cleanLang)}`);
+      }
+    } else {
+      const yr = Number(year) || 0;
+      if (yr > 1900) {
+        queryParts.push(`primary_release_year=${yr}`);
+      }
+      if (cleanLang && cleanLang !== "all") {
+        queryParts.push(`with_original_language=${encodeURIComponent(cleanLang)}`);
+      }
+      if (cleanGenre && cleanGenre !== "all") {
+        queryParts.push(`with_genres=${encodeURIComponent(cleanGenre)}`);
+      }
+    }
+
+    const endpoint = isShow ? "/discover/tv?" : "/discover/movie?";
+    const req = LiveCatalogService._buildTmdbRequest(endpoint + queryParts.join("&"), env);
+    const results = [];
+    let totalPages = 1;
+
+    if (req) {
+      try {
+        const resp = await fetchImpl(req.url, { headers: req.headers });
+        if (resp && resp.ok) {
+          const data = await resp.json();
+          totalPages = Math.max(1, Number(data?.total_pages) || 1);
+          const seenIds = new Set();
+          for (const item of data?.results || []) {
+            const id = Number(item?.id) || 0;
+            if (id <= 0 || seenIds.has(id)) continue;
+            seenIds.add(id);
+            const posterUrl = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : "";
+            const overview = stripHtml(item.overview || "");
+            if (isShow) {
+              const title = item.name || item.original_name || "";
+              if (!title) continue;
+              const firstAir = String(item.first_air_date || "");
+              const itemYear = firstAir ? parseInt(firstAir.slice(0, 4), 10) || (Number(yearFrom) || 2024) : Number(yearFrom) || 2024;
+              results.push({
+                id: `tmdb_tv_${id}`,
+                tvmazeId: 0,
+                tmdbId: id,
+                mediaType: "show",
+                title,
+                year: itemYear,
+                network: "Streaming",
+                status: "Running",
+                runtimeMins: 45,
+                genres: ["TV Series"],
+                rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 7.8,
+                posterUrl,
+                overview,
+              });
+            } else {
+              const title = item.title || item.original_title || "";
+              if (!title) continue;
+              const rel = String(item.release_date || "");
+              const itemYear = rel ? parseInt(rel.slice(0, 4), 10) || (Number(year) || 2024) : Number(year) || 2024;
+              results.push({
+                id: `movie_${id}`,
+                tmdbId: id,
+                mediaType: "movie",
+                title,
+                year: itemYear,
+                director: "",
+                runtimeMins: 125,
+                genres: ["Movie"],
+                streamingService: "Theaters / Streaming",
+                rating: item.vote_average ? Math.round(Number(item.vote_average) * 10) / 10 : 7.5,
+                posterUrl,
+                overview,
+              });
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    const hasMore = results.length > 0 && safePage < Math.min(50, totalPages);
+    return { results, page: safePage, hasMore: Boolean(hasMore) };
+  }
+
+  /**
    * Fetches personalized TV Show & Movie recommendations for the Tinder-style Swipe deck
    * using TMDB `/3/tv/{id}/recommendations`, `/3/movie/{id}/recommendations`, and trending fallbacks.
    */

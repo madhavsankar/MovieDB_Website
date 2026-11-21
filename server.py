@@ -761,6 +761,111 @@ def discover_by_us_providers(providers_csv, page=1):
     }
 
 
+def discover_by_category(media_type="movie", language="", year=0, year_from=0, year_to=0, genre="", sort="popularity", page=1):
+    safe_page = max(1, min(50, int(page or 1)))
+    is_show = str(media_type or "").lower() in ("show", "tv")
+    tmdb_token = (CONFIG.get("TMDB_READ_TOKEN") or os.environ.get("TMDB_READ_TOKEN") or "").strip()
+    tmdb_key = (CONFIG.get("TMDB_API_KEY") or os.environ.get("TMDB_API_KEY") or "").strip()
+    if not (tmdb_token or tmdb_key):
+        return {"results": [], "page": safe_page, "hasMore": False}
+
+    sort_key = str(sort or "popularity").lower()
+    sort_by = (
+        "vote_count.desc" if sort_key == "votes"
+        else "vote_average.desc" if sort_key == "rating"
+        else ("first_air_date.desc" if is_show else "primary_release_date.desc") if sort_key == "newest"
+        else "popularity.desc"
+    )
+    params = [f"sort_by={urllib.parse.quote(sort_by)}", "include_adult=false", "language=en-US", f"page={safe_page}"]
+    if sort_key == "rating":
+        params.append("vote_count.gte=5")
+
+    clean_lang = str(language or "").strip().lower()
+    clean_genre = str(genre or "").strip()
+    if is_show:
+        y1 = int(year_from or 0)
+        y2 = int(year_to or 0)
+        if y1 > 1900 and y2 > 1900 and y1 > y2:
+            y1, y2 = y2, y1
+        if y1 > 1900:
+            params.append(f"first_air_date.gte={y1}-01-01")
+        if y2 > 1900:
+            params.append(f"first_air_date.lte={y2}-12-31")
+        if clean_genre and clean_genre != "all":
+            params.append(f"with_genres={urllib.parse.quote(clean_genre)}")
+    else:
+        yr = int(year or 0)
+        if yr > 1900:
+            params.append(f"primary_release_year={yr}")
+        if clean_lang and clean_lang != "all":
+            params.append(f"with_original_language={urllib.parse.quote(clean_lang)}")
+
+    endpoint = "/discover/tv?" if is_show else "/discover/movie?"
+    url = f"https://api.themoviedb.org/3{endpoint}{'&'.join(params)}"
+    if not tmdb_token:
+        url += f"&api_key={urllib.parse.quote(tmdb_key)}"
+    headers = {"User-Agent": "TVTimeTracker/1.0", "Accept": "application/json"}
+    if tmdb_token:
+        headers["Authorization"] = f"Bearer {tmdb_token}"
+    results = []
+    total_pages = 1
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        total_pages = max(1, int(data.get("total_pages") or 1))
+        for item in (data.get("results") or []):
+            iid = int(item.get("id") or 0)
+            if iid <= 0:
+                continue
+            poster_path = item.get("poster_path") or ""
+            poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else ""
+            if is_show:
+                title = item.get("name") or item.get("original_name") or ""
+                if not title:
+                    continue
+                prem = str(item.get("first_air_date") or "")[:4]
+                yr_val = int(prem) if prem.isdigit() else 2024
+                results.append({
+                    "id": f"tmdb_tv_{iid}",
+                    "tvmazeId": 0,
+                    "tmdbId": iid,
+                    "mediaType": "show",
+                    "title": title,
+                    "year": yr_val,
+                    "network": "Streaming",
+                    "status": "Running",
+                    "runtimeMins": 45,
+                    "genres": ["TV Series"],
+                    "rating": round(float(item.get("vote_average") or 7.8), 1),
+                    "posterUrl": poster_url,
+                    "overview": strip_html(item.get("overview") or ""),
+                })
+            else:
+                title = item.get("title") or item.get("original_title") or ""
+                if not title:
+                    continue
+                rel = str(item.get("release_date") or "")[:4]
+                yr_val = int(rel) if rel.isdigit() else 2024
+                results.append({
+                    "id": f"movie_{iid}",
+                    "tmdbId": iid,
+                    "mediaType": "movie",
+                    "title": title,
+                    "year": yr_val,
+                    "director": "",
+                    "runtimeMins": 125,
+                    "genres": ["Movie"],
+                    "streamingService": "Theaters / Streaming",
+                    "rating": round(float(item.get("vote_average") or 7.5), 1),
+                    "posterUrl": poster_url,
+                    "overview": strip_html(item.get("overview") or ""),
+                })
+    except Exception:
+        pass
+    return {"results": results, "page": safe_page, "hasMore": bool(results and safe_page < min(50, total_pages))}
+
+
 def fetch_recommendations(tv_seeds_raw, mv_seeds_raw, page=1):
     safe_page = max(1, min(10, int(page or 1)))
     tmdb_token = (CONFIG.get("TMDB_READ_TOKEN") or os.environ.get("TMDB_READ_TOKEN") or "").strip()
@@ -1106,6 +1211,18 @@ class TvTimeHttpHandler(BaseHTTPRequestHandler):
             providers = (qs.get("providers") or [""])[0]
             page = int((qs.get("page") or ["1"])[0] or "1")
             self._send_json(discover_by_us_providers(providers, page))
+            return
+
+        if path == "/api/discover-categories":
+            media_type = (qs.get("mediaType") or ["movie"])[0]
+            language = (qs.get("language") or [""])[0]
+            year = int((qs.get("year") or ["0"])[0] or "0")
+            year_from = int((qs.get("yearFrom") or ["0"])[0] or "0")
+            year_to = int((qs.get("yearTo") or ["0"])[0] or "0")
+            genre = (qs.get("genre") or [""])[0]
+            sort = (qs.get("sort") or ["popularity"])[0]
+            page = int((qs.get("page") or ["1"])[0] or "1")
+            self._send_json(discover_by_category(media_type, language, year, year_from, year_to, genre, sort, page))
             return
 
         if path == "/api/recommendations":

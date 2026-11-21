@@ -592,9 +592,160 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         <!-- Status Filter Pills inside Friend Library -->
         <div id="friend-lib-filter-bar" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar"></div>
 
-        <!-- Friend Library Cards -->
-        <div id="friend-library-items" class="space-y-2.5"></div>
+      <!-- Friend Library Cards -->
+      <div id="friend-library-items" class="space-y-2.5"></div>
       </div>
+    </section>
+
+    <!-- ========================================================= -->
+    <!-- FULL PAGE: CATEGORIES (Movies: Year+Lang | Shows: YrRange+Genre) -->
+    <!-- ========================================================= -->
+    <section id="tab-categories" class="hidden space-y-4">
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2.5">
+          <button
+            onclick="app.goBack()"
+            class="tv-pill-bar w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white border border-zinc-800"
+            title="Back"
+          >
+            ←
+          </button>
+          <div>
+            <h2 class="text-lg font-extrabold text-white">🗂️ Categories</h2>
+            <p class="text-xs text-zinc-400">Find untracked movies (Year + Language) &amp; series (Year Range + Genre)</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Segmented Toggle: Movies | Series -->
+      <div class="tv-pill-bar p-1.5 rounded-full grid grid-cols-2 gap-1">
+        <button
+          id="cat-seg-movies"
+          onclick="app.setCategorySegment('movies')"
+          class="py-2.5 rounded-full text-sm font-bold tv-yellow-bg transition"
+        >
+          Movies
+        </button>
+        <button
+          id="cat-seg-shows"
+          onclick="app.setCategorySegment('shows')"
+          class="py-2.5 rounded-full text-sm font-semibold text-zinc-400 hover:text-white transition"
+        >
+          Series
+        </button>
+      </div>
+
+      <!-- Movies Filter Bar: Language + Year + Sort -->
+      <div id="cat-filters-movies" class="flex items-center gap-2 flex-wrap">
+        <div class="relative flex items-center">
+          <select
+            id="cat-movie-lang"
+            onchange="app.setCategoryMovieLanguage(this.value)"
+            class="tv-pill-bar pl-3.5 pr-7 py-2 rounded-full text-xs font-extrabold text-yellow-400 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
+          >
+            <option value="ta">Tamil</option>
+            <option value="ml">Malayalam</option>
+            <option value="mr">Marathi</option>
+            <option value="hi">Hindi</option>
+            <option value="te">Telugu</option>
+            <option value="kn">Kannada</option>
+            <option value="bn">Bengali</option>
+            <option value="pa">Punjabi</option>
+            <option value="gu">Gujarati</option>
+            <option value="en">English</option>
+            <option value="ko">Korean</option>
+            <option value="ja">Japanese</option>
+            <option value="es">Spanish</option>
+            <option value="all">All Languages</option>
+          </select>
+          <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
+        </div>
+
+        <div class="relative flex items-center">
+          <select
+            id="cat-movie-year"
+            onchange="app.setCategoryMovieYear(this.value)"
+            class="tv-pill-bar pl-3.5 pr-7 py-2 rounded-full text-xs font-extrabold text-yellow-400 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
+          ></select>
+          <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
+        </div>
+
+        <div class="relative flex items-center ml-auto">
+          <select
+            id="cat-movie-sort"
+            onchange="app.setCategorySort(this.value)"
+            class="tv-pill-bar pl-3 pr-7 py-2 rounded-full text-xs font-bold text-zinc-200 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
+          >
+            <option value="popularity">Popular</option>
+            <option value="votes">Most Votes</option>
+            <option value="rating">Top Rated</option>
+          </select>
+          <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
+        </div>
+      </div>
+
+      <!-- Series Filter Bar: Genre + From Year + To Year + Sort -->
+      <div id="cat-filters-shows" class="hidden flex items-center gap-2 flex-wrap">
+        <div class="relative flex items-center">
+          <select
+            id="cat-show-genre"
+            onchange="app.setCategoryShowGenre(this.value)"
+            class="tv-pill-bar pl-3.5 pr-7 py-2 rounded-full text-xs font-extrabold text-yellow-400 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
+          >
+            <option value="all">All Genres</option>
+            <option value="18">Drama</option>
+            <option value="35">Comedy</option>
+            <option value="80">Crime</option>
+            <option value="9648">Mystery</option>
+            <option value="10759">Action &amp; Adventure</option>
+            <option value="10765">Sci-Fi &amp; Fantasy</option>
+            <option value="16">Animation</option>
+            <option value="99">Documentary</option>
+            <option value="10751">Family</option>
+            <option value="10764">Reality</option>
+          </select>
+          <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
+        </div>
+
+        <div class="relative flex items-center">
+          <select
+            id="cat-show-year-from"
+            onchange="app.setCategoryShowYearFrom(this.value)"
+            class="tv-pill-bar pl-3 pr-7 py-2 rounded-full text-xs font-extrabold text-yellow-400 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
+          ></select>
+          <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
+        </div>
+
+        <span class="text-xs font-bold text-zinc-500">–</span>
+
+        <div class="relative flex items-center">
+          <select
+            id="cat-show-year-to"
+            onchange="app.setCategoryShowYearTo(this.value)"
+            class="tv-pill-bar pl-3 pr-7 py-2 rounded-full text-xs font-extrabold text-yellow-400 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
+          ></select>
+          <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
+        </div>
+
+        <div class="relative flex items-center ml-auto">
+          <select
+            id="cat-show-sort"
+            onchange="app.setCategorySort(this.value)"
+            class="tv-pill-bar pl-3 pr-7 py-2 rounded-full text-xs font-bold text-zinc-200 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
+          >
+            <option value="popularity">Popular</option>
+            <option value="votes">Most Votes</option>
+            <option value="rating">Top Rated</option>
+          </select>
+          <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
+        </div>
+      </div>
+
+      <div id="categories-count-label" class="text-xs font-medium text-zinc-400 px-1">Showing only titles not yet in your Completed or Watchlist</div>
+
+      <!-- Categories Results List -->
+      <div id="categories-results-list" class="space-y-3"></div>
+      <div id="categories-infinite-status" class="hidden py-4 text-center text-xs font-semibold text-zinc-400"></div>
     </section>
 
   </main>
@@ -653,6 +804,15 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           </span>
           <span class="flex-1">Friends</span>
           <span id="drawer-friends-badge" class="hidden px-2 py-0.5 rounded-full tv-yellow-bg text-[10px] font-black">0</span>
+        </button>
+        <button
+          onclick="app.closeHamburgerMenu(); app.switchTab('categories');"
+          class="w-full py-2.5 px-2.5 rounded-2xl flex items-center gap-3.5 text-left text-sm font-semibold text-zinc-200 hover:bg-[#1c1c21] hover:text-yellow-400 transition group"
+        >
+          <span class="w-8 h-8 rounded-xl tv-pill-bar border border-zinc-800/80 flex items-center justify-center tv-yellow-text shrink-0 text-sm">
+            🗂️
+          </span>
+          <span class="flex-1">Categories</span>
         </button>
       </div>
 
@@ -943,6 +1103,20 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.isLoadingFriendLibrary = false;
         this.friendLibrarySegment = "shows"; // "shows" | "movies"
         this.friendLibraryFilter = "all"; // "all" | "in_progress" | "interested" | "completed"
+        this.categorySegment = "movies"; // "movies" | "shows"
+        this.categoryMovieLang = "ta";
+        this.categoryMovieYear = 0; // 0 = All Years
+        this.categoryShowGenre = "all";
+        this.categoryShowYearFrom = 0;
+        this.categoryShowYearTo = 0;
+        this.categorySort = "popularity"; // "popularity" | "votes" | "rating"
+        this.categoryResults = [];
+        this.categoryPage = 1;
+        this.categoryHasMore = false;
+        this.isLoadingCategories = false;
+        this.isLoadingMoreCategories = false;
+        this._categoryReqSeq = 0;
+        this._categoryLoadedOnce = false;
         this.searchItemCache = new Map();
         this._searchReqSeq = 0;
         this._persistPromise = null;
@@ -971,6 +1145,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.initBackNavigation();
         this.initOutsideDropdownDismiss();
         this.initSearchInfiniteScroll();
+        this.initCategoryYearOptions();
 
         document.addEventListener("visibilitychange", () => {
           if (!document.hidden && this.googleIdToken && !this._isImporting) {
@@ -997,13 +1172,19 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
       initSearchInfiniteScroll() {
         const onScroll = () => {
-          if (this.activeTab !== "search") return;
-          if (!this.searchHasMore || this.isLoadingMoreSearch) return;
           const scrollEl = document.scrollingElement || document.documentElement;
           if (!scrollEl) return;
           const remaining = scrollEl.scrollHeight - (scrollEl.scrollTop + window.innerHeight);
-          if (remaining <= 650) {
+          if (remaining > 650) return;
+          if (this.activeTab === "search" && this.searchHasMore && !this.isLoadingMoreSearch) {
             this.loadMoreSearchResults();
+          } else if (
+            this.activeTab === "categories" &&
+            this.categoryHasMore &&
+            !this.isLoadingCategories &&
+            !this.isLoadingMoreCategories
+          ) {
+            this.loadMoreCategoryResults();
           }
         };
         window.addEventListener("scroll", onScroll, { passive: true });
@@ -2372,7 +2553,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           this.pushHistoryEntry("tab_" + resolvedTab);
         }
         this.activeTab = resolvedTab;
-        ["home", "search", "swipe", "stats", "recent", "import", "settings", "friends"].forEach((t) => {
+        ["home", "search", "swipe", "stats", "recent", "import", "settings", "friends", "categories"].forEach((t) => {
           const sec = document.getElementById("tab-" + t);
           if (sec) sec.classList.toggle("hidden", t !== resolvedTab);
         });
@@ -2390,6 +2571,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
         if (resolvedTab === "friends" && this.friendSearchResults.length === 0) {
           this.searchFriendsOnServer("");
+        }
+        if (resolvedTab === "categories" && !this._categoryLoadedOnce) {
+          this.fetchCategoryResults(true);
         }
         this.render();
       }
@@ -2767,6 +2951,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.renderPlatformBars();
         this.renderHome();
         this.renderSearch();
+        this.renderCategories();
         this.renderProfile();
         this.renderSwipeDeck();
         this.renderFriends();
@@ -3664,6 +3849,251 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (inp) inp.value = "";
         this.searchQuery = "";
         this.runDefaultDiscover();
+      }
+
+      // =========================================================
+      // CATEGORIES BROWSER (Movies: Year+Lang | Shows: YearRange+Genre)
+      // =========================================================
+      initCategoryYearOptions() {
+        const maxYr = Math.max(2026, new Date().getFullYear() + 1);
+        const movYrSel = document.getElementById("cat-movie-year");
+        const fromSel = document.getElementById("cat-show-year-from");
+        const toSel = document.getElementById("cat-show-year-to");
+        let movHtml = '<option value="0">All Years</option>';
+        let fromHtml = '<option value="0">From: Any</option>';
+        let toHtml = '<option value="0">To: Any</option>';
+        for (let y = maxYr; y >= 1960; y--) {
+          movHtml += '<option value="' + y + '">' + y + "</option>";
+          fromHtml += '<option value="' + y + '">From: ' + y + "</option>";
+          toHtml += '<option value="' + y + '">To: ' + y + "</option>";
+        }
+        if (movYrSel) movYrSel.innerHTML = movHtml;
+        if (fromSel) fromSel.innerHTML = fromHtml;
+        if (toSel) toSel.innerHTML = toHtml;
+      }
+
+      isItemAlreadyInLibrary(item) {
+        if (!item) return true;
+        const isMovie = item.mediaType === "movie" || String(item.id || "").startsWith("movie_");
+        if (isMovie) {
+          const movies = Array.isArray(this.state.movies) ? this.state.movies : [];
+          return movies.some((m) => this.doesRecMatchMovie(m, item));
+        }
+        const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
+        return shows.some((s) => this.doesRecMatchShow(s, item));
+      }
+
+      setCategorySegment(seg) {
+        this.categorySegment = seg === "shows" ? "shows" : "movies";
+        this.fetchCategoryResults(true);
+      }
+
+      setCategoryMovieLanguage(lang) {
+        this.categoryMovieLang = String(lang || "ta");
+        this.fetchCategoryResults(true);
+      }
+
+      setCategoryMovieYear(yr) {
+        this.categoryMovieYear = Number(yr) || 0;
+        this.fetchCategoryResults(true);
+      }
+
+      setCategoryShowGenre(genre) {
+        this.categoryShowGenre = String(genre || "all");
+        this.fetchCategoryResults(true);
+      }
+
+      setCategoryShowYearFrom(yr) {
+        this.categoryShowYearFrom = Number(yr) || 0;
+        this.fetchCategoryResults(true);
+      }
+
+      setCategoryShowYearTo(yr) {
+        this.categoryShowYearTo = Number(yr) || 0;
+        this.fetchCategoryResults(true);
+      }
+
+      setCategorySort(sortKey) {
+        this.categorySort = String(sortKey || "popularity");
+        const movSort = document.getElementById("cat-movie-sort");
+        const shSort = document.getElementById("cat-show-sort");
+        if (movSort) movSort.value = this.categorySort;
+        if (shSort) shSort.value = this.categorySort;
+        this.fetchCategoryResults(true);
+      }
+
+      buildCategoriesApiUrl(page) {
+        const isShow = this.categorySegment === "shows";
+        if (isShow) {
+          return (
+            "/api/discover-categories?mediaType=show" +
+            "&genre=" +
+            encodeURIComponent(this.categoryShowGenre || "all") +
+            "&yearFrom=" +
+            (Number(this.categoryShowYearFrom) || 0) +
+            "&yearTo=" +
+            (Number(this.categoryShowYearTo) || 0) +
+            "&sort=" +
+            encodeURIComponent(this.categorySort || "popularity") +
+            "&page=" +
+            page
+          );
+        }
+        return (
+          "/api/discover-categories?mediaType=movie" +
+          "&language=" +
+          encodeURIComponent(this.categoryMovieLang || "ta") +
+          "&year=" +
+          (Number(this.categoryMovieYear) || 0) +
+          "&sort=" +
+          encodeURIComponent(this.categorySort || "popularity") +
+          "&page=" +
+          page
+        );
+      }
+
+      updateCategoryInfiniteStatus() {
+        const statusEl = document.getElementById("categories-infinite-status");
+        if (!statusEl) return;
+        if (this.isLoadingCategories || this.isLoadingMoreCategories) {
+          statusEl.textContent = "Loading titles...";
+          statusEl.classList.remove("hidden");
+        } else if (this.categoryHasMore) {
+          statusEl.textContent = "Scroll down for more untracked titles";
+          statusEl.classList.remove("hidden");
+        } else {
+          statusEl.textContent = "";
+          statusEl.classList.add("hidden");
+        }
+      }
+
+      async fetchCategoryResults(reset = true) {
+        const seq = ++this._categoryReqSeq;
+        this._categoryLoadedOnce = true;
+        if (reset) {
+          this.categoryPage = 1;
+          this.categoryResults = [];
+          this.categoryHasMore = false;
+          this.isLoadingCategories = true;
+          this.isLoadingMoreCategories = false;
+        }
+        this.renderCategories();
+        try {
+          const res = await fetch(this.buildCategoriesApiUrl(1));
+          if (res.ok && seq === this._categoryReqSeq) {
+            const data = await res.json();
+            const incoming = Array.isArray(data.results) ? data.results : [];
+            this.cacheSearchItems(incoming);
+            this.categoryResults = incoming;
+            this.categoryPage = 1;
+            this.categoryHasMore = Boolean(data.hasMore);
+          }
+        } catch (_) {
+        } finally {
+          if (seq === this._categoryReqSeq) {
+            this.isLoadingCategories = false;
+            this.renderCategories();
+          }
+        }
+      }
+
+      async loadMoreCategoryResults() {
+        if (this.isLoadingCategories || this.isLoadingMoreCategories || !this.categoryHasMore) return;
+        const nextPage = (Number(this.categoryPage) || 1) + 1;
+        if (nextPage > 50) {
+          this.categoryHasMore = false;
+          this.updateCategoryInfiniteStatus();
+          return;
+        }
+        const seq = this._categoryReqSeq;
+        this.isLoadingMoreCategories = true;
+        this.updateCategoryInfiniteStatus();
+        try {
+          const res = await fetch(this.buildCategoriesApiUrl(nextPage));
+          if (res.ok && seq === this._categoryReqSeq) {
+            const data = await res.json();
+            const incoming = Array.isArray(data.results) ? data.results : [];
+            const existing = Array.isArray(this.categoryResults) ? this.categoryResults : [];
+            const seenIds = new Set(existing.map((e) => String(e.id || "")));
+            const merged = [...existing];
+            for (const it of incoming) {
+              if (!it || !it.id || seenIds.has(String(it.id))) continue;
+              seenIds.add(String(it.id));
+              merged.push(it);
+            }
+            this.cacheSearchItems(incoming);
+            this.categoryResults = merged;
+            this.categoryPage = nextPage;
+            this.categoryHasMore = Boolean(data.hasMore) && incoming.length > 0;
+          }
+        } catch (_) {
+        } finally {
+          if (seq === this._categoryReqSeq) {
+            this.isLoadingMoreCategories = false;
+            this.renderCategories();
+          }
+        }
+      }
+
+      renderCategories() {
+        const segMovies = document.getElementById("cat-seg-movies");
+        const segShows = document.getElementById("cat-seg-shows");
+        const movFilters = document.getElementById("cat-filters-movies");
+        const shFilters = document.getElementById("cat-filters-shows");
+        const countEl = document.getElementById("categories-count-label");
+        const listEl = document.getElementById("categories-results-list");
+        if (!listEl) return;
+
+        const isMovies = this.categorySegment !== "shows";
+        if (segMovies) {
+          segMovies.className = isMovies
+            ? "py-2.5 rounded-full text-sm font-bold tv-yellow-bg transition"
+            : "py-2.5 rounded-full text-sm font-semibold text-zinc-400 hover:text-white transition";
+        }
+        if (segShows) {
+          segShows.className = !isMovies
+            ? "py-2.5 rounded-full text-sm font-bold tv-yellow-bg transition"
+            : "py-2.5 rounded-full text-sm font-semibold text-zinc-400 hover:text-white transition";
+        }
+        if (movFilters) movFilters.classList.toggle("hidden", !isMovies);
+        if (shFilters) shFilters.classList.toggle("hidden", isMovies);
+
+        const visibleItems = (Array.isArray(this.categoryResults) ? this.categoryResults : []).filter(
+          (item) => !this.isItemAlreadyInLibrary(item)
+        );
+
+        if (countEl) {
+          countEl.textContent = this.isLoadingCategories
+            ? "Searching catalog..."
+            : visibleItems.length +
+              (this.categoryHasMore ? "+ untracked " : " untracked ") +
+              (isMovies ? "movies" : "series") +
+              " (excludes Completed & Watchlist)";
+        }
+
+        if (this.isLoadingCategories && visibleItems.length === 0) {
+          listEl.innerHTML =
+            '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">Loading untracked titles...</div>';
+          this.updateCategoryInfiniteStatus();
+          return;
+        }
+
+        listEl.innerHTML =
+          visibleItems.map((item) => this.renderSearchCardHtml(item)).join("") ||
+          '<div class="tv-card rounded-2xl p-8 text-center text-xs text-zinc-400">No untracked titles left on this batch — try another year/language/genre!</div>';
+
+        this.updateCategoryInfiniteStatus();
+
+        // Auto-fetch next page if most of this page was already in the user's Completed/Watchlist!
+        if (
+          this.activeTab === "categories" &&
+          visibleItems.length < 6 &&
+          this.categoryHasMore &&
+          !this.isLoadingCategories &&
+          !this.isLoadingMoreCategories
+        ) {
+          this.loadMoreCategoryResults();
+        }
       }
 
       setSearchSort(sortKey) {
