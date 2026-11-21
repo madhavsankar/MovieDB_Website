@@ -248,14 +248,24 @@ export class FirestoreRepository {
       }
 
       const keptEps = [];
-      if (activeSeasonNum !== null) {
-        for (const ep of bySeason.get(activeSeasonNum) || []) {
-          keptEps.push(ep);
+      if (activeSeasonNum !== null && statusLower !== "stopped" && statusLower !== "interested") {
+        const activeList = bySeason.get(activeSeasonNum) || [];
+        if (activeList.length > 30) {
+          const firstUnwatchedIdx = activeList.findIndex(
+            (ep) => !isFutureEp(ep) && !watchedSet.has(ep.code)
+          );
+          const startIdx = firstUnwatchedIdx > 0 ? firstUnwatchedIdx - 1 : 0;
+          for (const ep of activeList.slice(startIdx, startIdx + 30)) {
+            keptEps.push(ep);
+          }
+        } else {
+          for (const ep of activeList) {
+            keptEps.push(ep);
+          }
         }
       }
       if (
         nextUpcomingEp &&
-        nextUpcomingEp.season !== activeSeasonNum &&
         !keptEps.some((e) => e.code === nextUpcomingEp.code)
       ) {
         keptEps.push(nextUpcomingEp);

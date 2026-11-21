@@ -247,15 +247,24 @@ object FirestoreSyncService {
                 !TvTimeProgressCalculator.isFutureEpisode(it, todayIso) && !rawWatched.contains(it.code.trim().uppercase())
             }
         } ?: remainingSeasons.keys.firstOrNull()
-        val keptEpisodes = if (activeSeasonNum != null) {
-            val activeList = remainingSeasons[activeSeasonNum].orEmpty().toMutableList()
-            val earliestFuture = meta.episodes
-                .filter { it.season != activeSeasonNum && it.airDate.take(10).length == 10 && it.airDate.take(10) >= todayIso }
-                .minWithOrNull(compareBy<EpisodeModel> { it.airDate.take(10) }.thenBy { it.season }.thenBy { it.number })
-            if (earliestFuture != null && activeList.none { it.code.equals(earliestFuture.code, ignoreCase = true) }) {
-                activeList.add(earliestFuture)
+        val keptEpisodes = if (activeSeasonNum != null && effStatus != "stopped" && effStatus != "interested") {
+            val rawActiveList = remainingSeasons[activeSeasonNum].orEmpty()
+            val activeList = if (rawActiveList.size > 30) {
+                val firstUnwatchedIdx = rawActiveList.indexOfFirst {
+                    !TvTimeProgressCalculator.isFutureEpisode(it, todayIso) &&
+                        !rawWatched.contains(it.code.trim().uppercase())
+                }
+                val startIdx = if (firstUnwatchedIdx > 0) firstUnwatchedIdx - 1 else 0
+                rawActiveList.drop(startIdx).take(30).toMutableList()
+            } else {
+                rawActiveList.toMutableList()
+            }
+            if (earliestFutureOverall != null && activeList.none { it.code.equals(earliestFutureOverall.code, ignoreCase = true) }) {
+                activeList.add(earliestFutureOverall)
             }
             activeList
+        } else if (earliestFutureOverall != null) {
+            listOf(earliestFutureOverall)
         } else {
             emptyList()
         }

@@ -413,19 +413,9 @@ object TvTimeProgressCalculator {
         val airedOutsideComp = epsOutsideComp.filter {
             !isFutureEpisode(it, todayIso) || normWatched.contains(it.code.trim().uppercase())
         }
-        val watchedOutsideComp = if (epsOutsideComp.isNotEmpty()) {
-            val validActiveCodes = epsOutsideComp.map { it.code.trim().uppercase() }.toSet()
-            val inActive = normWatched.count { validActiveCodes.contains(it) }
-            val extraSeasons = normWatched.count { code ->
-                val sNum = parseSeasonFromCode(code)
-                sNum > 0 && !completedSeasons.containsKey(sNum) && epsOutsideComp.none { it.season == sNum }
-            }
-            inActive + extraSeasons
-        } else {
-            normWatched.count { code ->
-                val sNum = parseSeasonFromCode(code)
-                sNum <= 0 || !completedSeasons.containsKey(sNum)
-            }
+        val watchedOutsideComp = normWatched.count { code ->
+            val sNum = parseSeasonFromCode(code)
+            sNum <= 0 || !completedSeasons.containsKey(sNum)
         }
 
         val watchedCount = compTotal + watchedOutsideComp
