@@ -676,8 +676,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             onchange="app.setCategorySort(this.value)"
             class="tv-pill-bar pl-3 pr-7 py-2 rounded-full text-xs font-bold text-zinc-200 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
           >
-            <option value="popularity">Popular</option>
             <option value="votes">Most Votes</option>
+            <option value="popularity">Popular</option>
             <option value="rating">Top Rated</option>
           </select>
           <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
@@ -733,8 +733,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             onchange="app.setCategorySort(this.value)"
             class="tv-pill-bar pl-3 pr-7 py-2 rounded-full text-xs font-bold text-zinc-200 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
           >
-            <option value="popularity">Popular</option>
             <option value="votes">Most Votes</option>
+            <option value="popularity">Popular</option>
             <option value="rating">Top Rated</option>
           </select>
           <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
@@ -1109,7 +1109,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.categoryShowGenre = "all";
         this.categoryShowYearFrom = 0;
         this.categoryShowYearTo = 0;
-        this.categorySort = "popularity"; // "popularity" | "votes" | "rating"
+        this.categorySort = "votes"; // "votes" | "popularity" | "rating"
         this.categoryResults = [];
         this.categoryPage = 1;
         this.categoryHasMore = false;
@@ -3914,7 +3914,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       setCategorySort(sortKey) {
-        this.categorySort = String(sortKey || "popularity");
+        this.categorySort = String(sortKey || "votes");
         const movSort = document.getElementById("cat-movie-sort");
         const shSort = document.getElementById("cat-show-sort");
         if (movSort) movSort.value = this.categorySort;
@@ -3934,7 +3934,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             "&yearTo=" +
             (Number(this.categoryShowYearTo) || 0) +
             "&sort=" +
-            encodeURIComponent(this.categorySort || "popularity") +
+            encodeURIComponent(this.categorySort || "votes") +
             "&page=" +
             page
           );
@@ -3946,7 +3946,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           "&year=" +
           (Number(this.categoryMovieYear) || 0) +
           "&sort=" +
-          encodeURIComponent(this.categorySort || "popularity") +
+          encodeURIComponent(this.categorySort || "votes") +
           "&page=" +
           page
         );

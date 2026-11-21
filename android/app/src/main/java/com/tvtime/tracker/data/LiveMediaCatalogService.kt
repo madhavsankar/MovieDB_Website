@@ -174,7 +174,7 @@ object LiveMediaCatalogService {
         yearFrom: Int = 0,
         yearTo: Int = 0,
         genre: String = "",
-        sort: String = "popularity",
+        sort: String = "votes",
         page: Int = 1
     ): SearchPageResult = withContext(Dispatchers.IO) {
         val safePage = page.coerceIn(1, 50)
@@ -187,10 +187,10 @@ object LiveMediaCatalogService {
         if (tmdbToken.isNotEmpty() || tmdbKey.isNotEmpty()) {
             try {
                 val sortParam = when (sort.lowercase()) {
-                    "votes" -> "vote_count.desc"
+                    "popularity" -> "popularity.desc"
                     "rating" -> "vote_average.desc"
                     "newest" -> if (isShow) "first_air_date.desc" else "primary_release_date.desc"
-                    else -> "popularity.desc"
+                    else -> "vote_count.desc"
                 }
                 val params = mutableListOf(
                     "sort_by=${URLEncoder.encode(sortParam, "UTF-8")}",

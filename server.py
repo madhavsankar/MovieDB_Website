@@ -761,7 +761,7 @@ def discover_by_us_providers(providers_csv, page=1):
     }
 
 
-def discover_by_category(media_type="movie", language="", year=0, year_from=0, year_to=0, genre="", sort="popularity", page=1):
+def discover_by_category(media_type="movie", language="", year=0, year_from=0, year_to=0, genre="", sort="votes", page=1):
     safe_page = max(1, min(50, int(page or 1)))
     is_show = str(media_type or "").lower() in ("show", "tv")
     tmdb_token = (CONFIG.get("TMDB_READ_TOKEN") or os.environ.get("TMDB_READ_TOKEN") or "").strip()
@@ -769,12 +769,12 @@ def discover_by_category(media_type="movie", language="", year=0, year_from=0, y
     if not (tmdb_token or tmdb_key):
         return {"results": [], "page": safe_page, "hasMore": False}
 
-    sort_key = str(sort or "popularity").lower()
+    sort_key = str(sort or "votes").lower()
     sort_by = (
-        "vote_count.desc" if sort_key == "votes"
+        "popularity.desc" if sort_key == "popularity"
         else "vote_average.desc" if sort_key == "rating"
         else ("first_air_date.desc" if is_show else "primary_release_date.desc") if sort_key == "newest"
-        else "popularity.desc"
+        else "vote_count.desc"
     )
     params = [f"sort_by={urllib.parse.quote(sort_by)}", "include_adult=false", "language=en-US", f"page={safe_page}"]
     if sort_key == "rating":
@@ -1220,7 +1220,7 @@ class TvTimeHttpHandler(BaseHTTPRequestHandler):
             year_from = int((qs.get("yearFrom") or ["0"])[0] or "0")
             year_to = int((qs.get("yearTo") or ["0"])[0] or "0")
             genre = (qs.get("genre") or [""])[0]
-            sort = (qs.get("sort") or ["popularity"])[0]
+            sort = (qs.get("sort") or ["votes"])[0]
             page = int((qs.get("page") or ["1"])[0] or "1")
             self._send_json(discover_by_category(media_type, language, year, year_from, year_to, genre, sort, page))
             return

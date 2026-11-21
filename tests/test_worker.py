@@ -1790,7 +1790,6 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 mediaType: "movie",
                 language: "ta",
                 year: 2004,
-                sort: "popularity",
                 page: 1,
                 fetchImpl: mockFetch,
                 env: { TMDB_API_KEY: "dummy" }
@@ -1836,6 +1835,7 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         out = self._run_js(harness)
         self.assertIn("primary_release_year=2004", out["movUrl"])
         self.assertIn("with_original_language=ta", out["movUrl"])
+        self.assertIn("sort_by=vote_count.desc", out["movUrl"])
         self.assertIn("first_air_date.gte=2005-01-01", out["showUrl"])
         self.assertIn("first_air_date.lte=2010-12-31", out["showUrl"])
         self.assertIn("with_genres=80", out["showUrl"])

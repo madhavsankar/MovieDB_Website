@@ -962,7 +962,7 @@ export class LiveCatalogService {
     yearFrom = 0,
     yearTo = 0,
     genre = "",
-    sort = "popularity",
+    sort = "votes",
     page = 1,
     fetchImpl = fetch,
     env = null,
@@ -971,18 +971,18 @@ export class LiveCatalogService {
     const isShow = String(mediaType || "").toLowerCase() === "show" || String(mediaType || "").toLowerCase() === "tv";
     const cleanLang = String(language || "").trim().toLowerCase();
     const cleanGenre = String(genre || "").trim();
-    const sortKey = String(sort || "popularity").toLowerCase();
+    const sortKey = String(sort || "votes").toLowerCase();
 
     const sortByParam =
-      sortKey === "votes"
-        ? "vote_count.desc"
+      sortKey === "popularity"
+        ? "popularity.desc"
         : sortKey === "rating"
           ? "vote_average.desc"
           : sortKey === "newest"
             ? isShow
               ? "first_air_date.desc"
               : "primary_release_date.desc"
-            : "popularity.desc";
+            : "vote_count.desc";
 
     const queryParts = [
       `sort_by=${encodeURIComponent(sortByParam)}`,

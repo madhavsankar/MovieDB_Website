@@ -3695,7 +3695,7 @@ private fun CategoriesFullPageScreen(
     var showGenre by rememberSaveable { mutableStateOf("all") }
     var showYearFrom by rememberSaveable { mutableStateOf("0") }
     var showYearTo by rememberSaveable { mutableStateOf("0") }
-    var sortKey by rememberSaveable { mutableStateOf("popularity") }
+    var sortKey by rememberSaveable { mutableStateOf("votes") }
 
     var rawResults by remember { mutableStateOf<List<SearchResultItem>>(emptyList()) }
     var currentPage by remember { mutableStateOf(1) }
@@ -3750,8 +3750,8 @@ private fun CategoriesFullPageScreen(
     }
     val sortOptions = remember {
         listOf(
-            "popularity" to "Popular",
             "votes" to "Most Votes",
+            "popularity" to "Popular",
             "rating" to "Top Rated"
         )
     }

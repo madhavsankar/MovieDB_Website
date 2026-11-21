@@ -366,7 +366,7 @@ export class HttpRouter {
       const yearFrom = Number(url.searchParams.get("yearFrom") || 0) || 0;
       const yearTo = Number(url.searchParams.get("yearTo") || 0) || 0;
       const genre = url.searchParams.get("genre") || "";
-      const sort = url.searchParams.get("sort") || "popularity";
+      const sort = url.searchParams.get("sort") || "votes";
       const page = Number(url.searchParams.get("page") || 1) || 1;
       const data = await LiveCatalogService.discoverByCategory({
         mediaType,
