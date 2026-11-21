@@ -268,20 +268,41 @@ object TvTimeProgressCalculator {
         }.toString()
     }
 
+    private val ISO_DATE_REGEX = Regex("^\\d{4}-\\d{2}-\\d{2}$")
+
+    fun isFutureEpisode(ep: EpisodeModel, todayIso: String = LocalDate.now().toString()): Boolean {
+        val d = ep.airDate.trim().take(10)
+        return d.length == 10 && ISO_DATE_REGEX.matches(d) && d > todayIso
+    }
+
+    fun filterAiredEpisodes(
+        episodes: List<EpisodeModel>,
+        todayIso: String = LocalDate.now().toString()
+    ): List<EpisodeModel> = episodes.filter { !isFutureEpisode(it, todayIso) }
+
     fun expandWatchedSetWithCompletedSeasons(
         episodes: List<EpisodeModel>,
         watchedCodes: Set<String>,
         completedSeasons: Map<Int, Int>,
-        rawUserStatus: String = ""
+        rawUserStatus: String = "",
+        previousWatchedAiredCount: Int = 0,
+        isOngoingShow: Boolean = false,
+        todayIso: String = LocalDate.now().toString()
     ): Set<String> {
         val base = watchedCodes.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toMutableSet()
         if (rawUserStatus.trim().equals("completed", ignoreCase = true) && episodes.isNotEmpty()) {
-            episodes.forEach { base.add(it.code.trim().uppercase()) }
+            val aired = filterAiredEpisodes(episodes, todayIso)
+            val targetEps = if (aired.isNotEmpty()) aired else episodes.take(1)
+            if (isOngoingShow && previousWatchedAiredCount > 1 && targetEps.size > previousWatchedAiredCount) {
+                targetEps.take(previousWatchedAiredCount).forEach { base.add(it.code.trim().uppercase()) }
+            } else {
+                targetEps.forEach { base.add(it.code.trim().uppercase()) }
+            }
             return base
         }
         if (completedSeasons.isNotEmpty()) {
             for (ep in episodes) {
-                if (completedSeasons.containsKey(ep.season)) {
+                if (completedSeasons.containsKey(ep.season) && !isFutureEpisode(ep, todayIso)) {
                     base.add(ep.code.trim().uppercase())
                 }
             }
@@ -359,28 +380,39 @@ object TvTimeProgressCalculator {
         watchedCodes: Set<String>,
         rawUserStatus: String = "",
         totalEpisodesOverride: Int = 0,
-        completedSeasons: Map<Int, Int> = emptyMap()
+        completedSeasons: Map<Int, Int> = emptyMap(),
+        todayIso: String = LocalDate.now().toString()
     ): ShowProgressSummary {
         val normWatched = watchedCodes.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
         val compTotal = completedSeasons.filter { it.key > 0 && it.value > 0 }.values.sum()
-        val isRawCompletedEmpty = episodes.isEmpty() && compTotal == 0 &&
-            rawUserStatus.trim().equals("completed", ignoreCase = true)
+        val isMarkedCompleted = rawUserStatus.trim().equals("completed", ignoreCase = true)
 
-        if (isRawCompletedEmpty) {
-            val total = maxOf(totalEpisodesOverride, normWatched.size, 1)
+        // Compacted completed show (watchedCodes == empty, completedSeasons == empty):
+        // `episodes` either is empty OR holds future upcoming episodes that were unwatched at compaction time.
+        if (isMarkedCompleted && normWatched.isEmpty() && compTotal == 0 &&
+            (episodes.isEmpty() || totalEpisodesOverride > 0)
+        ) {
+            val newlyAiredUnwatched = filterAiredEpisodes(episodes, todayIso)
+            val baseWatched = maxOf(totalEpisodesOverride, 1)
+            val total = baseWatched + newlyAiredUnwatched.size
+            val left = newlyAiredUnwatched.size
+            val fraction = if (total > 0) (baseWatched.toFloat() / total.toFloat()).coerceIn(0f, 1f) else 1f
             return ShowProgressSummary(
                 totalEpisodes = total,
-                watchedCount = total,
-                leftCount = 0,
-                nextEpisode = null,
-                progressFraction = 1f,
-                isCompleted = true,
+                watchedCount = baseWatched,
+                leftCount = left,
+                nextEpisode = newlyAiredUnwatched.firstOrNull(),
+                progressFraction = fraction,
+                isCompleted = left == 0,
                 hasStarted = true,
-                lastWatchedEpisode = normWatched.maxOrNull()?.let { parseEpisodeFromCode(it) }
+                lastWatchedEpisode = null
             )
         }
 
         val epsOutsideComp = episodes.filter { !completedSeasons.containsKey(it.season) }
+        val airedOutsideComp = epsOutsideComp.filter {
+            !isFutureEpisode(it, todayIso) || normWatched.contains(it.code.trim().uppercase())
+        }
         val watchedOutsideComp = if (epsOutsideComp.isNotEmpty()) {
             val validActiveCodes = epsOutsideComp.map { it.code.trim().uppercase() }.toSet()
             val inActive = normWatched.count { validActiveCodes.contains(it) }
@@ -397,17 +429,26 @@ object TvTimeProgressCalculator {
         }
 
         val watchedCount = compTotal + watchedOutsideComp
+        val effectiveAiredWindowCount = if (airedOutsideComp.isNotEmpty() || compTotal > 0) {
+            airedOutsideComp.size
+        } else {
+            epsOutsideComp.size
+        }
         val total = when {
-            totalEpisodesOverride > 0 -> maxOf(totalEpisodesOverride, compTotal + epsOutsideComp.size, watchedCount)
-            episodes.isNotEmpty() || compTotal > 0 -> maxOf(compTotal + epsOutsideComp.size, episodes.size, watchedCount)
+            totalEpisodesOverride > 0 && episodes.isEmpty() -> maxOf(totalEpisodesOverride, compTotal, watchedCount)
+            episodes.isNotEmpty() || compTotal > 0 -> maxOf(
+                compTotal + effectiveAiredWindowCount,
+                watchedCount,
+                if (compTotal == 0 && effectiveAiredWindowCount == 0) 1 else 0
+            )
             else -> maxOf(10, watchedCount)
         }
         val leftCount = (total - watchedCount).coerceAtLeast(0)
-        val nextEp = epsOutsideComp.firstOrNull { !normWatched.contains(it.code.trim().uppercase()) }
+        val nextEp = airedOutsideComp.firstOrNull { !normWatched.contains(it.code.trim().uppercase()) }
             ?: if (leftCount > 0) {
                 val maxCompS = completedSeasons.keys.maxOrNull() ?: 0
-                val nextSeason = if (maxCompS > 0 && epsOutsideComp.isEmpty()) maxCompS + 1 else 1
-                val nextNum = if (maxCompS > 0 && epsOutsideComp.isEmpty()) 1 else (watchedOutsideComp + 1)
+                val nextSeason = if (maxCompS > 0 && airedOutsideComp.isEmpty()) maxCompS + 1 else 1
+                val nextNum = if (maxCompS > 0 && airedOutsideComp.isEmpty()) 1 else (watchedOutsideComp + 1)
                 EpisodeModel(
                     code = EpisodeModel.formatCode(nextSeason, nextNum),
                     season = nextSeason,

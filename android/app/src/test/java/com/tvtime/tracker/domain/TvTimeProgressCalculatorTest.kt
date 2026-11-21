@@ -353,4 +353,60 @@ class TvTimeProgressCalculatorTest {
         assertEquals("Next week", TvTimeProgressCalculator.formatRelativeCountdownBucket(9L))
         assertEquals("In 3 weeks", TvTimeProgressCalculator.formatRelativeCountdownBucket(21L))
     }
+
+    @Test
+    fun `ongoing series goes to completed when caught up and automatically returns to in_progress when next episode airs`() {
+        val episodes = listOf(
+            EpisodeModel("S01E01", 1, 1, "Ep 1", "2025-01-01"),
+            EpisodeModel("S01E02", 1, 2, "Ep 2", "2025-01-08"),
+            EpisodeModel("S01E03", 1, 3, "Ep 3", "2025-01-15"),
+            EpisodeModel("S01E04", 1, 4, "Future Ep", "2099-05-01")
+        )
+        val watchedAired = setOf("S01E01", "S01E02", "S01E03")
+
+        // Before S01E04 airs: caught up on all 3 aired episodes -> "completed"
+        val progBefore = TvTimeProgressCalculator.computeShowProgress(
+            episodes = episodes,
+            watchedCodes = watchedAired,
+            rawUserStatus = "in_progress",
+            todayIso = "2026-11-21"
+        )
+        assertTrue(progBefore.isCompleted)
+        assertEquals(3, progBefore.watchedCount)
+        assertEquals(3, progBefore.totalEpisodes)
+        assertEquals("completed", TvTimeProgressCalculator.deriveEffectiveShowStatus(progBefore, "in_progress"))
+
+        // Compacted ongoing completed show keeps future S01E04 for Upcoming & flips to in_progress on air day
+        val compactedJson = TvTimeProgressCalculator.serializeCompactedMeta(
+            totalEpisodes = 3,
+            completedSeasons = emptyMap(),
+            episodes = listOf(EpisodeModel("S01E04", 1, 4, "Future Ep", "2099-05-01"))
+        )
+        val meta = TvTimeProgressCalculator.parseCompactedMeta(compactedJson)
+        val progCompactedBefore = TvTimeProgressCalculator.computeShowProgress(
+            episodes = meta.episodes,
+            watchedCodes = emptySet(),
+            rawUserStatus = "completed",
+            totalEpisodesOverride = meta.totalEpisodes,
+            completedSeasons = meta.completedSeasons,
+            todayIso = "2026-11-21"
+        )
+        assertEquals("completed", TvTimeProgressCalculator.deriveEffectiveShowStatus(progCompactedBefore, "completed"))
+
+        // On 2099-05-01 when S01E04 airs: automatically becomes "in_progress" with Next = S01E04!
+        val progOnAirDay = TvTimeProgressCalculator.computeShowProgress(
+            episodes = meta.episodes,
+            watchedCodes = emptySet(),
+            rawUserStatus = "completed",
+            totalEpisodesOverride = meta.totalEpisodes,
+            completedSeasons = meta.completedSeasons,
+            todayIso = "2099-05-01"
+        )
+        assertFalse(progOnAirDay.isCompleted)
+        assertEquals(3, progOnAirDay.watchedCount)
+        assertEquals(4, progOnAirDay.totalEpisodes)
+        assertEquals(1, progOnAirDay.leftCount)
+        assertEquals("S01E04", progOnAirDay.nextEpisode?.code)
+        assertEquals("in_progress", TvTimeProgressCalculator.deriveEffectiveShowStatus(progOnAirDay, "completed"))
+    }
 }

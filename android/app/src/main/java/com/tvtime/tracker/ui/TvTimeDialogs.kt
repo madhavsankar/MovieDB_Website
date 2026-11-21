@@ -86,7 +86,6 @@ fun ShowDetailBottomSheet(
         }
         mutableStateOf(initStat)
     }
-    var isFavorite by remember(show.id, show.isFavorite) { mutableStateOf(show.isFavorite) }
     var castCsv by remember(show.id, show.castCsv) { mutableStateOf(show.castCsv) }
     var openSeasons by remember(show.id) {
         val initWatched = TvTimeProgressCalculator.parseWatchedSet(show.watchedCodesCsv)
@@ -125,16 +124,16 @@ fun ShowDetailBottomSheet(
         nextEpisodes: List<EpisodeModel> = episodes,
         nextWatchedSet: Set<String> = watchedSet,
         nextStatus: String = userStatus,
-        nextFavorite: Boolean = isFavorite,
         nextCastCsv: String = castCsv,
         nextCompletedSeasons: Map<Int, Int> = completedSeasons,
         nextTotalOverride: Int = totalEpisodesOverride,
         nextOverview: String = showOverview
     ) {
         val cleanStatus = if (nextStatus == "preview") "interested" else nextStatus
+        val airedCount = TvTimeProgressCalculator.filterAiredEpisodes(nextEpisodes).size
         val serializedEpisodes = if (nextCompletedSeasons.isNotEmpty() || (nextTotalOverride > 0 && nextEpisodes.isEmpty())) {
             TvTimeProgressCalculator.serializeCompactedMeta(
-                totalEpisodes = maxOf(nextTotalOverride, nextEpisodes.size),
+                totalEpisodes = maxOf(nextTotalOverride, airedCount),
                 completedSeasons = nextCompletedSeasons,
                 episodes = nextEpisodes
             )
@@ -147,7 +146,7 @@ fun ShowDetailBottomSheet(
             episodesJson = serializedEpisodes,
             watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(nextWatchedSet),
             userStatus = cleanStatus,
-            isFavorite = nextFavorite,
+            isFavorite = false,
             rewatchCount = 0,
             reaction = "",
             castCsv = nextCastCsv
@@ -186,15 +185,20 @@ fun ShowDetailBottomSheet(
         if (fetchedEps.isNotEmpty() && (fetchedEps.size > episodes.size || completedSeasons.isNotEmpty() || (!hadSeasonOne && fetchedHasSeasonOne))) {
             val sortedFetched = fetchedEps.sortedWith(compareBy({ it.season }, { it.number }))
             val mergedCast = if (fetchedCast.isNotEmpty()) fetchedCast.joinToString(", ") else castCsv
+            val isOngoingShow = !show.status.equals("Ended", ignoreCase = true) &&
+                !show.status.equals("Canceled", ignoreCase = true)
             val nextWatched = TvTimeProgressCalculator.expandWatchedSetWithCompletedSeasons(
                 episodes = sortedFetched,
                 watchedCodes = watchedSet,
                 completedSeasons = completedSeasons,
-                rawUserStatus = userStatus
+                rawUserStatus = userStatus,
+                previousWatchedAiredCount = totalEpisodesOverride,
+                isOngoingShow = isOngoingShow
             )
+            val airedFetchedCount = TvTimeProgressCalculator.filterAiredEpisodes(sortedFetched).size.coerceAtLeast(1)
             episodes = sortedFetched
             completedSeasons = emptyMap()
-            totalEpisodesOverride = sortedFetched.size
+            totalEpisodesOverride = airedFetchedCount
             castCsv = mergedCast
             val nextProg = TvTimeProgressCalculator.computeShowProgress(sortedFetched, nextWatched, userStatus)
             val nextEff = if (persistedShowId == 0L && userStatus == "preview") {
@@ -216,7 +220,7 @@ fun ShowDetailBottomSheet(
                     nextStatus = nextEff,
                     nextCastCsv = mergedCast,
                     nextCompletedSeasons = emptyMap(),
-                    nextTotalOverride = sortedFetched.size,
+                    nextTotalOverride = airedFetchedCount,
                     nextOverview = showOverview
                 )
             }
@@ -373,11 +377,20 @@ fun ShowDetailBottomSheet(
                                     onDismiss()
                                 }
                             } else {
-                                val nextWatched = episodes.map { it.code.uppercase() }.toSet()
+                                val airedEps = TvTimeProgressCalculator.filterAiredEpisodes(episodes)
+                                val targetEps = if (airedEps.isNotEmpty()) airedEps else episodes.take(1)
+                                val nextWatched = targetEps.map { it.code.uppercase() }.toSet()
                                 watchedSet = nextWatched
+                                completedSeasons = emptyMap()
+                                totalEpisodesOverride = targetEps.size.coerceAtLeast(totalEpisodesOverride).coerceAtLeast(1)
                                 userStatus = "completed"
                                 openSeasons = emptySet()
-                                persistUpdatedShow(nextWatchedSet = nextWatched, nextStatus = "completed")
+                                persistUpdatedShow(
+                                    nextWatchedSet = nextWatched,
+                                    nextStatus = "completed",
+                                    nextCompletedSeasons = emptyMap(),
+                                    nextTotalOverride = totalEpisodesOverride
+                                )
                             }
                         },
                         shape = RoundedCornerShape(50),
@@ -576,8 +589,8 @@ fun ShowDetailBottomSheet(
 
                 LaunchedEffect(show.id, episodes.size) {
                     if (effectiveStatus == "in_progress") {
-                        val prog = TvTimeProgressCalculator.computeShowProgress(episodes, watchedSet)
-                        val targetSeason = prog.nextEpisode?.season
+                        val scrollProg = TvTimeProgressCalculator.computeShowProgress(episodes, watchedSet)
+                        val targetSeason = scrollProg.nextEpisode?.season
                         if (targetSeason != null) {
                             val idx = groupedBySeason.keys.indexOf(targetSeason)
                             if (idx >= 0) {

@@ -2092,6 +2092,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             }
             this.saveLocalCache();
             this.render();
+            setTimeout(() => {
+              this.refreshUpcomingEpisodesIfNeeded().catch(() => {});
+            }, 1500);
             if (
               mutatedDuringFetch ||
               (mergeLocal &&
@@ -2316,7 +2319,20 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.renderHome();
       }
 
-      computeShowProgress(show) {
+      isFutureEpisode(ep, todayIso) {
+        const ref = todayIso || new Date().toISOString().slice(0, 10);
+        const d = String((ep && ep.airDate) || "").trim().slice(0, 10);
+        return d.length === 10 && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d) && d > ref;
+      }
+
+      getAiredEpisodes(episodes, todayIso) {
+        const ref = todayIso || new Date().toISOString().slice(0, 10);
+        const list = Array.isArray(episodes) ? episodes : [];
+        return list.filter((ep) => !this.isFutureEpisode(ep, ref));
+      }
+
+      computeShowProgress(show, todayOverride) {
+        const todayIso = todayOverride || new Date().toISOString().slice(0, 10);
         const episodes = Array.isArray(show.episodes) ? show.episodes : [];
         const rawStatus = String(show.userStatus || "").toLowerCase();
         const isMarkedCompleted = rawStatus === "completed";
@@ -2344,14 +2360,41 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           }
         }
 
+        const storedTotal = Number(show.totalEpisodes) || 0;
+
+        // Compacted completed show: watchedSet & completedSeasons are empty; episodes is either empty
+        // OR holds scheduled future episodes that were unwatched when the user caught up.
+        if (isMarkedCompleted && watchedSet.size === 0 && completedSeasonNums.size === 0) {
+          const newlyAired = episodes.filter((ep) => !this.isFutureEpisode(ep, todayIso));
+          const watchedCount = Math.max(storedTotal, 1);
+          const total = watchedCount + newlyAired.length;
+          const leftCount = newlyAired.length;
+          const pct = total > 0 ? Math.min(100, Math.round((watchedCount / total) * 100)) : 100;
+          return {
+            total,
+            watchedCount,
+            leftCount,
+            nextEp: newlyAired[0] || null,
+            lastWatchedEp: null,
+            pct,
+            isCompleted: leftCount === 0,
+            hasStarted: true,
+          };
+        }
+
         const presentCodeSet = new Set();
         let inWindowWatchedCount = 0;
+        let airedWindowCount = 0;
         for (const ep of episodes) {
           const codeUpper = String(ep.code || "").trim().toUpperCase();
           const sNum = Number(ep.season) || this.parseSeasonFromCode(codeUpper) || 1;
           if (codeUpper) presentCodeSet.add(codeUpper);
           if (completedSeasonNums.has(sNum)) continue;
-          if (watchedSet.has(codeUpper)) inWindowWatchedCount++;
+          const isWatched = watchedSet.has(codeUpper);
+          if (isWatched) inWindowWatchedCount++;
+          if (!this.isFutureEpisode(ep, todayIso) || isWatched) {
+            airedWindowCount++;
+          }
         }
 
         let extraWatchedCount = 0;
@@ -2363,16 +2406,19 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
 
         const rawWatchedCount = compactedWatchedCount + inWindowWatchedCount + extraWatchedCount;
-        const storedTotal = Number(show.totalEpisodes) || 0;
-        const total = isMarkedCompleted
-          ? Math.max(storedTotal, episodes.length + compactedWatchedCount, rawWatchedCount, 1)
-          : Math.max(
-              storedTotal,
-              episodes.length + compactedWatchedCount,
-              rawWatchedCount,
-              episodes.length > 0 ? episodes.length : 10
-            );
-        const watchedCount = isMarkedCompleted ? total : Math.min(total, rawWatchedCount);
+        const effectiveWindowTotal =
+          airedWindowCount > 0 || compactedWatchedCount > 0 ? airedWindowCount : episodes.length;
+        const total =
+          episodes.length === 0 && storedTotal > 0
+            ? Math.max(storedTotal, compactedWatchedCount, rawWatchedCount)
+            : episodes.length > 0 || compactedWatchedCount > 0
+            ? Math.max(
+                compactedWatchedCount + effectiveWindowTotal,
+                rawWatchedCount,
+                compactedWatchedCount === 0 && effectiveWindowTotal === 0 ? 1 : 0
+              )
+            : Math.max(storedTotal, rawWatchedCount, 10);
+        const watchedCount = Math.min(total, rawWatchedCount);
         const leftCount = Math.max(0, total - watchedCount);
 
         let nextEp = null;
@@ -2380,10 +2426,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         for (const ep of episodes) {
           const codeUpper = String(ep.code || "").trim().toUpperCase();
           const sNum = Number(ep.season) || this.parseSeasonFromCode(codeUpper) || 1;
-          const isEpWatched = isMarkedCompleted || completedSeasonNums.has(sNum) || watchedSet.has(codeUpper);
+          const isEpWatched = completedSeasonNums.has(sNum) || watchedSet.has(codeUpper);
           if (isEpWatched) {
             lastWatchedEp = ep;
-          } else if (!nextEp) {
+          } else if (!nextEp && !this.isFutureEpisode(ep, todayIso)) {
             nextEp = ep;
           }
         }
@@ -2438,16 +2484,15 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           nextEp,
           lastWatchedEp,
           pct,
-          isCompleted: isMarkedCompleted || (total > 0 && leftCount === 0),
-          hasStarted: watchedCount > 0,
+          isCompleted: total > 0 && leftCount === 0 && (watchedCount > 0 || isMarkedCompleted),
+          hasStarted: watchedCount > 0 || isMarkedCompleted,
         };
       }
 
-      getEffectiveShowStatus(show) {
+      getEffectiveShowStatus(show, todayOverride) {
         const raw = String(show.userStatus || "").toLowerCase();
-        if (raw === "completed") return "completed";
-        const prog = this.computeShowProgress(show);
-        if (prog.isCompleted) return "completed";
+        const prog = this.computeShowProgress(show, todayOverride);
+        if (prog.isCompleted && raw !== "stopped") return "completed";
         if (prog.hasStarted) return raw === "stopped" ? "stopped" : "in_progress";
         return raw === "stopped" ? "stopped" : "interested";
       }
@@ -2939,23 +2984,27 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   const sortedFull = fullEps
                     .map((e) => this.compactEpisode(e))
                     .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
-                  s.totalEpisodes = sortedFull.length;
+                  const airedFull = this.getAiredEpisodes(sortedFull);
+                  const isOngoing = String(full.status || s.status || "").toLowerCase() !== "ended";
                   if (String(s.userStatus || "").toLowerCase() === "completed") {
-                    if (fullEps.length > knownTotal && knownTotal > 0 && String(full.status || "").toLowerCase() !== "ended") {
-                      // New episodes aired on a previously completed returning series
-                      const prevCount = knownTotal;
+                    if (isOngoing && knownTotal > 1 && airedFull.length > knownTotal) {
+                      // New aired episodes arrived on a previously caught-up returning series
                       s.episodes = sortedFull;
-                      s.watchedEpisodes = sortedFull.slice(0, prevCount).map((e) => e.code).sort();
+                      s.totalEpisodes = airedFull.length;
+                      s.watchedEpisodes = airedFull.slice(0, knownTotal).map((e) => e.code).sort();
                       s.completedSeasons = {};
                       s.userStatus = "in_progress";
                     } else {
+                      const targetWatched = airedFull.length > 0 ? airedFull : sortedFull.slice(0, 1);
                       s.episodes = sortedFull;
-                      s.watchedEpisodes = sortedFull.map((e) => e.code).sort();
+                      s.totalEpisodes = targetWatched.length;
+                      s.watchedEpisodes = targetWatched.map((e) => e.code).sort();
                       s.completedSeasons = {};
                     }
                   } else {
                     const expandedWatched = this.expandCompactedWatchedSet(s, sortedFull);
                     s.episodes = sortedFull;
+                    s.totalEpisodes = Math.max(airedFull.length, 1);
                     s.watchedEpisodes = Array.from(expandedWatched).sort();
                     s.completedSeasons = {};
                   }
@@ -3162,8 +3211,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           }
           const knownTotal = Math.max(Number(show.totalEpisodes) || 0, eps.length);
           if (eps.length > 0) {
-            show.watchedEpisodes = eps.map((e) => e.code).sort();
-            show.totalEpisodes = Math.max(knownTotal, eps.length);
+            const airedEps = this.getAiredEpisodes(eps);
+            const targetEps = airedEps.length > 0 ? airedEps : eps.slice(0, 1);
+            show.watchedEpisodes = targetEps.map((e) => e.code).sort();
+            show.totalEpisodes = Math.max(targetEps.length, 1);
           } else {
             show.totalEpisodes = Math.max(knownTotal, 1);
             show.watchedEpisodes = [];
@@ -3257,12 +3308,15 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   liveShow.episodes = full.episodes
                     .map((e) => this.compactEpisode(e))
                     .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
-                  liveShow.totalEpisodes = liveShow.episodes.length;
+                  const airedLive = this.getAiredEpisodes(liveShow.episodes);
+                  const targetLive = airedLive.length > 0 ? airedLive : liveShow.episodes.slice(0, 1);
+                  liveShow.totalEpisodes = targetLive.length;
                   liveShow.completedSeasons = {};
                   if (full.cast && full.cast.length > 0) liveShow.cast = full.cast;
                   if (full.network && !this.isGenericStreamingLabel(full.network)) liveShow.network = full.network;
+                  if (full.status) liveShow.status = full.status;
                   if (String(liveShow.userStatus || "").toLowerCase() === "completed") {
-                    liveShow.watchedEpisodes = liveShow.episodes.map((e) => e.code).sort();
+                    liveShow.watchedEpisodes = targetLive.map((e) => e.code).sort();
                   }
                   await this.persistState();
                 }
@@ -3773,11 +3827,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   liveShow.episodes = fullShow.episodes
                     .map((e) => this.compactEpisode(e))
                     .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
-                  liveShow.totalEpisodes = liveShow.episodes.length;
+                  const airedLive = this.getAiredEpisodes(liveShow.episodes);
+                  liveShow.totalEpisodes = Math.max(airedLive.length, 1);
                   liveShow.completedSeasons = {};
                 }
                 if (fullShow.tvmazeId && !liveShow.tvmazeId) liveShow.tvmazeId = fullShow.tvmazeId;
                 if (fullShow.tmdbId && !liveShow.tmdbId) liveShow.tmdbId = fullShow.tmdbId;
+                if (fullShow.status) liveShow.status = fullShow.status;
                 if (fullShow.network && !this.isGenericStreamingLabel(fullShow.network)) {
                   liveShow.network = fullShow.network;
                 }
@@ -3788,8 +3844,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   liveShow.overview = fullShow.overview;
                 }
                 if (String(liveShow.userStatus || "").toLowerCase() === "completed") {
+                  const airedLive = this.getAiredEpisodes(liveShow.episodes);
+                  const targetLive = airedLive.length > 0 ? airedLive : liveShow.episodes.slice(0, 1);
                   liveShow.userStatus = "completed";
-                  liveShow.watchedEpisodes = liveShow.episodes.map((e) => e.code).sort();
+                  liveShow.totalEpisodes = targetLive.length;
+                  liveShow.watchedEpisodes = targetLive.map((e) => e.code).sort();
                 }
                 await this.persistState();
               }
@@ -3960,13 +4019,24 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   const sortedFull = fullEps
                     .map((e) => this.compactEpisode(e))
                     .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
+                  const airedFull = this.getAiredEpisodes(sortedFull);
+                  const prevStoredTotal = Number(show.totalEpisodes) || 0;
                   const wasCompleted = String(show.userStatus || "").toLowerCase() === "completed";
+                  const isOngoing = String(full.status || show.status || "").toLowerCase() !== "ended";
                   const expandedWatched = this.expandCompactedWatchedSet(show, sortedFull);
                   show.episodes = sortedFull;
-                  show.totalEpisodes = sortedFull.length;
+                  show.totalEpisodes = Math.max(airedFull.length, 1);
                   show.completedSeasons = {};
+                  if (full.status) show.status = full.status;
                   if (wasCompleted) {
-                    show.watchedEpisodes = sortedFull.map((e) => e.code).sort();
+                    if (isOngoing && !wasSynthetic && prevStoredTotal > 1 && airedFull.length > prevStoredTotal) {
+                      show.watchedEpisodes = airedFull.slice(0, prevStoredTotal).map((e) => e.code).sort();
+                      show.userStatus = "in_progress";
+                    } else {
+                      const targetAired = airedFull.length > 0 ? airedFull : sortedFull.slice(0, 1);
+                      show.watchedEpisodes = targetAired.map((e) => e.code).sort();
+                      show.totalEpisodes = targetAired.length;
+                    }
                   } else if (wasSynthetic && prevWatchedCount > 0 && !hasCompactedSeasons) {
                     const maxTarget =
                       show.userStatus === "in_progress"
@@ -4178,20 +4248,6 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         show.userStatus = this.getEffectiveShowStatus(show);
         show.lastWatchedAt = new Date().toISOString();
         await this.persistState();
-      }
-
-      async toggleFavoriteItem(id) {
-        const show = (this.state.shows || []).find((s) => s.id === id);
-        if (show) {
-          show.isFavorite = !show.isFavorite;
-          await this.persistState();
-          return;
-        }
-        const movie = (this.state.movies || []).find((m) => m.id === id);
-        if (movie) {
-          movie.isFavorite = !movie.isFavorite;
-          await this.persistState();
-        }
       }
 
       async removeItemFromLibrary(id) {
@@ -5326,10 +5382,6 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               overview: "",
               watched,
               watchedAt: watched ? new Date().toISOString().slice(0, 10) : "",
-              userRating: 0,
-              reaction: "",
-              rewatchCount: 0,
-              isFavorite: isFav,
             });
             moviesAdded++;
           } else {
@@ -5388,10 +5440,6 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               posterUrl,
               overview: "",
               userStatus,
-              userRating: 0,
-              reaction: "",
-              isFavorite: isFav,
-              rewatchCount: 0,
               watchedEpisodes,
               episodes,
               lastWatchedAt: new Date().toISOString(),

@@ -219,15 +219,18 @@ fun TvTimeMainScreen(
         }
     }
 
-    // When switching to Upcoming, refresh episode lists for running/stub series so newly announced future air dates appear
+    // Refresh episode lists for running/ongoing series so newly aired episodes flip completed -> in_progress & future air dates appear
     LaunchedEffect(homeTopSegment, shows.size, refreshTrigger) {
-        if (homeTopSegment == "upcoming") {
-            val candidates = shows.filter {
-                it.userStatus != "stopped" && !it.status.equals("Ended", ignoreCase = true)
-            }
+        val candidates = shows.filter {
+            it.userStatus != "stopped" &&
+                !it.status.equals("Ended", ignoreCase = true) &&
+                !it.status.equals("Canceled", ignoreCase = true)
+        }
+        if (candidates.isNotEmpty() && (homeTopSegment == "upcoming" || refreshTrigger >= 0)) {
             var updatedAny = false
             for (s in candidates) {
-                val currentEps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
+                val compMeta = TvTimeProgressCalculator.parseCompactedMeta(s.episodesJson)
+                val currentEps = compMeta.episodes
                 val hasUpcoming = TvTimeProgressCalculator.findNextUpcomingEpisode(currentEps) != null
                 if (!hasUpcoming || currentEps.size <= 1) {
                     val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
@@ -236,27 +239,39 @@ fun TvTimeMainScreen(
                         title = s.title,
                         externalId = s.externalId
                     )
+                    val fetchedAiredCount = TvTimeProgressCalculator.filterAiredEpisodes(fetchedEps).size
                     if (fetchedEps.size > currentEps.size ||
+                        fetchedAiredCount > compMeta.totalEpisodes ||
                         TvTimeProgressCalculator.findNextUpcomingEpisode(fetchedEps) != null
                     ) {
-                        val compMeta = TvTimeProgressCalculator.parseCompactedMeta(s.episodesJson)
                         val expandedWatched = TvTimeProgressCalculator.expandWatchedSetWithCompletedSeasons(
                             episodes = fetchedEps,
                             watchedCodes = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv),
                             completedSeasons = compMeta.completedSeasons,
+                            rawUserStatus = s.userStatus,
+                            previousWatchedAiredCount = compMeta.totalEpisodes,
+                            isOngoingShow = true
+                        )
+                        val nextProg = TvTimeProgressCalculator.computeShowProgress(
+                            episodes = fetchedEps,
+                            watchedCodes = expandedWatched,
                             rawUserStatus = s.userStatus
                         )
+                        val nextEff = TvTimeProgressCalculator.deriveEffectiveShowStatus(nextProg, s.userStatus)
                         val updatedWatchedCsv = TvTimeProgressCalculator.serializeWatchedSet(expandedWatched)
-                        dao.updateShow(
-                            s.copy(
-                                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(fetchedEps),
-                                watchedCodesCsv = updatedWatchedCsv,
-                                castCsv = if (s.castCsv.isBlank() && fetchedCast.isNotEmpty()) {
-                                    fetchedCast.joinToString(", ")
-                                } else s.castCsv
+                        if (nextEff != s.userStatus || fetchedEps.size != currentEps.size) {
+                            dao.updateShow(
+                                s.copy(
+                                    userStatus = nextEff,
+                                    episodesJson = TvTimeProgressCalculator.serializeEpisodeList(fetchedEps),
+                                    watchedCodesCsv = updatedWatchedCsv,
+                                    castCsv = if (s.castCsv.isBlank() && fetchedCast.isNotEmpty()) {
+                                        fetchedCast.joinToString(", ")
+                                    } else s.castCsv
+                                )
                             )
-                        )
-                        updatedAny = true
+                            updatedAny = true
+                        }
                     }
                 }
             }

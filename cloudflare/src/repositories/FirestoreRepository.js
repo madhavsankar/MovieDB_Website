@@ -187,13 +187,31 @@ export class FirestoreRepository {
       base.lastWatchedAt = String(s.lastWatchedAt);
     }
 
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const isFutureEp = (ep) =>
+      Boolean(ep && ep.airDate && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(ep.airDate) && ep.airDate > todayIso);
+
+    let nextUpcomingEp = null;
+    for (const ep of eps) {
+      if (isFutureEp(ep)) {
+        if (!nextUpcomingEp || ep.airDate < nextUpcomingEp.airDate) {
+          nextUpcomingEp = ep;
+        }
+      }
+    }
+    const airedEps = eps.filter((ep) => !isFutureEp(ep));
+
     if (statusLower === "completed") {
+      const airedCompletedTotal =
+        eps.length > 0 && !FirestoreRepository.isSyntheticEpisodeList(eps)
+          ? Math.max(1, airedEps.length + missingCompEps)
+          : Math.max(1, computedTotal);
       return {
         ...base,
         userStatus: "completed",
-        totalEpisodes: Math.max(1, computedTotal),
+        totalEpisodes: airedCompletedTotal,
         watchedEpisodes: [],
-        episodes: [],
+        episodes: nextUpcomingEp ? [nextUpcomingEp] : [],
       };
     }
 
@@ -206,28 +224,25 @@ export class FirestoreRepository {
 
       if (statusLower !== "interested") {
         for (const [sNum, sEps] of bySeason.entries()) {
-          if (sEps.length > 0 && sEps.every((ep) => watchedSet.has(ep.code))) {
+          const airedInSeason = sEps.filter((ep) => !isFutureEp(ep));
+          if (
+            sEps.length > 0 &&
+            airedInSeason.length === sEps.length &&
+            sEps.every((ep) => watchedSet.has(ep.code))
+          ) {
             completedSeasons[String(sNum)] = sEps.length;
           }
         }
       }
 
-      // Active-Season Window: keep ONLY the first incomplete season (+ earliest upcoming future episode)
+      // Active-Season Window: keep ONLY the first incomplete aired season (+ earliest future episode)
       let activeSeasonNum = null;
-      for (const sNum of bySeason.keys()) {
-        if (!completedSeasons[String(sNum)]) {
+      for (const [sNum, sEps] of bySeason.entries()) {
+        if (completedSeasons[String(sNum)]) continue;
+        const hasUnwatchedAired = sEps.some((ep) => !isFutureEp(ep) && !watchedSet.has(ep.code));
+        if (hasUnwatchedAired || statusLower === "interested") {
           activeSeasonNum = sNum;
           break;
-        }
-      }
-
-      const todayIso = new Date().toISOString().slice(0, 10);
-      let nextUpcomingEp = null;
-      for (const ep of eps) {
-        if (ep.airDate && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(ep.airDate) && ep.airDate >= todayIso) {
-          if (!nextUpcomingEp || ep.airDate < nextUpcomingEp.airDate) {
-            nextUpcomingEp = ep;
-          }
         }
       }
 
@@ -257,28 +272,29 @@ export class FirestoreRepository {
         })
         .sort();
 
-      const compSeasonSum = Object.values(completedSeasons).reduce(
-        (acc, n) => acc + (Number(n) || 0),
-        0
+      const airedFinalTotal = Math.max(
+        1,
+        airedEps.length + missingCompEps + nonPresentWatchedCount
       );
-      const finalTotal = Math.max(computedTotal, eps.length + missingCompEps + nonPresentWatchedCount);
+      const allAiredWatched =
+        airedEps.length > 0 && airedEps.every((ep) => watchedSet.has(ep.code));
 
       if (
         activeSeasonNum === null &&
-        compSeasonSum >= finalTotal &&
-        finalTotal > 0 &&
+        allAiredWatched &&
         statusLower !== "stopped" &&
         statusLower !== "interested"
       ) {
         return {
           ...base,
           userStatus: "completed",
-          totalEpisodes: finalTotal,
+          totalEpisodes: airedFinalTotal,
           watchedEpisodes: [],
-          episodes: [],
+          episodes: nextUpcomingEp ? [nextUpcomingEp] : [],
         };
       }
 
+      const finalTotal = Math.max(computedTotal, airedFinalTotal);
       const out = {
         ...base,
         totalEpisodes: Math.max(1, finalTotal),

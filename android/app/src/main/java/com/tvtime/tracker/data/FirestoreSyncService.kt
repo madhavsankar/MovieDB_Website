@@ -191,10 +191,31 @@ object FirestoreSyncService {
             if (s.lastWatchedAt.isNotBlank()) put("lastWatchedAt", s.lastWatchedAt)
         }
 
+        val todayIso = java.time.LocalDate.now().toString()
+        val earliestFutureOverall = meta.episodes
+            .filter { TvTimeProgressCalculator.isFutureEpisode(it, todayIso) }
+            .minWithOrNull(compareBy<EpisodeModel> { it.airDate.take(10) }.thenBy { it.season }.thenBy { it.number })
+
         if (effStatus == "completed") {
-            obj.put("totalEpisodes", prog.totalEpisodes.coerceAtLeast(1))
+            obj.put("totalEpisodes", prog.watchedCount.coerceAtLeast(1))
             obj.put("watchedEpisodes", JSONArray())
-            obj.put("episodes", JSONArray())
+            val futureArr = JSONArray()
+            if (earliestFutureOverall != null) {
+                futureArr.put(JSONObject().apply {
+                    put("code", earliestFutureOverall.code)
+                    put("season", earliestFutureOverall.season)
+                    put("number", earliestFutureOverall.number)
+                    val defaultTitle = "Episode ${earliestFutureOverall.number}"
+                    if (earliestFutureOverall.title.isNotBlank() && !earliestFutureOverall.title.equals(defaultTitle, ignoreCase = true)) {
+                        put("title", earliestFutureOverall.title)
+                    }
+                    if (earliestFutureOverall.airDate.isNotBlank()) put("airDate", earliestFutureOverall.airDate)
+                    if (earliestFutureOverall.runtimeMins > 0 && earliestFutureOverall.runtimeMins != defaultRt) {
+                        put("runtimeMins", earliestFutureOverall.runtimeMins)
+                    }
+                })
+            }
+            obj.put("episodes", futureArr)
             return obj
         }
 
@@ -205,16 +226,21 @@ object FirestoreSyncService {
             .toSortedMap()
 
         for ((seasonNum, seasonEps) in groupedBySeason) {
-            if (seasonEps.isNotEmpty() && seasonEps.all { rawWatched.contains(it.code.trim().uppercase()) }) {
+            val allAiredInSeason = seasonEps.none { TvTimeProgressCalculator.isFutureEpisode(it, todayIso) }
+            if (seasonEps.isNotEmpty() && allAiredInSeason && seasonEps.all { rawWatched.contains(it.code.trim().uppercase()) }) {
                 completedSeasons[seasonNum] = maxOf(completedSeasons[seasonNum] ?: 0, seasonEps.size)
             }
         }
 
         val epCodeRegex = Regex("^S(\\d+)E(\\d+)$", RegexOption.IGNORE_CASE)
         val remainingSeasons = groupedBySeason.filterKeys { !completedSeasons.containsKey(it) }
-        val todayIso = java.time.LocalDate.now().toString()
 
-        val activeSeasonNum = remainingSeasons.keys.firstOrNull()
+        val activeSeasonNum = remainingSeasons.keys.firstOrNull { sNum ->
+            val sEps = remainingSeasons[sNum].orEmpty()
+            effStatus == "interested" || sEps.any {
+                !TvTimeProgressCalculator.isFutureEpisode(it, todayIso) && !rawWatched.contains(it.code.trim().uppercase())
+            }
+        } ?: remainingSeasons.keys.firstOrNull()
         val keptEpisodes = if (activeSeasonNum != null) {
             val activeList = remainingSeasons[activeSeasonNum].orEmpty().toMutableList()
             val earliestFuture = meta.episodes

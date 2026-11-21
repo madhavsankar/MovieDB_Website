@@ -910,6 +910,86 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["reloadedWatchedLen"], 0)
         self.assertEqual(out["reloadedStatus"], "completed")
 
+    def test_ongoing_series_caught_up_completed_and_returns_to_in_progress_when_next_episode_airs(self):
+        """Verifies ongoing series goes to completed while caught up, stays in Upcoming, and flips back to in_progress when next episode airs."""
+        repo_path = os.path.join(ROOT_DIR, "cloudflare", "src", "repositories", "FirestoreRepository.js")
+        view_path = os.path.join(ROOT_DIR, "cloudflare", "src", "ui", "WebAppView.js")
+        with open(repo_path, "r", encoding="utf-8") as f:
+            repo_src = (
+                f.read()
+                .replace("export const STARTER_SHOWS", "const STARTER_SHOWS")
+                .replace("export const STARTER_MOVIES", "const STARTER_MOVIES")
+                .replace("export const STARTER_ACTORS", "const STARTER_ACTORS")
+                .replace("export class FirestoreRepository", "class FirestoreRepository")
+            )
+        with open(view_path, "r", encoding="utf-8") as f:
+            view_src = f.read().replace("export const WEB_APP_HTML", "const WEB_APP_HTML")
+
+        harness = (
+            repo_src
+            + "\n"
+            + view_src
+            + """
+            (async () => {
+              const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+              const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+              const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+              (new Function(clientJs))();
+              const app = Object.create(globalThis.TvTimeClientClass.prototype);
+              const ongoingShow = {
+                id: "tmdb_tv_95396",
+                tmdbId: 95396,
+                title: "Severance",
+                year: 2022,
+                status: "Returning Series",
+                userStatus: "in_progress",
+                watchedEpisodes: ["S01E01", "S01E02", "S01E03"],
+                episodes: [
+                  { code: "S01E01", season: 1, number: 1, title: "Ep 1", airDate: "2025-01-01" },
+                  { code: "S01E02", season: 1, number: 2, title: "Ep 2", airDate: "2025-01-08" },
+                  { code: "S01E03", season: 1, number: 3, title: "Ep 3", airDate: "2025-01-15" },
+                  { code: "S01E04", season: 1, number: 4, title: "Future Ep", airDate: "2099-05-01" }
+                ]
+              };
+              const statusBeforeAir = app.getEffectiveShowStatus(ongoingShow, "2026-11-21");
+              const progBeforeAir = app.computeShowProgress(ongoingShow, "2026-11-21");
+              const compacted = FirestoreRepository.compactShowForStorage(ongoingShow);
+              const upcomingBeforeAir = app.findNextUpcomingEpisode(compacted, "2026-11-21");
+              const statusCompactedBeforeAir = app.getEffectiveShowStatus(compacted, "2026-11-21");
+              const statusCompactedOnAirDay = app.getEffectiveShowStatus(compacted, "2099-05-01");
+              const progOnAirDay = app.computeShowProgress(compacted, "2099-05-01");
+
+              const out = JSON.stringify({
+                statusBeforeAir,
+                watchedBeforeAir: progBeforeAir.watchedCount,
+                totalBeforeAir: progBeforeAir.total,
+                compactedStatus: compacted.userStatus,
+                compactedTotal: compacted.totalEpisodes,
+                compactedEpsLen: compacted.episodes.length,
+                upcomingCode: upcomingBeforeAir ? upcomingBeforeAir.ep.code : null,
+                statusCompactedBeforeAir,
+                statusCompactedOnAirDay,
+                nextEpOnAirDay: progOnAirDay.nextEp ? progOnAirDay.nextEp.code : null,
+                leftOnAirDay: progOnAirDay.leftCount
+              });
+              if (typeof console !== "undefined" && console.log) console.log(out);
+              else if (typeof print !== "undefined") print(out);
+            })();
+            """
+        )
+        out = self._run_js(harness)
+        self.assertEqual(out["statusBeforeAir"], "completed")
+        self.assertEqual(out["watchedBeforeAir"], 3)
+        self.assertEqual(out["totalBeforeAir"], 3)
+        self.assertEqual(out["compactedStatus"], "completed")
+        self.assertEqual(out["compactedTotal"], 3)
+        self.assertEqual(out["compactedEpsLen"], 1)
+        self.assertEqual(out["upcomingCode"], "S01E04")
+        self.assertEqual(out["statusCompactedBeforeAir"], "completed")
+        self.assertEqual(out["statusCompactedOnAirDay"], "in_progress")
+        self.assertEqual(out["nextEpOnAirDay"], "S01E04")
+        self.assertEqual(out["leftOnAirDay"], 1)
+
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""
         proc = subprocess.run(
