@@ -1481,16 +1481,17 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
 
         const todayIso = new Date().toISOString().slice(0, 10);
-        const isFutureEp = (ep) => this.isFutureEpisode(ep, todayIso);
+        const unairedCodes = this.buildUnairedCodeSet(eps, todayIso, Object.keys(completedSeasons).length > 0);
+        const isUnairedEp = (ep) => unairedCodes.has(String((ep && ep.code) || "").trim().toUpperCase());
         let nextUpcomingEp = null;
         for (const ep of eps) {
-          if (isFutureEp(ep)) {
+          if (this.isFutureEpisode(ep, todayIso)) {
             if (!nextUpcomingEp || ep.airDate < nextUpcomingEp.airDate) {
               nextUpcomingEp = ep;
             }
           }
         }
-        const airedEps = eps.filter((ep) => !isFutureEp(ep));
+        const airedEps = eps.filter((ep) => !isUnairedEp(ep));
         const storedTotalNum = Number(s.totalEpisodes) || 0;
 
         if (statusLower === "completed") {
@@ -1516,7 +1517,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
           if (statusLower !== "interested") {
             for (const [sNum, sEps] of bySeason.entries()) {
-              const airedInSeason = sEps.filter((ep) => !isFutureEp(ep));
+              const airedInSeason = sEps.filter((ep) => !isUnairedEp(ep));
               if (
                 sEps.length > 0 &&
                 airedInSeason.length === sEps.length &&
@@ -1530,7 +1531,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           let activeSeasonNum = null;
           for (const [sNum, sEps] of bySeason.entries()) {
             if (completedSeasons[String(sNum)]) continue;
-            const hasUnwatchedAired = sEps.some((ep) => !isFutureEp(ep) && !watchedSet.has(ep.code));
+            const hasUnwatchedAired = sEps.some((ep) => !isUnairedEp(ep) && !watchedSet.has(ep.code));
             if (hasUnwatchedAired || statusLower === "interested") {
               activeSeasonNum = sNum;
               break;
@@ -1542,7 +1543,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             const activeList = bySeason.get(activeSeasonNum) || [];
             if (activeList.length > 30) {
               const firstUnwatchedIdx = activeList.findIndex(
-                (ep) => !isFutureEp(ep) && !watchedSet.has(ep.code)
+                (ep) => !isUnairedEp(ep) && !watchedSet.has(ep.code)
               );
               const startIdx = firstUnwatchedIdx > 0 ? firstUnwatchedIdx - 1 : 0;
               for (const ep of activeList.slice(startIdx, startIdx + 30)) {
@@ -2367,10 +2368,50 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         return d.length === 10 && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d) && d > ref;
       }
 
+      buildUnairedCodeSet(episodes, todayIso, hasPriorCompletedSeasons = false) {
+        const ref = todayIso || new Date().toISOString().slice(0, 10);
+        const list = (Array.isArray(episodes) ? episodes : [])
+          .filter(Boolean)
+          .slice()
+          .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
+        const unaired = new Set();
+        if (list.length === 0) return unaired;
+
+        const seasonsWithPastDated = new Set();
+        let maxPastSeason = hasPriorCompletedSeasons ? 1 : 0;
+        for (const ep of list) {
+          const d = String(ep.airDate || "").trim().slice(0, 10);
+          const sNum = Number(ep.season) || 1;
+          if (d.length === 10 && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d) && d <= ref) {
+            seasonsWithPastDated.add(sNum);
+            if (sNum > maxPastSeason) maxPastSeason = sNum;
+          }
+        }
+
+        let sawFuture = false;
+        for (const ep of list) {
+          const code = String(ep.code || "").trim().toUpperCase();
+          if (!code) continue;
+          const d = String(ep.airDate || "").trim().slice(0, 10);
+          const hasIso = d.length === 10 && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d);
+          const sNum = Number(ep.season) || 1;
+          if (hasIso && d > ref) {
+            sawFuture = true;
+            unaired.add(code);
+          } else if (!hasIso) {
+            if (sawFuture || (maxPastSeason > 0 && sNum > maxPastSeason && !seasonsWithPastDated.has(sNum))) {
+              unaired.add(code);
+            }
+          }
+        }
+        return unaired;
+      }
+
       getAiredEpisodes(episodes, todayIso) {
         const ref = todayIso || new Date().toISOString().slice(0, 10);
         const list = Array.isArray(episodes) ? episodes : [];
-        return list.filter((ep) => !this.isFutureEpisode(ep, ref));
+        const unaired = this.buildUnairedCodeSet(list, ref, false);
+        return list.filter((ep) => !unaired.has(String((ep && ep.code) || "").trim().toUpperCase()));
       }
 
       computeShowProgress(show, todayOverride) {
@@ -2403,11 +2444,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
 
         const storedTotal = Number(show.totalEpisodes) || 0;
+        const unairedCodes = this.buildUnairedCodeSet(episodes, todayIso, completedSeasonNums.size > 0);
+        const isUnairedEp = (ep) => unairedCodes.has(String((ep && ep.code) || "").trim().toUpperCase());
 
         // Compacted completed show: watchedSet & completedSeasons are empty; episodes is either empty
         // OR holds scheduled future episodes that were unwatched when the user caught up.
         if (isMarkedCompleted && watchedSet.size === 0 && completedSeasonNums.size === 0) {
-          const newlyAired = episodes.filter((ep) => !this.isFutureEpisode(ep, todayIso));
+          const newlyAired = episodes.filter((ep) => !isUnairedEp(ep));
           const watchedCount = Math.max(storedTotal, 1);
           const total = watchedCount + newlyAired.length;
           const leftCount = newlyAired.length;
@@ -2434,7 +2477,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           if (completedSeasonNums.has(sNum)) continue;
           const isWatched = watchedSet.has(codeUpper);
           if (isWatched) inWindowWatchedCount++;
-          if (!this.isFutureEpisode(ep, todayIso) || isWatched) {
+          if (!isUnairedEp(ep) || isWatched) {
             airedWindowCount++;
           }
         }
@@ -2472,7 +2515,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const isEpWatched = completedSeasonNums.has(sNum) || watchedSet.has(codeUpper);
           if (isEpWatched) {
             lastWatchedEp = ep;
-          } else if (!nextEp && !this.isFutureEpisode(ep, todayIso)) {
+          } else if (!nextEp && !isUnairedEp(ep)) {
             nextEp = ep;
           }
         }
@@ -4764,7 +4807,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         for (const m of movies) {
           if (m.watched) {
             movCount += 1;
-            movMins += Math.max(45, Number(m.runtimeMins) || 120);
+            movMins += Math.max(1, Number(m.runtimeMins) || 120);
           }
         }
         const totalMins = showMins + movMins;
@@ -4795,7 +4838,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (totalSubEl) totalSubEl.textContent = "Total watch hours (" + fmtDaysHours(totalMins) + ")";
         if (sTimeEl) sTimeEl.textContent = fmtHours(showMins);
         if (mTimeEl) mTimeEl.textContent = fmtHours(movMins);
-        if (sCountEl) sCountEl.textContent = String(completedShows.length);
+        if (sCountEl) sCountEl.textContent = String(activeOrCompletedShows.length);
         if (epCountEl) epCountEl.textContent = String(epCount);
         if (mCountEl) mCountEl.textContent = String(watchedMovies.length);
 

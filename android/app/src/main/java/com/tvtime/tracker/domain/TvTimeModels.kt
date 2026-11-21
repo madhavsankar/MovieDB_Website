@@ -359,10 +359,49 @@ object TvTimeProgressCalculator {
         return d.length == 10 && ISO_DATE_REGEX.matches(d) && d > todayIso
     }
 
+    fun buildUnairedCodeSet(
+        episodes: List<EpisodeModel>,
+        todayIso: String = LocalDate.now().toString(),
+        hasPriorCompletedSeasons: Boolean = false
+    ): Set<String> {
+        if (episodes.isEmpty()) return emptySet()
+        val sorted = episodes.sortedWith(compareBy({ it.season }, { it.number }))
+        val seasonsWithPastDated = mutableSetOf<Int>()
+        var maxPastSeason = if (hasPriorCompletedSeasons) 1 else 0
+        for (ep in sorted) {
+            val d = ep.airDate.trim().take(10)
+            if (d.length == 10 && ISO_DATE_REGEX.matches(d) && d <= todayIso) {
+                seasonsWithPastDated.add(ep.season)
+                if (ep.season > maxPastSeason) maxPastSeason = ep.season
+            }
+        }
+        val unaired = mutableSetOf<String>()
+        var sawFuture = false
+        for (ep in sorted) {
+            val code = ep.code.trim().uppercase()
+            if (code.isEmpty()) continue
+            val d = ep.airDate.trim().take(10)
+            val hasIso = d.length == 10 && ISO_DATE_REGEX.matches(d)
+            if (hasIso && d > todayIso) {
+                sawFuture = true
+                unaired.add(code)
+            } else if (!hasIso) {
+                if (sawFuture || (maxPastSeason > 0 && ep.season > maxPastSeason && !seasonsWithPastDated.contains(ep.season))) {
+                    unaired.add(code)
+                }
+            }
+        }
+        return unaired
+    }
+
     fun filterAiredEpisodes(
         episodes: List<EpisodeModel>,
-        todayIso: String = LocalDate.now().toString()
-    ): List<EpisodeModel> = episodes.filter { !isFutureEpisode(it, todayIso) }
+        todayIso: String = LocalDate.now().toString(),
+        hasPriorCompletedSeasons: Boolean = false
+    ): List<EpisodeModel> {
+        val unaired = buildUnairedCodeSet(episodes, todayIso, hasPriorCompletedSeasons)
+        return episodes.filter { !unaired.contains(it.code.trim().uppercase()) }
+    }
 
     fun expandWatchedSetWithCompletedSeasons(
         episodes: List<EpisodeModel>,
@@ -545,9 +584,11 @@ object TvTimeProgressCalculator {
             )
         }
 
+        val unairedCodes = buildUnairedCodeSet(episodes, todayIso, completedSeasons.isNotEmpty())
         val epsOutsideComp = episodes.filter { !completedSeasons.containsKey(it.season) }
         val airedOutsideComp = epsOutsideComp.filter {
-            !isFutureEpisode(it, todayIso) || normWatched.contains(it.code.trim().uppercase())
+            val codeUpper = it.code.trim().uppercase()
+            !unairedCodes.contains(codeUpper) || normWatched.contains(codeUpper)
         }
         val watchedOutsideComp = normWatched.count { code ->
             val sNum = parseSeasonFromCode(code)

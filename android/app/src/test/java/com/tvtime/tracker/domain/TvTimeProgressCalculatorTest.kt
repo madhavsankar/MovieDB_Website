@@ -521,5 +521,16 @@ class TvTimeProgressCalculatorTest {
         )
         assertEquals(10, stoppedEps)
         assertEquals(400, stoppedMins)
+
+        // TBA blank-airDate episodes following a future premiere (e.g. S06E01 future + S06E02..S06E10 blank) remain unaired
+        val s5AndTbaS6 = listOf(
+            EpisodeModel("S05E09", 5, 9, "Ep 9", "2025-10-15", 35),
+            EpisodeModel("S05E10", 5, 10, "Finale", "2025-10-22", 35),
+            EpisodeModel("S06E01", 6, 1, "Episode 1", "2099-12-08", 35),
+            EpisodeModel("S06E02", 6, 2, "Episode 2", "", 35),
+            EpisodeModel("S06E03", 6, 3, "Episode 3", "", 35)
+        )
+        val airedOnly = TvTimeProgressCalculator.filterAiredEpisodes(s5AndTbaS6, "2026-11-21")
+        assertEquals(listOf("S05E09", "S05E10"), airedOnly.map { it.code })
     }
 }

@@ -188,18 +188,24 @@ export class FirestoreRepository {
     }
 
     const todayIso = new Date().toISOString().slice(0, 10);
-    const isFutureEp = (ep) =>
+    const isDatedFutureEp = (ep) =>
       Boolean(ep && ep.airDate && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(ep.airDate) && ep.airDate > todayIso);
+    const unairedCodes = FirestoreRepository.buildUnairedCodeSet(
+      eps,
+      todayIso,
+      Object.keys(completedSeasons).length > 0
+    );
+    const isUnairedEp = (ep) => unairedCodes.has(String((ep && ep.code) || "").trim().toUpperCase());
 
     let nextUpcomingEp = null;
     for (const ep of eps) {
-      if (isFutureEp(ep)) {
+      if (isDatedFutureEp(ep)) {
         if (!nextUpcomingEp || ep.airDate < nextUpcomingEp.airDate) {
           nextUpcomingEp = ep;
         }
       }
     }
-    const airedEps = eps.filter((ep) => !isFutureEp(ep));
+    const airedEps = eps.filter((ep) => !isUnairedEp(ep));
 
     if (statusLower === "completed") {
       const storedTotalNum = Number(s.totalEpisodes) || 0;
@@ -225,7 +231,7 @@ export class FirestoreRepository {
 
       if (statusLower !== "interested") {
         for (const [sNum, sEps] of bySeason.entries()) {
-          const airedInSeason = sEps.filter((ep) => !isFutureEp(ep));
+          const airedInSeason = sEps.filter((ep) => !isUnairedEp(ep));
           if (
             sEps.length > 0 &&
             airedInSeason.length === sEps.length &&
@@ -240,7 +246,7 @@ export class FirestoreRepository {
       let activeSeasonNum = null;
       for (const [sNum, sEps] of bySeason.entries()) {
         if (completedSeasons[String(sNum)]) continue;
-        const hasUnwatchedAired = sEps.some((ep) => !isFutureEp(ep) && !watchedSet.has(ep.code));
+        const hasUnwatchedAired = sEps.some((ep) => !isUnairedEp(ep) && !watchedSet.has(ep.code));
         if (hasUnwatchedAired || statusLower === "interested") {
           activeSeasonNum = sNum;
           break;
@@ -252,7 +258,7 @@ export class FirestoreRepository {
         const activeList = bySeason.get(activeSeasonNum) || [];
         if (activeList.length > 30) {
           const firstUnwatchedIdx = activeList.findIndex(
-            (ep) => !isFutureEp(ep) && !watchedSet.has(ep.code)
+            (ep) => !isUnairedEp(ep) && !watchedSet.has(ep.code)
           );
           const startIdx = firstUnwatchedIdx > 0 ? firstUnwatchedIdx - 1 : 0;
           for (const ep of activeList.slice(startIdx, startIdx + 30)) {
@@ -331,6 +337,45 @@ export class FirestoreRepository {
       out.completedSeasons = completedSeasons;
     }
     return out;
+  }
+
+  static buildUnairedCodeSet(episodes, todayIso, hasPriorCompletedSeasons = false) {
+    const ref = todayIso || new Date().toISOString().slice(0, 10);
+    const list = (Array.isArray(episodes) ? episodes : [])
+      .filter(Boolean)
+      .slice()
+      .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
+    const unaired = new Set();
+    if (list.length === 0) return unaired;
+
+    const seasonsWithPastDated = new Set();
+    let maxPastSeason = hasPriorCompletedSeasons ? 1 : 0;
+    for (const ep of list) {
+      const d = String(ep.airDate || "").trim().slice(0, 10);
+      const sNum = Number(ep.season) || 1;
+      if (d.length === 10 && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d) && d <= ref) {
+        seasonsWithPastDated.add(sNum);
+        if (sNum > maxPastSeason) maxPastSeason = sNum;
+      }
+    }
+
+    let sawFuture = false;
+    for (const ep of list) {
+      const code = String(ep.code || "").trim().toUpperCase();
+      if (!code) continue;
+      const d = String(ep.airDate || "").trim().slice(0, 10);
+      const hasIso = d.length === 10 && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d);
+      const sNum = Number(ep.season) || 1;
+      if (hasIso && d > ref) {
+        sawFuture = true;
+        unaired.add(code);
+      } else if (!hasIso) {
+        if (sawFuture || (maxPastSeason > 0 && sNum > maxPastSeason && !seasonsWithPastDated.has(sNum))) {
+          unaired.add(code);
+        }
+      }
+    }
+    return unaired;
   }
 
   static compactDecidedIds(decidedIds, legacyActors) {
@@ -448,8 +493,13 @@ export class FirestoreRepository {
         const presentS = new Set(incomingEps.map((e) => String(Number(e.season) || 1)));
         for (const sk of presentS) delete incomingComp[sk];
         const todayIso = new Date().toISOString().slice(0, 10);
+        const unairedIncoming = FirestoreRepository.buildUnairedCodeSet(
+          incomingEps,
+          todayIso,
+          Object.keys(incomingComp).length > 0
+        );
         const airedIncoming = incomingEps.filter(
-          (e) => !(e.airDate && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(e.airDate) && e.airDate > todayIso)
+          (e) => !unairedIncoming.has(String((e && e.code) || "").trim().toUpperCase())
         );
         const rawStoredTotal = Number(s.totalEpisodes) || 0;
         if (

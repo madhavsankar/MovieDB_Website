@@ -226,13 +226,18 @@ object FirestoreSyncService {
         }
 
         val completedSeasons = LinkedHashMap<Int, Int>(meta.completedSeasons)
+        val unairedCodes = TvTimeProgressCalculator.buildUnairedCodeSet(
+            meta.episodes,
+            todayIso,
+            completedSeasons.isNotEmpty()
+        )
         val groupedBySeason = meta.episodes
             .sortedWith(compareBy({ it.season }, { it.number }))
             .groupBy { it.season }
             .toSortedMap()
 
         for ((seasonNum, seasonEps) in groupedBySeason) {
-            val allAiredInSeason = seasonEps.none { TvTimeProgressCalculator.isFutureEpisode(it, todayIso) }
+            val allAiredInSeason = seasonEps.none { unairedCodes.contains(it.code.trim().uppercase()) }
             if (seasonEps.isNotEmpty() && allAiredInSeason && seasonEps.all { rawWatched.contains(it.code.trim().uppercase()) }) {
                 completedSeasons[seasonNum] = maxOf(completedSeasons[seasonNum] ?: 0, seasonEps.size)
             }
@@ -244,15 +249,16 @@ object FirestoreSyncService {
         val activeSeasonNum = remainingSeasons.keys.firstOrNull { sNum ->
             val sEps = remainingSeasons[sNum].orEmpty()
             effStatus == "interested" || sEps.any {
-                !TvTimeProgressCalculator.isFutureEpisode(it, todayIso) && !rawWatched.contains(it.code.trim().uppercase())
+                val cUp = it.code.trim().uppercase()
+                !unairedCodes.contains(cUp) && !rawWatched.contains(cUp)
             }
         } ?: remainingSeasons.keys.firstOrNull()
         val keptEpisodes = if (activeSeasonNum != null && effStatus != "stopped" && effStatus != "interested") {
             val rawActiveList = remainingSeasons[activeSeasonNum].orEmpty()
             val activeList = if (rawActiveList.size > 30) {
                 val firstUnwatchedIdx = rawActiveList.indexOfFirst {
-                    !TvTimeProgressCalculator.isFutureEpisode(it, todayIso) &&
-                        !rawWatched.contains(it.code.trim().uppercase())
+                    val cUp = it.code.trim().uppercase()
+                    !unairedCodes.contains(cUp) && !rawWatched.contains(cUp)
                 }
                 val startIdx = if (firstUnwatchedIdx > 0) firstUnwatchedIdx - 1 else 0
                 rawActiveList.drop(startIdx).take(30).toMutableList()

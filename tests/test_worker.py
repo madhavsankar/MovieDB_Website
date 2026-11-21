@@ -1546,6 +1546,85 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertIn("Shared Watchlist Movie", out["moviesHtml"])
         self.assertIn("Brand New Friend Movie", out["moviesHtml"])
 
+    def test_tba_blank_airdate_episodes_after_future_premiere_stay_unaired(self):
+        """Verifies TBA blank-airDate episodes following a future premiere (e.g. Only Murders S06E01 future + S06E02..S06E10 blank) are treated as unaired and keep caught-up shows completed."""
+        import re as _re
+
+        with open(os.path.join(ROOT_DIR, "cloudflare", "src", "repositories", "FirestoreRepository.js"), "r", encoding="utf-8") as f:
+            repo_src = (
+                f.read()
+                .replace("export const STARTER_SHOWS", "const STARTER_SHOWS")
+                .replace("export const STARTER_MOVIES", "const STARTER_MOVIES")
+                .replace("export const STARTER_ACTORS", "const STARTER_ACTORS")
+                .replace("export class FirestoreRepository", "class FirestoreRepository")
+            )
+        with open(os.path.join(ROOT_DIR, "cloudflare", "src", "ui", "WebAppView.js"), "r", encoding="utf-8") as f:
+            view_src = _re.sub(r"^import\s+.*?;\s*$", "", f.read(), flags=_re.MULTILINE).replace("export const ", "const ")
+
+        harness = (
+            repo_src
+            + "\n"
+            + view_src
+            + """
+            const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+            const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+            const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+            (new Function(clientJs))();
+            const app = Object.create(globalThis.TvTimeClientClass.prototype);
+
+            const fullEps = [];
+            for (let s = 1; s <= 5; s++) {
+              for (let e = 1; e <= 10; e++) {
+                fullEps.push({
+                  code: "S0" + s + "E" + String(e).padStart(2, "0"),
+                  season: s,
+                  number: e,
+                  title: "Aired Ep " + e,
+                  airDate: "2024-08-01"
+                });
+              }
+            }
+            fullEps.push({ code: "S06E01", season: 6, number: 1, title: "Episode 1", airDate: "2099-12-08" });
+            for (let e = 2; e <= 10; e++) {
+              fullEps.push({ code: "S06E" + String(e).padStart(2, "0"), season: 6, number: e, title: "Episode " + e, airDate: "" });
+            }
+
+            const airedClient = app.getAiredEpisodes(fullEps, "2026-11-21");
+            const compacted = FirestoreRepository.compactShowForStorage({
+              id: "tmdb_tv_107113",
+              tmdbId: 107113,
+              title: "Only Murders in the Building",
+              status: "Returning Series",
+              userStatus: "completed",
+              totalEpisodes: 50,
+              episodes: fullEps,
+              watchedEpisodes: airedClient.map((e) => e.code)
+            });
+            const prog = app.computeShowProgress(compacted, "2026-11-21");
+            const eff = app.getEffectiveShowStatus(compacted, "2026-11-21");
+
+            const out = JSON.stringify({
+              airedLen: airedClient.length,
+              compactedStatus: compacted.userStatus,
+              compactedTotal: compacted.totalEpisodes,
+              compactedEps: compacted.episodes.map((e) => e.code),
+              progWatched: prog.watchedCount,
+              progLeft: prog.leftCount,
+              eff
+            });
+            if (typeof console !== "undefined" && console.log) console.log(out);
+            else if (typeof print !== "undefined") print(out);
+            """
+        )
+        out = self._run_js(harness)
+        self.assertEqual(out["airedLen"], 50)
+        self.assertEqual(out["compactedStatus"], "completed")
+        self.assertEqual(out["compactedTotal"], 50)
+        self.assertEqual(out["compactedEps"], ["S06E01"])
+        self.assertEqual(out["progWatched"], 50)
+        self.assertEqual(out["progLeft"], 0)
+        self.assertEqual(out["eff"], "completed")
+
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""
         proc = subprocess.run(

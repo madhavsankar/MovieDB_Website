@@ -3044,7 +3044,7 @@ private fun StatisticsFullPageScreen(
         for (m in movies) {
             if (m.watched) {
                 movieCount += 1
-                movieMins += m.runtimeMins.coerceAtLeast(45)
+                movieMins += m.runtimeMins.coerceAtLeast(1)
             }
         }
         WatchStatsSummary(
@@ -3058,14 +3058,15 @@ private fun StatisticsFullPageScreen(
         )
     }
 
-    val completedShowsCount = remember(shows) {
+    val watchedShowsCount = remember(shows) {
         shows.count { s ->
             val prog = TvTimeProgressCalculator.computeShowProgressFromJson(
                 s.episodesJson,
                 s.watchedCodesCsv,
                 s.userStatus
             )
-            TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus) == "completed"
+            val eff = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus)
+            eff == "completed" || eff == "in_progress" || (eff == "stopped" && prog.watchedCount > 0)
         }
     }
     val watchedMoviesCount = remember(movies) { movies.count { it.watched } }
@@ -3208,7 +3209,7 @@ private fun StatisticsFullPageScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 StatCountCard(
-                    value = completedShowsCount.toString(),
+                    value = watchedShowsCount.toString(),
                     label = "SERIES",
                     valueColor = Color.White,
                     modifier = Modifier.weight(1f)
