@@ -459,6 +459,58 @@ object TvTimeProgressCalculator {
         )
     }
 
+    fun computeShowWatchMinutesFromJson(
+        episodesJson: String,
+        watchedCodesCsv: String,
+        rawUserStatus: String = "",
+        defaultRuntimeMins: Int = 45,
+        todayIso: String = LocalDate.now().toString()
+    ): Pair<Int, Int> {
+        val meta = parseCompactedMeta(episodesJson)
+        val watched = parseWatchedSet(watchedCodesCsv)
+        val prog = computeShowProgress(
+            episodes = meta.episodes,
+            watchedCodes = watched,
+            rawUserStatus = rawUserStatus,
+            totalEpisodesOverride = meta.totalEpisodes,
+            completedSeasons = meta.completedSeasons,
+            todayIso = todayIso
+        )
+        val w = prog.watchedCount
+        val defRt = defaultRuntimeMins.coerceAtLeast(15)
+        if (w <= 0) return 0 to 0
+
+        val cleanComp = meta.completedSeasons.filter { it.key > 0 && it.value > 0 }
+        val compCount = cleanComp.values.sum()
+        if (rawUserStatus.trim().equals("completed", ignoreCase = true) && watched.isEmpty() && cleanComp.isEmpty()) {
+            return w to (w * defRt)
+        }
+
+        var explicitCount = compCount
+        var explicitMins = compCount * defRt
+        val presentCodes = mutableSetOf<String>()
+        for (ep in meta.episodes) {
+            val code = ep.code.trim().uppercase()
+            if (code.isNotEmpty()) presentCodes.add(code)
+            if (cleanComp.containsKey(ep.season)) continue
+            if (code.isNotEmpty() && watched.contains(code)) {
+                explicitCount += 1
+                explicitMins += ep.runtimeMins.takeIf { it > 0 } ?: defRt
+            }
+        }
+        for (code in watched) {
+            if (presentCodes.contains(code)) continue
+            val sNum = parseSeasonFromCode(code)
+            if (sNum > 0 && cleanComp.containsKey(sNum)) continue
+            explicitCount += 1
+            explicitMins += defRt
+        }
+        if (explicitCount < w) {
+            explicitMins += (w - explicitCount) * defRt
+        }
+        return w to explicitMins
+    }
+
     fun computeShowProgress(
         episodes: List<EpisodeModel>,
         watchedCodes: Set<String>,

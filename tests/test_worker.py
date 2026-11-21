@@ -1320,6 +1320,132 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertTrue(out["deathNoteExcluded"])
         self.assertTrue(out["otherDadNotExcluded"])
 
+    def test_watch_hours_include_in_progress_and_stopped_seasons_and_episodes(self):
+        """Verifies Total & Series Watch Hours include completed, in-progress, and stopped shows up to exact completed seasons + watched episodes (including 30-ep windowed seasons and future-ep ongoing shows)."""
+        import re as _re
+        import server as local_server
+
+        def load_cf_module(rel_path):
+            with open(os.path.join(ROOT_DIR, "cloudflare", "src", *rel_path), "r", encoding="utf-8") as f:
+                src = f.read()
+            src = _re.sub(r"^import\s+.*?;\s*$", "", src, flags=_re.MULTILINE)
+            src = src.replace("export class ", "class ").replace("export function ", "function ").replace("export const ", "const ")
+            return src
+
+        svc_src = load_cf_module(("services", "LiveCatalogService.js"))
+        view_src = load_cf_module(("ui", "WebAppView.js"))
+
+        sample_state = {
+            "shows": [
+                # 1. Completed compacted show (20 eps * 50m = 1000m) + 1 future episode that must NOT add extra minutes
+                {
+                    "id": "tmdb_tv_1",
+                    "title": "Completed Ongoing",
+                    "runtimeMins": 50,
+                    "userStatus": "completed",
+                    "totalEpisodes": 20,
+                    "watchedEpisodes": [],
+                    "episodes": [{"code": "S03E01", "season": 3, "number": 1, "airDate": "2099-05-01", "runtimeMins": 50}],
+                },
+                # 2. In-progress multi-season show: Seasons 1-2 completed (20 eps * 45m = 900m) + 3 watched eps in S3 (one 60m finale = 45+45+60 = 150m) => 23 eps, 1050m
+                {
+                    "id": "tmdb_tv_2",
+                    "title": "In Progress Multi",
+                    "runtimeMins": 45,
+                    "userStatus": "in_progress",
+                    "totalEpisodes": 30,
+                    "completedSeasons": {"1": 10, "2": 10},
+                    "watchedEpisodes": ["S03E01", "S03E02", "S03E03"],
+                    "episodes": [
+                        {"code": "S03E01", "season": 3, "number": 1, "airDate": "2024-01-01", "runtimeMins": 45},
+                        {"code": "S03E02", "season": 3, "number": 2, "airDate": "2024-01-08", "runtimeMins": 45},
+                        {"code": "S03E03", "season": 3, "number": 3, "airDate": "2024-01-15", "runtimeMins": 60},
+                        {"code": "S03E04", "season": 3, "number": 4, "airDate": "2024-01-22", "runtimeMins": 45},
+                    ],
+                },
+                # 3. Stopped show: Season 1 completed (8 eps * 40m = 320m) + 2 watched eps in S2 (80m), with only a future S4 ep in episodes => 10 eps, 400m
+                {
+                    "id": "tmdb_tv_3",
+                    "title": "Stopped Show",
+                    "runtimeMins": 40,
+                    "userStatus": "stopped",
+                    "totalEpisodes": 24,
+                    "completedSeasons": {"1": 8},
+                    "watchedEpisodes": ["S02E01", "S02E02"],
+                    "episodes": [{"code": "S04E01", "season": 4, "number": 1, "airDate": "2099-09-01", "runtimeMins": 40}],
+                },
+                # 4. Giant single-season windowed in-progress show: 50 watched in S1, window only holds S01E50..S01E52 (50 * 24m = 1200m)
+                {
+                    "id": "tmdb_tv_4",
+                    "title": "Long Anime",
+                    "runtimeMins": 24,
+                    "userStatus": "in_progress",
+                    "totalEpisodes": 100,
+                    "watchedEpisodes": [f"S01E{i:02d}" for i in range(1, 51)],
+                    "episodes": [
+                        {"code": "S01E50", "season": 1, "number": 50, "airDate": "2024-01-01", "runtimeMins": 24},
+                        {"code": "S01E51", "season": 1, "number": 51, "airDate": "2024-01-08", "runtimeMins": 24},
+                    ],
+                },
+                # 5. Interested watchlist show (0 watched => 0m)
+                {
+                    "id": "tmdb_tv_5",
+                    "title": "Watchlist Show",
+                    "runtimeMins": 55,
+                    "userStatus": "interested",
+                    "totalEpisodes": 10,
+                    "watchedEpisodes": [],
+                    "episodes": [],
+                },
+            ],
+            "movies": [
+                {"id": "movie_1", "title": "Watched Movie", "runtimeMins": 130, "watched": True},
+                {"id": "movie_2", "title": "Watchlist Movie", "runtimeMins": 140, "watched": False},
+            ],
+        }
+
+        py_stats = local_server.compute_stats(sample_state)
+        # Expected: 20 + 23 + 10 + 50 = 103 eps; 1000 + 1050 + 400 + 1200 = 3650 show mins; + 130 movie mins = 3780 total mins
+        self.assertEqual(py_stats["totalEpisodesWatched"], 103)
+        self.assertEqual(py_stats["episodeMins"], 3650)
+        self.assertEqual(py_stats["movieMins"], 130)
+        self.assertEqual(py_stats["totalMins"], 3780)
+
+        harness = (
+            svc_src
+            + "\n"
+            + view_src
+            + "\nconst SAMPLE_STATE = "
+            + json.dumps(sample_state)
+            + ";\n"
+            + """
+            const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+            const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+            const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+            (new Function(clientJs))();
+            const app = Object.create(globalThis.TvTimeClientClass.prototype);
+
+            const workerStats = LiveCatalogService.computeStats(SAMPLE_STATE);
+            let webEps = 0;
+            let webShowMins = 0;
+            for (const s of SAMPLE_STATE.shows) {
+              const wt = app.computeShowWatchTime(s);
+              webEps += wt.watchedCount;
+              webShowMins += wt.minutes;
+            }
+            const out = JSON.stringify({ workerStats, webEps, webShowMins });
+            if (typeof console !== "undefined" && console.log) console.log(out);
+            else if (typeof print !== "undefined") print(out);
+            """
+        )
+        out = self._run_js(harness)
+        self.assertEqual(out["workerStats"]["totalEpisodesWatched"], 103)
+        self.assertEqual(out["workerStats"]["showMinutesWatched"], 3650)
+        self.assertEqual(out["workerStats"]["movieMinutesWatched"], 130)
+        self.assertEqual(out["workerStats"]["totalMinutes"], 3780)
+        self.assertEqual(out["webEps"], 103)
+        self.assertEqual(out["webShowMins"], 3650)
+
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""
         proc = subprocess.run(

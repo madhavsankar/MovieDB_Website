@@ -116,40 +116,70 @@ def compute_stats(state):
     movies = state.get("movies") or []
     episode_mins = 0
     episodes_watched = 0
+    today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     for show in shows:
-        eps = show.get("episodes") or []
+        eps = [e for e in (show.get("episodes") or []) if isinstance(e, dict)]
         raw_status = str(show.get("userStatus") or "").lower()
-        default_rt = int(show.get("runtimeMins") or 45)
+        default_rt = max(15, int(show.get("runtimeMins") or 45))
         watched_set = {str(c or "").strip().upper() for c in (show.get("watchedEpisodes") or []) if str(c or "").strip()}
-        present_seasons = {str(int(ep.get("season") or 1)) for ep in eps if isinstance(ep, dict)}
+        comp_seasons = show.get("completedSeasons") if isinstance(show.get("completedSeasons"), dict) else {}
+        comp_season_nums = set()
         compacted_count = 0
-        comp_seasons = show.get("completedSeasons")
-        if isinstance(comp_seasons, dict):
-            for sk, cnt in comp_seasons.items():
-                try:
-                    s_num = int(sk)
-                    c_num = max(0, int(cnt or 0))
-                    if s_num > 0 and str(s_num) not in present_seasons:
-                        compacted_count += c_num
-                except Exception:
-                    pass
-        if len(eps) == 0 and raw_status == "completed":
-            cnt = max(int(show.get("totalEpisodes") or 0), compacted_count, len(watched_set), 1)
+        for sk, cnt in comp_seasons.items():
+            try:
+                s_num = int(sk)
+                c_num = max(0, int(cnt or 0))
+                if s_num > 0 and c_num > 0:
+                    comp_season_nums.add(s_num)
+                    compacted_count += c_num
+            except Exception:
+                pass
+        if raw_status == "completed" and len(watched_set) == 0 and len(comp_season_nums) == 0:
+            cnt = max(int(show.get("totalEpisodes") or 0), 1)
             episodes_watched += cnt
             episode_mins += cnt * default_rt
+        elif raw_status == "completed":
+            aired_eps = [
+                ep for ep in eps
+                if not (len(str(ep.get("airDate") or "")[:10]) == 10 and str(ep.get("airDate") or "")[:10] > today_iso)
+            ]
+            stored_total = int(show.get("totalEpisodes") or 0)
+            if aired_eps and stored_total <= len(eps):
+                episodes_watched += compacted_count
+                episode_mins += compacted_count * default_rt
+                for ep in aired_eps:
+                    s_num = int(ep.get("season") or 1)
+                    if s_num in comp_season_nums:
+                        continue
+                    episodes_watched += 1
+                    episode_mins += int(ep.get("runtimeMins") or default_rt)
+            else:
+                cnt = max(stored_total, compacted_count + len(watched_set), 1)
+                episodes_watched += cnt
+                episode_mins += cnt * default_rt
         else:
             episodes_watched += compacted_count
             episode_mins += compacted_count * default_rt
-            if eps:
-                for ep in eps:
-                    if not isinstance(ep, dict):
-                        continue
-                    if str(ep.get("code") or "").strip().upper() in watched_set:
-                        episodes_watched += 1
-                        episode_mins += int(ep.get("runtimeMins") or default_rt)
-            else:
-                episodes_watched += len(watched_set)
-                episode_mins += len(watched_set) * default_rt
+            present_codes = set()
+            for ep in eps:
+                code = str(ep.get("code") or "").strip().upper()
+                s_num = int(ep.get("season") or 1)
+                if code:
+                    present_codes.add(code)
+                if s_num in comp_season_nums:
+                    continue
+                if code and code in watched_set:
+                    episodes_watched += 1
+                    episode_mins += int(ep.get("runtimeMins") or default_rt)
+            for code in watched_set:
+                if code in present_codes:
+                    continue
+                m = re.match(r"^S0*([0-9]+)E[0-9]+$", code, re.IGNORECASE)
+                s_num = int(m.group(1)) if m else 0
+                if s_num > 0 and s_num in comp_season_nums:
+                    continue
+                episodes_watched += 1
+                episode_mins += default_rt
     watched_movies = [m for m in movies if m.get("watched")]
     movie_mins = sum(
         int(m.get("runtimeMins") or 120)

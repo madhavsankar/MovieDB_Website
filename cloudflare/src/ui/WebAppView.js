@@ -4679,6 +4679,62 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       // =========================================================
       // PROFILE, STATS, WATCHLISTS & TV TIME EXPORT/IMPORT LOGIC
       // =========================================================
+      computeShowWatchTime(show, todayOverride) {
+        const prog = this.computeShowProgress(show, todayOverride);
+        const w = prog.watchedCount;
+        const defaultRt = Math.max(15, Number(show && show.runtimeMins) || 45);
+        if (w <= 0) return { watchedCount: 0, minutes: 0 };
+
+        const episodes = Array.isArray(show.episodes) ? show.episodes : [];
+        const rawStatus = String(show.userStatus || "").toLowerCase();
+        const watchedSet = new Set(
+          (Array.isArray(show.watchedEpisodes) ? show.watchedEpisodes : [])
+            .map((c) => String(c || "").trim().toUpperCase())
+            .filter(Boolean)
+        );
+        const rawComp =
+          show.completedSeasons && typeof show.completedSeasons === "object" ? show.completedSeasons : {};
+        const completedSeasonNums = new Set();
+        let compactedCount = 0;
+        for (const [sk, cnt] of Object.entries(rawComp)) {
+          const sNum = Number(sk);
+          const cNum = Math.max(0, Number(cnt) || 0);
+          if (Number.isFinite(sNum) && sNum > 0 && cNum > 0) {
+            completedSeasonNums.add(sNum);
+            compactedCount += cNum;
+          }
+        }
+
+        if (rawStatus === "completed" && watchedSet.size === 0 && completedSeasonNums.size === 0) {
+          return { watchedCount: w, minutes: w * defaultRt };
+        }
+
+        let explicitCount = compactedCount;
+        let explicitMins = compactedCount * defaultRt;
+        const presentCodes = new Set();
+        for (const ep of episodes) {
+          const code = String(ep.code || "").trim().toUpperCase();
+          const sNum = Number(ep.season) || this.parseSeasonFromCode(code) || 1;
+          if (code) presentCodes.add(code);
+          if (completedSeasonNums.has(sNum)) continue;
+          if (code && watchedSet.has(code)) {
+            explicitCount += 1;
+            explicitMins += Number(ep.runtimeMins) || defaultRt;
+          }
+        }
+        for (const code of watchedSet) {
+          if (presentCodes.has(code)) continue;
+          const sNum = this.parseSeasonFromCode(code);
+          if (sNum > 0 && completedSeasonNums.has(sNum)) continue;
+          explicitCount += 1;
+          explicitMins += defaultRt;
+        }
+        if (explicitCount < w) {
+          explicitMins += (w - explicitCount) * defaultRt;
+        }
+        return { watchedCount: w, minutes: explicitMins };
+      }
+
       renderProfile() {
         const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
         const movies = Array.isArray(this.state.movies) ? this.state.movies : [];
@@ -4699,17 +4755,16 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         let epCount = 0;
         let showMins = 0;
         for (const s of shows) {
-          const prog = this.computeShowProgress(s);
-          const w = prog.watchedCount;
-          epCount += w;
-          showMins += w * (Number(s.runtimeMins) || 45);
+          const wt = this.computeShowWatchTime(s);
+          epCount += wt.watchedCount;
+          showMins += wt.minutes;
         }
         let movCount = 0;
         let movMins = 0;
         for (const m of movies) {
           if (m.watched) {
             movCount += 1;
-            movMins += Number(m.runtimeMins) || 120;
+            movMins += Math.max(45, Number(m.runtimeMins) || 120);
           }
         }
         const totalMins = showMins + movMins;
@@ -4723,7 +4778,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const completedShows = shows.filter((s) => this.getEffectiveShowStatus(s) === "completed");
         const activeOrCompletedShows = shows.filter((s) => {
           const st = this.getEffectiveShowStatus(s);
-          return st === "in_progress" || st === "completed";
+          const prog = this.computeShowProgress(s);
+          return st === "in_progress" || st === "completed" || (st === "stopped" && prog.watchedCount > 0);
         });
         const watchedMovies = movies.filter((m) => m.watched);
 
@@ -4748,7 +4804,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (recSeriesCountEl) recSeriesCountEl.textContent = "Series (" + activeOrCompletedShows.length + ")";
         if (recMoviesCountEl) recMoviesCountEl.textContent = "Movies (" + watchedMovies.length + ")";
 
-        // 1. Recently watched Series
+        // 1. Recently watched Series (completed, in-progress, and partially watched stopped series)
         const recSeriesEl = document.getElementById("carousel-recent-series");
         if (recSeriesEl) {
           recSeriesEl.innerHTML =
@@ -4756,7 +4812,16 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               .map((s) => {
                 const prog = this.computeShowProgress(s);
                 const eff = this.getEffectiveShowStatus(s);
-                const badge = prog.watchedCount + "/" + prog.total + " eps";
+                const badge =
+                  eff === "stopped"
+                    ? "Stopped · " + prog.watchedCount + "/" + prog.total
+                    : prog.watchedCount + "/" + prog.total + " eps";
+                const badgeColor =
+                  eff === "completed"
+                    ? "text-emerald-400"
+                    : eff === "stopped"
+                    ? "text-rose-400"
+                    : "tv-yellow-text";
                 return (
                   '<div onclick="app.openItemById(&quot;' +
                   escapeHtml(s.id) +
@@ -4768,7 +4833,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   escapeHtml(s.title) +
                   "</div>" +
                   '<div class="text-[11px] font-extrabold ' +
-                  (eff === "completed" ? "text-emerald-400" : "tv-yellow-text") +
+                  badgeColor +
                   '">' +
                   escapeHtml(badge) +
                   "</div>" +

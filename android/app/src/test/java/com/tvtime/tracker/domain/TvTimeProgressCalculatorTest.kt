@@ -485,5 +485,41 @@ class TvTimeProgressCalculatorTest {
                 "movie_88888", 88888, "Dad", 2024
             )
         )
+
+        // Watch-hours calculation includes completed seasons + partial watched episodes for both in_progress and stopped shows
+        val inProgJson = TvTimeProgressCalculator.serializeCompactedMeta(
+            totalEpisodes = 30,
+            completedSeasons = mapOf(1 to 10, 2 to 10),
+            episodes = listOf(
+                EpisodeModel("S03E01", 3, 1, "Ep 1", "2024-01-01", 45),
+                EpisodeModel("S03E02", 3, 2, "Ep 2", "2024-01-08", 45),
+                EpisodeModel("S03E03", 3, 3, "Finale", "2024-01-15", 60),
+                EpisodeModel("S03E04", 3, 4, "Ep 4", "2024-01-22", 45)
+            )
+        )
+        val (inProgEps, inProgMins) = TvTimeProgressCalculator.computeShowWatchMinutesFromJson(
+            episodesJson = inProgJson,
+            watchedCodesCsv = "S03E01,S03E02,S03E03",
+            rawUserStatus = "in_progress",
+            defaultRuntimeMins = 45,
+            todayIso = "2026-11-21"
+        )
+        assertEquals(23, inProgEps)
+        assertEquals(1050, inProgMins)
+
+        val stoppedJson = TvTimeProgressCalculator.serializeCompactedMeta(
+            totalEpisodes = 24,
+            completedSeasons = mapOf(1 to 8),
+            episodes = listOf(EpisodeModel("S04E01", 4, 1, "Premiere", "2099-09-01", 40))
+        )
+        val (stoppedEps, stoppedMins) = TvTimeProgressCalculator.computeShowWatchMinutesFromJson(
+            episodesJson = stoppedJson,
+            watchedCodesCsv = "S02E01,S02E02",
+            rawUserStatus = "stopped",
+            defaultRuntimeMins = 40,
+            todayIso = "2026-11-21"
+        )
+        assertEquals(10, stoppedEps)
+        assertEquals(400, stoppedMins)
     }
 }

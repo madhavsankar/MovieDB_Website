@@ -3030,14 +3030,14 @@ private fun StatisticsFullPageScreen(
         var epCount = 0
         var showMins = 0
         for (s in shows) {
-            val prog = TvTimeProgressCalculator.computeShowProgressFromJson(
-                s.episodesJson,
-                s.watchedCodesCsv,
-                s.userStatus
+            val (watchedCount, watchedMinutes) = TvTimeProgressCalculator.computeShowWatchMinutesFromJson(
+                episodesJson = s.episodesJson,
+                watchedCodesCsv = s.watchedCodesCsv,
+                rawUserStatus = s.userStatus,
+                defaultRuntimeMins = s.runtimeMins
             )
-            val watchedCount = prog.watchedCount
             epCount += watchedCount
-            showMins += watchedCount * s.runtimeMins.coerceAtLeast(15)
+            showMins += watchedMinutes
         }
         var movieCount = 0
         var movieMins = 0

@@ -1631,56 +1631,76 @@ export class LiveCatalogService {
 
     let totalEpisodesWatched = 0;
     let showMinutesWatched = 0;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const isFutureEp = (ep) => {
+      const d = String(ep?.airDate || "").trim().slice(0, 10);
+      return /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d) && d > todayIso;
+    };
+
     for (const s of shows) {
       const eps = Array.isArray(s.episodes) ? s.episodes : [];
       const rawStatus = String(s.userStatus || "").toLowerCase();
-      const defaultEpRuntime = Number(s.runtimeMins) || 45;
+      const defaultEpRuntime = Math.max(15, Number(s.runtimeMins) || 45);
       const watchedSet = new Set(
         (s.watchedEpisodes || [])
           .map((c) => String(c || "").trim().toUpperCase())
           .filter(Boolean)
       );
-      const presentSeasons = new Set(eps.map((ep) => String(Number(ep.season) || 1)));
       const compMap = s.completedSeasons && typeof s.completedSeasons === "object" ? s.completedSeasons : {};
+      const completedSeasonNums = new Set();
       let compactedCount = 0;
       for (const [sk, cnt] of Object.entries(compMap)) {
         const sNum = Number(sk) || 0;
-        if (sNum > 0 && !presentSeasons.has(String(sNum))) {
-          compactedCount += Math.max(0, Number(cnt) || 0);
+        const cNum = Math.max(0, Number(cnt) || 0);
+        if (sNum > 0 && cNum > 0) {
+          completedSeasonNums.add(sNum);
+          compactedCount += cNum;
         }
       }
-      if (rawStatus === "completed") {
-        const count = Math.max(
-          Number(s.totalEpisodes) || 0,
-          eps.length + compactedCount,
-          compactedCount + watchedSet.size,
-          1
-        );
+
+      if (rawStatus === "completed" && watchedSet.size === 0 && completedSeasonNums.size === 0) {
+        const count = Math.max(Number(s.totalEpisodes) || 0, 1);
         totalEpisodesWatched += count;
         showMinutesWatched += count * defaultEpRuntime;
-      } else {
-        totalEpisodesWatched += compactedCount;
-        showMinutesWatched += compactedCount * defaultEpRuntime;
-        if (eps.length > 0) {
-          for (const ep of eps) {
-            const sk = String(Number(ep.season) || 1);
-            if (watchedSet.has(String(ep.code || "").trim().toUpperCase()) || compMap[sk]) {
-              totalEpisodesWatched += 1;
-              showMinutesWatched += Number(ep.runtimeMins) || defaultEpRuntime;
-            }
-          }
-          // Count any partial watched codes from non-present, non-compacted seasons
-          for (const code of watchedSet) {
-            const m = /^S0*([0-9]+)E[0-9]+$/i.exec(code);
-            const sStr = m ? String(Number(m[1]) || 1) : "";
-            if (!sStr || (!presentSeasons.has(sStr) && !compMap[sStr])) {
-              totalEpisodesWatched += 1;
-              showMinutesWatched += defaultEpRuntime;
-            }
+      } else if (rawStatus === "completed") {
+        const airedEps = eps.filter((ep) => !isFutureEp(ep));
+        const storedTotal = Number(s.totalEpisodes) || 0;
+        if (airedEps.length > 0 && storedTotal <= eps.length) {
+          totalEpisodesWatched += compactedCount;
+          showMinutesWatched += compactedCount * defaultEpRuntime;
+          for (const ep of airedEps) {
+            const sNum = Number(ep.season) || 1;
+            if (completedSeasonNums.has(sNum)) continue;
+            totalEpisodesWatched += 1;
+            showMinutesWatched += Number(ep.runtimeMins) || defaultEpRuntime;
           }
         } else {
-          totalEpisodesWatched += watchedSet.size;
-          showMinutesWatched += watchedSet.size * defaultEpRuntime;
+          const count = Math.max(storedTotal, compactedCount + watchedSet.size, 1);
+          totalEpisodesWatched += count;
+          showMinutesWatched += count * defaultEpRuntime;
+        }
+      } else {
+        // Covers both `in_progress` and `stopped` shows up to exact completed seasons + watched episodes
+        totalEpisodesWatched += compactedCount;
+        showMinutesWatched += compactedCount * defaultEpRuntime;
+        const presentCodes = new Set();
+        for (const ep of eps) {
+          const code = String(ep.code || "").trim().toUpperCase();
+          const sNum = Number(ep.season) || 1;
+          if (code) presentCodes.add(code);
+          if (completedSeasonNums.has(sNum)) continue;
+          if (code && watchedSet.has(code)) {
+            totalEpisodesWatched += 1;
+            showMinutesWatched += Number(ep.runtimeMins) || defaultEpRuntime;
+          }
+        }
+        for (const code of watchedSet) {
+          if (presentCodes.has(code)) continue;
+          const m = /^S0*([0-9]+)E[0-9]+$/i.exec(code);
+          const sNum = m ? Number(m[1]) || 0 : 0;
+          if (sNum > 0 && completedSeasonNums.has(sNum)) continue;
+          totalEpisodesWatched += 1;
+          showMinutesWatched += defaultEpRuntime;
         }
       }
     }
