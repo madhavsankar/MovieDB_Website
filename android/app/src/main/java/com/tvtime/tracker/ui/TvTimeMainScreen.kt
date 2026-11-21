@@ -4116,11 +4116,39 @@ private fun FriendsFullPageScreen(
                                     color = Color.White
                                 )
                                 val lib = selectedFriendLibrary
+                                val unwatchedFriendShowsCount = if (lib != null) {
+                                    lib.shows.count { fs ->
+                                        val mine = myShows.firstOrNull { ms ->
+                                            TvTimeProgressCalculator.doesRecMatchShow(
+                                                ms.externalId, ms.tmdbId, ms.tvmazeId, ms.title, ms.year,
+                                                fs.externalId, fs.tmdbId, fs.tvmazeId, fs.title, fs.year
+                                            )
+                                        } ?: return@count true
+                                        val myProg = TvTimeProgressCalculator.computeShowProgressFromJson(
+                                            mine.episodesJson,
+                                            mine.watchedCodesCsv,
+                                            mine.userStatus
+                                        )
+                                        val myEff = TvTimeProgressCalculator.deriveEffectiveShowStatus(myProg, mine.userStatus)
+                                        myEff == "interested" && myProg.watchedCount == 0
+                                    }
+                                } else 0
+                                val unwatchedFriendMoviesCount = if (lib != null) {
+                                    lib.movies.count { fm ->
+                                        val mine = myMovies.firstOrNull { mm ->
+                                            TvTimeProgressCalculator.doesRecMatchMovie(
+                                                mm.externalId, mm.tmdbId, mm.title, mm.year,
+                                                fm.externalId, fm.tmdbId, fm.title, fm.year
+                                            )
+                                        }
+                                        mine == null || !mine.watched
+                                    }
+                                } else 0
                                 Text(
                                     text = when {
                                         isLoadingLibrary -> "Loading..."
                                         lib == null -> "Unable to load library"
-                                        else -> "${lib.shows.size} series · ${lib.movies.size} movies"
+                                        else -> "$unwatchedFriendShowsCount unwatched series · $unwatchedFriendMoviesCount unwatched movies"
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (!isLoadingLibrary && lib == null) TvTimePalette.Error else TvTimePalette.TextSecondary
@@ -4185,23 +4213,53 @@ private fun FriendsFullPageScreen(
                                 }
                             }
                         } else if (!isLoadingLibrary && lib != null) {
+                            // Keep ONLY movies and series that the current user hasn't watched yet
+                            val unwatchedFriendMovies = remember(lib.movies, myMovies) {
+                                lib.movies.filter { fm ->
+                                    val mine = myMovies.firstOrNull { mm ->
+                                        TvTimeProgressCalculator.doesRecMatchMovie(
+                                            mm.externalId, mm.tmdbId, mm.title, mm.year,
+                                            fm.externalId, fm.tmdbId, fm.title, fm.year
+                                        )
+                                    }
+                                    mine == null || !mine.watched
+                                }
+                            }
+                            val unwatchedFriendShows = remember(lib.shows, myShows) {
+                                lib.shows.filter { fs ->
+                                    val mine = myShows.firstOrNull { ms ->
+                                        TvTimeProgressCalculator.doesRecMatchShow(
+                                            ms.externalId, ms.tmdbId, ms.tvmazeId, ms.title, ms.year,
+                                            fs.externalId, fs.tmdbId, fs.tvmazeId, fs.title, fs.year
+                                        )
+                                    } ?: return@filter true
+                                    val myProg = TvTimeProgressCalculator.computeShowProgressFromJson(
+                                        mine.episodesJson,
+                                        mine.watchedCodesCsv,
+                                        mine.userStatus
+                                    )
+                                    val myEff = TvTimeProgressCalculator.deriveEffectiveShowStatus(myProg, mine.userStatus)
+                                    myEff == "interested" && myProg.watchedCount == 0
+                                }
+                            }
+
                             val filterOptions = if (librarySegment == "movies") {
                                 listOf(
-                                    "all" to "All (${lib.movies.size})",
-                                    "interested" to "Watchlist (${lib.movies.count { !it.watched }})",
-                                    "completed" to "Watched (${lib.movies.count { it.watched }})"
+                                    "all" to "All (${unwatchedFriendMovies.size})",
+                                    "interested" to "Watchlist (${unwatchedFriendMovies.count { !it.watched }})",
+                                    "completed" to "Watched (${unwatchedFriendMovies.count { it.watched }})"
                                 )
                             } else {
-                                val statuses = lib.shows.map { s ->
+                                val statuses = unwatchedFriendShows.map { s ->
                                     val prog = TvTimeProgressCalculator.computeShowProgressFromJson(
                                         s.episodesJson,
                                         s.watchedCodesCsv,
                                         s.userStatus
                                     )
                                     s to TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus)
-                                }
+                                    }
                                 listOf(
-                                    "all" to "All (${lib.shows.size})",
+                                    "all" to "All (${unwatchedFriendShows.size})",
                                     "in_progress" to "In Progress (${statuses.count { it.second == "in_progress" }})",
                                     "interested" to "Watchlist (${statuses.count { it.second == "interested" }})",
                                     "completed" to "Completed (${statuses.count { it.second == "completed" }})"
@@ -4228,7 +4286,7 @@ private fun FriendsFullPageScreen(
                             }
 
                             if (librarySegment == "movies") {
-                                val filteredFriendMovies = lib.movies.filter { m ->
+                                val filteredFriendMovies = unwatchedFriendMovies.filter { m ->
                                     when (friendFilter) {
                                         "completed" -> m.watched
                                         "interested" -> !m.watched
@@ -4237,14 +4295,14 @@ private fun FriendsFullPageScreen(
                                 }
                                 if (filteredFriendMovies.isEmpty()) {
                                     Text(
-                                        text = "No movies in this category.",
+                                        text = "No unwatched movies in this category.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = TvTimePalette.TextSecondary
                                     )
                                 } else {
                                     filteredFriendMovies.forEach { m ->
                                         val myMovie = myMovies.firstOrNull { mine ->
-                                            TvTimeProgressCalculator.doesMovieMatch(
+                                            TvTimeProgressCalculator.doesRecMatchMovie(
                                                 mine.externalId, mine.tmdbId, mine.title, mine.year,
                                                 m.externalId, m.tmdbId, m.title, m.year
                                             )
@@ -4351,7 +4409,7 @@ private fun FriendsFullPageScreen(
                                     }
                                 }
                             } else {
-                                val filteredFriendShows = lib.shows.filter { s ->
+                                val filteredFriendShows = unwatchedFriendShows.filter { s ->
                                     if (friendFilter == "all") true
                                     else {
                                         val prog = TvTimeProgressCalculator.computeShowProgressFromJson(
@@ -4364,14 +4422,14 @@ private fun FriendsFullPageScreen(
                                 }
                                 if (filteredFriendShows.isEmpty()) {
                                     Text(
-                                        text = "No series in this category.",
+                                        text = "No unwatched series in this category.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = TvTimePalette.TextSecondary
                                     )
                                 } else {
                                     filteredFriendShows.forEach { s ->
                                         val myShow = myShows.firstOrNull { mine ->
-                                            TvTimeProgressCalculator.doesShowMatch(
+                                            TvTimeProgressCalculator.doesRecMatchShow(
                                                 mine.externalId, mine.tmdbId, mine.tvmazeId, mine.title, mine.year,
                                                 s.externalId, s.tmdbId, s.tvmazeId, s.title, s.year
                                             )

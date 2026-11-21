@@ -1450,6 +1450,102 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["webEps"], 103)
         self.assertEqual(out["webShowMins"], 3650)
 
+    def test_friend_library_keeps_only_unwatched_movies_and_shows(self):
+        """Verifies viewing a friend's library/watchlist keeps only movies & shows the current user hasn't watched (including CSV/TVMaze title variants)."""
+        import re as _re
+
+        with open(os.path.join(ROOT_DIR, "cloudflare", "src", "ui", "WebAppView.js"), "r", encoding="utf-8") as f:
+            view_src = _re.sub(r"^import\s+.*?;\s*$", "", f.read(), flags=_re.MULTILINE).replace("export const ", "const ")
+
+        harness = (
+            """
+            const domMap = {};
+            const mkEl = () => ({
+              innerHTML: "",
+              textContent: "",
+              className: "",
+              classList: { add() {}, remove() {} }
+            });
+            for (const id of [
+              "friend-library-panel",
+              "friend-library-title",
+              "friend-library-subtitle",
+              "friend-lib-seg-shows",
+              "friend-lib-seg-movies",
+              "friend-lib-filter-bar",
+              "friend-library-items"
+            ]) {
+              domMap[id] = mkEl();
+            }
+            globalThis.document = {
+              getElementById: (id) => domMap[id] || null,
+              querySelectorAll: () => [],
+              addEventListener: () => {}
+            };
+            """
+            + "\n"
+            + view_src
+            + """
+            const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+            const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+            const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+            (new Function(clientJs))();
+            const app = Object.create(globalThis.TvTimeClientClass.prototype);
+
+            app.selectedFriendId = "anu.deoghare28";
+            app.isLoadingFriendLibrary = false;
+            app.friendLibraryError = "";
+            app.state = {
+              movies: [
+                { id: "csv_movie_lotr_1", tmdbId: 0, title: "Lord of the Rings: The Fellowship of the Ring", year: 2001, watched: true },
+                { id: "movie_555", tmdbId: 555, title: "Shared Watchlist Movie", year: 2024, watched: false }
+              ],
+              shows: [
+                { id: "tvmaze_4712", tmdbId: 0, tvmazeId: 4712, title: "Death Note", year: 2015, userStatus: "completed", totalEpisodes: 37, episodes: [], watchedEpisodes: [] },
+                { id: "tmdb_tv_999", tmdbId: 999, title: "Already Watching Show", year: 2023, userStatus: "in_progress", totalEpisodes: 10, watchedEpisodes: ["S01E01"], episodes: [] },
+                { id: "tmdb_tv_777", tmdbId: 777, title: "My Watchlist Show", year: 2025, userStatus: "interested", totalEpisodes: 8, watchedEpisodes: [], episodes: [] }
+              ]
+            };
+            app.selectedFriendLibrary = {
+              movies: [
+                { id: "movie_120", tmdbId: 120, title: "The Lord of the Rings: The Fellowship of the Ring", year: 2001, watched: true },
+                { id: "movie_555", tmdbId: 555, title: "Shared Watchlist Movie", year: 2024, watched: false },
+                { id: "movie_888", tmdbId: 888, title: "Brand New Friend Movie", year: 2025, watched: false }
+              ],
+              shows: [
+                { id: "tmdb_tv_13916", tmdbId: 13916, title: "Death Note", year: 2006, userStatus: "completed", totalEpisodes: 37, episodes: [], watchedEpisodes: [] },
+                { id: "tmdb_tv_999", tmdbId: 999, title: "Already Watching Show", year: 2023, userStatus: "interested", totalEpisodes: 10, episodes: [], watchedEpisodes: [] },
+                { id: "tmdb_tv_777", tmdbId: 777, title: "My Watchlist Show", year: 2025, userStatus: "completed", totalEpisodes: 8, episodes: [], watchedEpisodes: [] },
+                { id: "tmdb_tv_333", tmdbId: 333, title: "Unwatched Friend Show", year: 2024, userStatus: "interested", totalEpisodes: 12, episodes: [], watchedEpisodes: [] }
+              ]
+            };
+
+            app.friendLibrarySegment = "shows";
+            app.friendLibraryFilter = "all";
+            app.renderFriendLibrary();
+            const showsHtml = domMap["friend-library-items"].innerHTML;
+            const subtitle = domMap["friend-library-subtitle"].textContent;
+
+            app.friendLibrarySegment = "movies";
+            app.friendLibraryFilter = "all";
+            app.renderFriendLibrary();
+            const moviesHtml = domMap["friend-library-items"].innerHTML;
+
+            const out = JSON.stringify({ subtitle, showsHtml, moviesHtml });
+            if (typeof console !== "undefined" && console.log) console.log(out);
+            else if (typeof print !== "undefined") print(out);
+            """
+        )
+        out = self._run_js(harness)
+        self.assertEqual(out["subtitle"], "2 unwatched series · 2 unwatched movies")
+        self.assertNotIn("Death Note", out["showsHtml"])
+        self.assertNotIn("Already Watching Show", out["showsHtml"])
+        self.assertIn("My Watchlist Show", out["showsHtml"])
+        self.assertIn("Unwatched Friend Show", out["showsHtml"])
+        self.assertNotIn("Fellowship of the Ring", out["moviesHtml"])
+        self.assertIn("Shared Watchlist Movie", out["moviesHtml"])
+        self.assertIn("Brand New Friend Movie", out["moviesHtml"])
+
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""
         proc = subprocess.run(

@@ -6306,10 +6306,27 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           return;
         }
 
-        const friendShows = Array.isArray(lib.shows) ? lib.shows : [];
-        const friendMovies = Array.isArray(lib.movies) ? lib.movies : [];
+        const rawFriendShows = Array.isArray(lib.shows) ? lib.shows : [];
+        const rawFriendMovies = Array.isArray(lib.movies) ? lib.movies : [];
+        const myShowsList = Array.isArray(this.state.shows) ? this.state.shows : [];
+        const myMoviesList = Array.isArray(this.state.movies) ? this.state.movies : [];
+
+        // Keep ONLY series & movies that the current user has NOT watched yet
+        const friendShows = rawFriendShows.filter((s) => {
+          const myShow = myShowsList.find((myS) => this.doesRecMatchShow(myS, s));
+          if (!myShow) return true;
+          const myEff = this.getEffectiveShowStatus(myShow);
+          const myProg = this.computeShowProgress(myShow);
+          return myEff === "interested" && myProg.watchedCount === 0;
+        });
+        const friendMovies = rawFriendMovies.filter((m) => {
+          const myMovie = myMoviesList.find((myM) => this.doesRecMatchMovie(myM, m));
+          return !myMovie || !myMovie.watched;
+        });
+
         if (subEl) {
-          subEl.textContent = friendShows.length + " series · " + friendMovies.length + " movies";
+          subEl.textContent =
+            friendShows.length + " unwatched series · " + friendMovies.length + " unwatched movies";
         }
 
         const filterDefs =
@@ -6375,7 +6392,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           });
           if (list.length === 0) {
             itemsBox.innerHTML =
-              '<p class="text-xs text-zinc-400 py-6 text-center">No movies in this category.</p>';
+              '<p class="text-xs text-zinc-400 py-6 text-center">No unwatched movies in this category.</p>';
             return;
           }
           itemsBox.innerHTML = list
@@ -6387,7 +6404,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               const statusBadge = m.watched
                 ? '<span class="text-[11px] font-bold text-emerald-400">✓ Watched</span>'
                 : '<span class="text-[11px] font-bold tv-yellow-text">Watchlist</span>';
-              const myMovie = (this.state.movies || []).find((myM) => this.doesMovieMatchItem(myM, m));
+              const myMovie = myMoviesList.find((myM) => this.doesRecMatchMovie(myM, m));
               let addBtn = "";
               if (!myMovie) {
                 addBtn =
@@ -6399,7 +6416,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   escapeHtml(m.id) +
                   '&quot;, &quot;completed&quot;)" class="px-2.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500 hover:text-white text-[11px] font-extrabold shrink-0 transition">✓ Watched</button>' +
                   "</div>";
-              } else if (!myMovie.watched) {
+              } else {
                 addBtn =
                   '<div class="flex items-center gap-1.5 shrink-0">' +
                   '<span class="px-2 py-1 rounded-full bg-zinc-800 text-zinc-400 text-[10px] font-bold">In Watchlist</span>' +
@@ -6407,9 +6424,6 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   escapeHtml(m.id) +
                   '&quot;, &quot;completed&quot;)" class="px-2.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500 hover:text-white text-[11px] font-extrabold shrink-0 transition">✓ Watched</button>' +
                   "</div>";
-              } else {
-                addBtn =
-                  '<span class="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[11px] font-bold shrink-0">✓ In Watched</span>';
               }
               return (
                 '<div class="tv-pill-bar rounded-2xl p-2.5 flex items-center justify-between gap-3 border border-zinc-800/80">' +
@@ -6443,7 +6457,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         });
         if (list.length === 0) {
           itemsBox.innerHTML =
-            '<p class="text-xs text-zinc-400 py-6 text-center">No series in this category.</p>';
+            '<p class="text-xs text-zinc-400 py-6 text-center">No unwatched series in this category.</p>';
           return;
         }
         itemsBox.innerHTML = list
@@ -6466,8 +6480,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 : eff === "in_progress"
                 ? "tv-yellow-text"
                 : "text-zinc-400";
-            const myShow = (this.state.shows || []).find((myS) => this.doesShowMatchItem(myS, s));
-            const myEff = myShow ? this.getEffectiveShowStatus(myShow) : "";
+            const myShow = myShowsList.find((myS) => this.doesRecMatchShow(myS, s));
             let addBtn = "";
             if (!myShow) {
               addBtn =
@@ -6479,19 +6492,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 escapeHtml(s.id) +
                 '&quot;, &quot;completed&quot;)" class="px-2.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500 hover:text-white text-[11px] font-extrabold shrink-0 transition">✓ Completed</button>' +
                 "</div>";
-            } else if (myEff !== "completed") {
+            } else {
               addBtn =
                 '<div class="flex items-center gap-1.5 shrink-0">' +
-                '<span class="px-2 py-1 rounded-full bg-zinc-800 text-zinc-400 text-[10px] font-bold">' +
-                (myEff === "in_progress" ? "Watching" : "In Watchlist") +
-                "</span>" +
+                '<span class="px-2 py-1 rounded-full bg-zinc-800 text-zinc-400 text-[10px] font-bold">In Watchlist</span>' +
                 '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;show&quot;, &quot;' +
                 escapeHtml(s.id) +
                 '&quot;, &quot;completed&quot;)" class="px-2.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500 hover:text-white text-[11px] font-extrabold shrink-0 transition">✓ Completed</button>' +
                 "</div>";
-            } else {
-              addBtn =
-                '<span class="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[11px] font-bold shrink-0">✓ Completed</span>';
             }
             return (
               '<div class="tv-pill-bar rounded-2xl p-2.5 flex items-center justify-between gap-3 border border-zinc-800/80">' +
@@ -6528,7 +6536,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (mediaType === "movie") {
           const found = (lib.movies || []).find((m) => m.id === itemId);
           if (!found) return;
-          const existing = (this.state.movies || []).find((m) => this.doesMovieMatchItem(m, found));
+          const existing = (this.state.movies || []).find((m) => this.doesRecMatchMovie(m, found));
           if (existing) {
             if (markCompleted) {
               existing.watched = true;
@@ -6554,7 +6562,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               ? found.episodes.map((e) => this.compactEpisode(e))
               : [];
           const knownTotal = Math.max(Number(found.totalEpisodes) || 0, friendProg.total || 0, eps.length, 1);
-          const existing = (this.state.shows || []).find((s) => this.doesShowMatchItem(s, found));
+          const existing = (this.state.shows || []).find((s) => this.doesRecMatchShow(s, found));
           if (existing) {
             if (markCompleted) {
               existing.totalEpisodes = Math.max(Number(existing.totalEpisodes) || 0, knownTotal);
