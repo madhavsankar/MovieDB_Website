@@ -344,19 +344,79 @@ def search_multi(query, page=1):
         tmdb_key = (CONFIG.get("TMDB_API_KEY") or os.environ.get("TMDB_API_KEY") or "").strip()
         seen_tv = set()
         if tmdb_token or tmdb_key:
-            try:
-                sep = "&"
+            def _tmdb_tv_get(path):
+                sep = "&" if "?" in path else "?"
                 url = (
-                    f"https://api.themoviedb.org/3/search/tv?query={enc}&include_adult=false&language=en-US&page={safe_page}"
+                    f"https://api.themoviedb.org/3{path}"
                     if tmdb_token
-                    else f"https://api.themoviedb.org/3/search/tv?query={enc}&include_adult=false&language=en-US&page={safe_page}{sep}api_key={urllib.parse.quote(tmdb_key)}"
+                    else f"https://api.themoviedb.org/3{path}{sep}api_key={urllib.parse.quote(tmdb_key)}"
                 )
                 req_headers = {"User-Agent": "TVTimeTracker/1.0", "Accept": "application/json"}
                 if tmdb_token:
                     req_headers["Authorization"] = f"Bearer {tmdb_token}"
                 req = urllib.request.Request(url, headers=req_headers)
                 with urllib.request.urlopen(req, timeout=8) as r:
-                    tv_data = json.loads(r.read().decode("utf-8"))
+                    return json.loads(r.read().decode("utf-8"))
+
+            try:
+                person_data = _tmdb_tv_get(f"/search/person?query={enc}&include_adult=false&language=en-US&page=1")
+                for person in (person_data.get("results") or [])[:2]:
+                    pid = person.get("id")
+                    pname = str(person.get("name") or "").strip()
+                    if not pid or not pname:
+                        continue
+                    credits = _tmdb_tv_get(f"/person/{pid}/tv_credits?language=en-US")
+                    cast_shows = []
+                    for s in (credits.get("cast") or []):
+                        g_ids = {int(g) for g in (s.get("genre_ids") or []) if g}
+                        ep_cnt = int(s.get("episode_count") or 0)
+                        ch = str(s.get("character") or "").strip().lower()
+                        is_self = ch in ("self",) or ch.startswith("self ") or ch.startswith("self-") or "himself" in ch or "herself" in ch or "guest" in ch or "archive" in ch
+                        if (10767 in g_ids or 10763 in g_ids) and ep_cnt < 15:
+                            continue
+                        if is_self and ep_cnt <= 3:
+                            continue
+                        cast_shows.append(s)
+                    cast_shows.sort(
+                        key=lambda s: (float(s.get("popularity") or 0) + min(300.0, float(s.get("vote_count") or 0) / 12.0) + (25.0 if int(s.get("episode_count") or 0) >= 4 else 0.0), int(s.get("id") or 0)),
+                        reverse=True,
+                    )
+                    slice_start = (safe_page - 1) * 20
+                    slice_end = slice_start + 20
+                    if len(cast_shows) > slice_end:
+                        has_more_flags[0] = True
+                    for s in cast_shows[slice_start:slice_end]:
+                        title = s.get("name") or s.get("original_name")
+                        if not s.get("id") or not title:
+                            continue
+                        k = title.lower().strip()
+                        if k in seen_tv:
+                            continue
+                        seen_tv.add(k)
+                        prem = str(s.get("first_air_date") or "2024")[:4]
+                        yr = int(prem) if prem.isdigit() else 2024
+                        poster_path = s.get("poster_path") or ""
+                        raw_ov = strip_html(s.get("overview") or "")
+                        out.append({
+                            "id": f"tmdb_tv_{s['id']}",
+                            "tvmazeId": 0,
+                            "tmdbId": s["id"],
+                            "mediaType": "show",
+                            "title": title,
+                            "year": yr,
+                            "network": "Streaming",
+                            "status": "Running",
+                            "runtimeMins": 45,
+                            "genres": ["TV Series"],
+                            "cast": [pname],
+                            "rating": round(float(s.get("vote_average") or 8.0), 1),
+                            "posterUrl": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else "",
+                            "overview": f"Starring {pname} · {raw_ov}" if raw_ov else f"Starring {pname}",
+                        })
+            except Exception:
+                pass
+            try:
+                tv_data = _tmdb_tv_get(f"/search/tv?query={enc}&include_adult=false&language=en-US&page={safe_page}")
                 if safe_page < int(tv_data.get("total_pages") or 1):
                     has_more_flags[0] = True
                 for item in (tv_data.get("results") or []):

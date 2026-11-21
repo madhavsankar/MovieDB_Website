@@ -434,11 +434,11 @@ export class LiveCatalogService {
           normalizeSearchTitle(matchedPersons[0].name || "") === normQuery);
 
       const ACTOR_PAGE_SIZE = 30;
-      const actorMovieItems = [];
+      const actorCreditItems = [];
       if (matchedPersons.length > 0) {
         const creditReqs = matchedPersons.slice(0, 2).map((p) => {
           const cReq = LiveCatalogService._buildTmdbRequest(
-            `/person/${p.id}/movie_credits?language=en-US`,
+            `/person/${p.id}/combined_credits?language=en-US`,
             env
           );
           return cReq
@@ -450,77 +450,143 @@ export class LiveCatalogService {
         });
         const creditBatches = (await Promise.all(creditReqs)).filter(Boolean);
         for (const batch of creditBatches) {
-          const cleanCast = (batch.cast || []).filter((m) => {
-            if (!m || !m.id || !(m.title || m.original_title)) return false;
-            const gIds = Array.isArray(m.genre_ids) ? m.genre_ids : [];
-            const charLower = String(m.character || "").toLowerCase();
-            const isSelfDoc =
-              gIds.includes(99) &&
-              (charLower.includes("self") ||
-                charLower.includes("himself") ||
-                charLower.includes("herself") ||
-                charLower.includes("archive")) &&
-              (Number(m.vote_count) || 0) < 200;
+          const cleanCast = (batch.cast || []).filter((c) => {
+            if (!c || !c.id) return false;
+            const rawType = String(c.media_type || (c.first_air_date && !c.title ? "tv" : "movie")).toLowerCase();
+            if (rawType !== "movie" && rawType !== "tv") return false;
+            const hasTitle = rawType === "tv" ? Boolean(c.name || c.original_name) : Boolean(c.title || c.original_title);
+            if (!hasTitle) return false;
+
+            const gIds = Array.isArray(c.genre_ids) ? c.genre_ids.map(Number) : [];
+            const charLower = String(c.character || "").trim().toLowerCase();
+            const epCount = Number(c.episode_count) || 0;
+            const votes = Number(c.vote_count) || 0;
+            const isSelfRole =
+              charLower === "self" ||
+              charLower.startsWith("self ") ||
+              charLower.startsWith("self-") ||
+              charLower.includes("himself") ||
+              charLower.includes("herself") ||
+              charLower.includes("archive") ||
+              charLower.includes("guest");
+
+            if (rawType === "tv") {
+              // Exclude late-night talk shows (10767) & news (10763) guest spots unless the person is the multi-episode host
+              if ((gIds.includes(10767) || gIds.includes(10763)) && epCount < 15) return false;
+              // Exclude documentary (99) / reality (10764) guest appearances
+              if ((gIds.includes(99) || gIds.includes(10764)) && (isSelfRole || !charLower) && !(epCount >= 10 && votes >= 200)) {
+                return false;
+              }
+              // Exclude explicit Self/Archive cameos (award shows, specials)
+              if (isSelfRole && epCount <= 3) return false;
+              return true;
+            }
+
+            const isSelfDoc = gIds.includes(99) && isSelfRole && votes < 200;
             return !isSelfDoc;
           });
-          cleanCast.sort((a, b) => {
-            const aVotes = Number(a.vote_count) || 0;
-            const bVotes = Number(b.vote_count) || 0;
-            const aScore =
-              aVotes >= 30
-                ? (Number(a.popularity) || 0) + Math.min(300, aVotes / 20)
-                : (Number(a.popularity) || 0) * 0.2;
-            const bScore =
-              bVotes >= 30
-                ? (Number(b.popularity) || 0) + Math.min(300, bVotes / 20)
-                : (Number(b.popularity) || 0) * 0.2;
-            return bScore - aScore || (Number(b.id) || 0) - (Number(a.id) || 0);
-          });
+          const scoreCredit = (c) => {
+            const rawType = String(c.media_type || (c.first_air_date && !c.title ? "tv" : "movie")).toLowerCase();
+            const isTv = rawType === "tv";
+            const votes = Number(c.vote_count) || 0;
+            const pop = Number(c.popularity) || 0;
+            const epCount = Number(c.episode_count) || 0;
+            const starringBonus = isTv && epCount >= 4 ? 25 : 0;
+            const voteBoost = Math.min(300, votes / (isTv ? 6 : 20));
+            const base =
+              votes >= (isTv ? 10 : 25)
+                ? pop + voteBoost + starringBonus
+                : pop * 0.2;
+            return isTv && epCount === 1 && votes < 5000 ? base * 0.35 : base;
+          };
+          cleanCast.sort((a, b) => scoreCredit(b) - scoreCredit(a) || (Number(b.id) || 0) - (Number(a.id) || 0));
           const sliceStart = (safePage - 1) * ACTOR_PAGE_SIZE;
           const sliceEnd = sliceStart + ACTOR_PAGE_SIZE;
           if (cleanCast.length > sliceEnd) actorHasMore = true;
-          for (const m of cleanCast.slice(sliceStart, sliceEnd)) {
-            actorMovieItems.push({ movie: m, personName: batch.personName });
+          for (const c of cleanCast.slice(sliceStart, sliceEnd)) {
+            actorCreditItems.push({ credit: c, personName: batch.personName });
           }
         }
       }
 
-      const pushActorMovies = () => {
-        for (const entry of actorMovieItems) {
-          const m = entry.movie;
-          const mId = Number(m.id) || 0;
-          if (mId > 0 && seenMovieTmdbIds.has(mId)) continue;
-          const title = m.title || m.original_title || "Untitled Movie";
-          const rel = String(m.release_date || "");
-          const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
-          const key = `${normalizeSearchTitle(title)}_${year}`;
-          if (seenMovieTitles.has(key)) continue;
-          if (mId > 0) seenMovieTmdbIds.add(mId);
-          seenMovieTitles.add(key);
-          recordMovieTitleYear(normalizeBaseTitle(title), year);
-          tmdbMovieCount += 1;
-          const posterUrl = m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : "";
-          const cleanOverview = stripHtml(m.overview || "");
-          results.push({
-            id: `movie_${m.id}`,
-            tmdbId: m.id,
-            mediaType: "movie",
-            title,
-            year,
-            director: `Starring ${entry.personName}`,
-            cast: [entry.personName],
-            runtimeMins: 125,
-            genres: ["Movie"],
-            streamingService: "Theaters / Streaming",
-            rating: m.vote_average ? Math.round(Number(m.vote_average) * 10) / 10 : 7.8,
-            posterUrl,
-            overview: cleanOverview ? `Starring ${entry.personName} · ${cleanOverview}` : `Starring ${entry.personName}`,
-          });
+      const pushActorCredits = () => {
+        for (const entry of actorCreditItems) {
+          const c = entry.credit;
+          const rawType = String(c.media_type || (c.first_air_date && !c.title ? "tv" : "movie")).toLowerCase();
+          if (rawType === "tv") {
+            const tvId = Number(c.id) || 0;
+            if (tvId > 0 && seenShowTmdbIds.has(tvId)) continue;
+            const title = c.name || c.original_name || "Untitled Show";
+            const normTitle = normalizeSearchTitle(title);
+            const firstAir = String(c.first_air_date || "");
+            const year = firstAir ? parseInt(firstAir.slice(0, 4), 10) || 2024 : 2024;
+            const showKey = `${normTitle}_${year}`;
+            if (!normTitle || seenShowTitles.has(showKey)) continue;
+            if (tvId > 0) seenShowTmdbIds.add(tvId);
+            seenShowTitles.add(showKey);
+            recordShowTitleYear(normalizeBaseTitle(title), year);
+            const candidates = tvmazeByTitle.get(normTitle) || [];
+            const matchedTvMaze =
+              candidates.find((cand) => {
+                const mYear = parseInt(String(cand?.premiered || "").slice(0, 4), 10) || 0;
+                return !seenShowTvmazeIds.has(cand.id) && mYear > 0 && year > 0 && Math.abs(mYear - year) <= 1;
+              }) || null;
+            if (matchedTvMaze?.id) seenShowTvmazeIds.add(matchedTvMaze.id);
+            const posterUrl = c.poster_path
+              ? `https://image.tmdb.org/t/p/w500${c.poster_path}`
+              : (matchedTvMaze?.image?.medium || "").replace(/^http:\/\//i, "https://");
+            const cleanOverview = stripHtml(c.overview || matchedTvMaze?.summary || "");
+            results.push({
+              id: `tmdb_tv_${c.id}`,
+              tvmazeId: matchedTvMaze ? matchedTvMaze.id : 0,
+              tmdbId: c.id,
+              mediaType: "show",
+              title,
+              year,
+              network: matchedTvMaze?.network?.name || matchedTvMaze?.webChannel?.name || "Streaming",
+              status: matchedTvMaze?.status || "Running",
+              runtimeMins: Number(matchedTvMaze?.averageRuntime || matchedTvMaze?.runtime) || 45,
+              genres: Array.isArray(matchedTvMaze?.genres) ? matchedTvMaze.genres : ["TV Series"],
+              cast: [entry.personName],
+              rating: c.vote_average ? Math.round(Number(c.vote_average) * 10) / 10 : 8.0,
+              posterUrl,
+              overview: cleanOverview ? `Starring ${entry.personName} · ${cleanOverview}` : `Starring ${entry.personName}`,
+            });
+          } else {
+            const mId = Number(c.id) || 0;
+            if (mId > 0 && seenMovieTmdbIds.has(mId)) continue;
+            const title = c.title || c.original_title || "Untitled Movie";
+            const rel = String(c.release_date || "");
+            const year = rel ? parseInt(rel.slice(0, 4), 10) || 2024 : 2024;
+            const key = `${normalizeSearchTitle(title)}_${year}`;
+            if (seenMovieTitles.has(key)) continue;
+            if (mId > 0) seenMovieTmdbIds.add(mId);
+            seenMovieTitles.add(key);
+            recordMovieTitleYear(normalizeBaseTitle(title), year);
+            tmdbMovieCount += 1;
+            const posterUrl = c.poster_path ? `https://image.tmdb.org/t/p/w500${c.poster_path}` : "";
+            const cleanOverview = stripHtml(c.overview || "");
+            results.push({
+              id: `movie_${c.id}`,
+              tmdbId: c.id,
+              mediaType: "movie",
+              title,
+              year,
+              director: `Starring ${entry.personName}`,
+              cast: [entry.personName],
+              runtimeMins: 125,
+              genres: ["Movie"],
+              streamingService: "Theaters / Streaming",
+              rating: c.vote_average ? Math.round(Number(c.vote_average) * 10) / 10 : 7.8,
+              posterUrl,
+              overview: cleanOverview ? `Starring ${entry.personName} · ${cleanOverview}` : `Starring ${entry.personName}`,
+            });
+          }
         }
       };
 
       if (actorIsPrimary) {
-        pushActorMovies();
+        pushActorCredits();
       }
 
       combinedTmdbItems.sort((a, b) => {
@@ -603,11 +669,11 @@ export class LiveCatalogService {
         }
       }
 
-      if (!actorIsPrimary && actorMovieItems.length > 0) {
-        pushActorMovies();
+      if (!actorIsPrimary && actorCreditItems.length > 0) {
+        pushActorCredits();
       }
 
-      if (!actorIsPrimary || actorMovieItems.length === 0) {
+      if (!actorIsPrimary || actorCreditItems.length === 0) {
         for (const entry of showsData) {
           const show = entry?.show;
           if (!show || !show.id || seenShowTvmazeIds.has(show.id)) continue;

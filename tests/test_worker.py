@@ -627,14 +627,16 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                     })
                   };
                 }
-                if (rawUrl.includes("/person/6193/movie_credits")) {
+                if (rawUrl.includes("/person/6193/combined_credits")) {
                   return {
                     ok: true,
                     json: async () => ({
                       cast: [
-                        { id: 27205, title: "Inception", release_date: "2010-07-16", popularity: 120, vote_count: 35000, vote_average: 8.4, genre_ids: [28, 878], character: "Dom Cobb", poster_path: "/inc.jpg", overview: "Dream heist." },
-                        { id: 597, title: "Titanic", release_date: "1997-11-18", popularity: 110, vote_count: 24000, vote_average: 7.9, genre_ids: [18, 10749], character: "Jack Dawson", poster_path: "/tit.jpg", overview: "Ocean liner." },
-                        { id: 999999, title: "Archive Self Short", release_date: "2020-01-01", popularity: 5, vote_count: 12, vote_average: 6.0, genre_ids: [99], character: "Self (archive footage)", overview: "Doc." }
+                        { id: 27205, media_type: "movie", title: "Inception", release_date: "2010-07-16", popularity: 120, vote_count: 35000, vote_average: 8.4, genre_ids: [28, 878], character: "Dom Cobb", poster_path: "/inc.jpg", overview: "Dream heist." },
+                        { id: 100088, media_type: "tv", name: "The Last of Us", first_air_date: "2023-01-15", popularity: 115, vote_count: 5200, vote_average: 8.6, genre_ids: [18], episode_count: 16, character: "Joel Miller", poster_path: "/tlou.jpg", overview: "Post-apocalyptic journey." },
+                        { id: 597, media_type: "movie", title: "Titanic", release_date: "1997-11-18", popularity: 110, vote_count: 24000, vote_average: 7.9, genre_ids: [18, 10749], character: "Jack Dawson", poster_path: "/tit.jpg", overview: "Ocean liner." },
+                        { id: 2224, media_type: "tv", name: "The Tonight Show", first_air_date: "2014-02-17", popularity: 95, vote_count: 800, vote_average: 6.2, genre_ids: [10767], episode_count: 2, character: "Self - Guest", poster_path: "/tonight.jpg", overview: "Late night talk." },
+                        { id: 999999, media_type: "movie", title: "Archive Self Short", release_date: "2020-01-01", popularity: 5, vote_count: 12, vote_average: 6.0, genre_ids: [99], character: "Self (archive footage)", overview: "Doc." }
                       ]
                     })
                   };
@@ -649,9 +651,10 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
               const out = JSON.stringify({
                 count: res.results.length,
                 hasActorItems: res.results.some((r) => r.mediaType === "actor"),
-                allMovies: res.results.every((r) => r.mediaType === "movie"),
+                mediaTypes: res.results.map((r) => r.mediaType),
                 titles: res.results.map((r) => r.title),
-                firstDirector: res.results[0] ? res.results[0].director : "",
+                firstMovieDirector: (res.results.find((r) => r.mediaType === "movie") || {}).director || "",
+                tvShowOverview: (res.results.find((r) => r.mediaType === "show") || {}).overview || "",
                 firstCast: res.results[0] ? res.results[0].cast : []
               });
               if (typeof console !== "undefined" && console.log) console.log(out);
@@ -661,9 +664,10 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         )
         out = self._run_js(harness)
         self.assertFalse(out["hasActorItems"])
-        self.assertTrue(out["allMovies"])
-        self.assertEqual(out["titles"], ["Inception", "Titanic"])
-        self.assertEqual(out["firstDirector"], "Starring Leonardo DiCaprio")
+        self.assertEqual(out["titles"], ["The Last of Us", "Inception", "Titanic"])
+        self.assertEqual(out["mediaTypes"], ["show", "movie", "movie"])
+        self.assertEqual(out["firstMovieDirector"], "Starring Leonardo DiCaprio")
+        self.assertIn("Starring Leonardo DiCaprio", out["tvShowOverview"])
         self.assertEqual(out["firstCast"], ["Leonardo DiCaprio"])
 
     def test_search_quick_complete_persists_immediately_and_survives_research_and_compaction(self):

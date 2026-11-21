@@ -870,8 +870,8 @@ object LiveMediaCatalogService {
                     }
                 }
 
-                // Expand actor matches into movies starring that actor (30 per page)
-                val actorMovieResults = mutableListOf<SearchResultItem>()
+                // Expand actor matches into BOTH movies and TV series starring that actor (30 per page)
+                val actorCreditResults = mutableListOf<SearchResultItem>()
                 val matchedActors = personItems.filter { p ->
                     val pid = p.optInt("id", 0)
                     val pName = normTitleKey(p.optString("name", ""))
@@ -887,48 +887,78 @@ object LiveMediaCatalogService {
                     p.optDouble("popularity", 0.0) + exactBonus
                 }.take(2)
 
+                fun scoreActorCredit(c: JSONObject): Double {
+                    val rawType = c.optString("media_type", if (c.has("first_air_date") && !c.has("title")) "tv" else "movie").lowercase()
+                    val isTv = rawType == "tv"
+                    val votes = c.optDouble("vote_count", 0.0)
+                    val pop = c.optDouble("popularity", 0.0)
+                    val epCount = c.optInt("episode_count", 0)
+                    val starringBonus = if (isTv && epCount >= 4) 25.0 else 0.0
+                    val voteBoost = minOf(300.0, votes / if (isTv) 6.0 else 18.0)
+                    val base = if (votes >= if (isTv) 10.0 else 25.0) {
+                        pop + voteBoost + starringBonus
+                    } else {
+                        pop * 0.2
+                    }
+                    return if (isTv && epCount == 1 && votes < 5000.0) base * 0.35 else base
+                }
+
                 val actorPageSize = 30
                 val actorOffset = (safePage - 1) * actorPageSize
                 for (actorObj in matchedActors) {
                     val actorId = actorObj.optInt("id", 0)
                     val actorName = actorObj.optString("name", "").trim()
-                    val creditsJson = fetchTmdbJson("/person/$actorId/movie_credits?language=en-US") ?: continue
+                    val creditsJson = fetchTmdbJson("/person/$actorId/combined_credits?language=en-US") ?: continue
                     val castArr = creditsJson.optJSONArray("cast") ?: JSONArray()
-                    val candidateMovies = mutableListOf<JSONObject>()
+                    val candidateCredits = mutableListOf<JSONObject>()
                     for (ci in 0 until castArr.length()) {
-                        val m = castArr.optJSONObject(ci) ?: continue
-                        val mid = m.optInt("id", 0)
-                        val mTitle = m.optString("title", m.optString("original_title", "")).trim()
-                        if (mid <= 0 || mTitle.isEmpty()) continue
-                        val genreIds = m.optJSONArray("genre_ids")
-                        var isDoc = false
+                        val c = castArr.optJSONObject(ci) ?: continue
+                        val cid = c.optInt("id", 0)
+                        val rawType = c.optString("media_type", if (c.has("first_air_date") && !c.has("title")) "tv" else "movie").lowercase()
+                        if (cid <= 0 || (rawType != "movie" && rawType != "tv")) continue
+                        val cTitle = if (rawType == "tv") {
+                            c.optString("name", c.optString("original_name", "")).trim()
+                        } else {
+                            c.optString("title", c.optString("original_title", "")).trim()
+                        }
+                        if (cTitle.isEmpty()) continue
+
+                        val genreIds = c.optJSONArray("genre_ids")
+                        val gSet = mutableSetOf<Int>()
                         if (genreIds != null) {
                             for (gi in 0 until genreIds.length()) {
-                                if (genreIds.optInt(gi, 0) == 99) isDoc = true
+                                gSet.add(genreIds.optInt(gi, 0))
                             }
                         }
-                        val charLower = m.optString("character", "").lowercase()
-                        val isSelf = charLower.contains("self") || charLower.contains("himself") ||
-                            charLower.contains("herself") || charLower.contains("archive")
-                        if (isDoc && isSelf && m.optInt("vote_count", 0) < 200) continue
-                        candidateMovies.add(m)
+                        val charLower = c.optString("character", "").trim().lowercase()
+                        val epCount = c.optInt("episode_count", 0)
+                        val votes = c.optInt("vote_count", 0)
+                        val isSelf = charLower == "self" || charLower.startsWith("self ") ||
+                            charLower.startsWith("self-") || charLower.contains("himself") ||
+                            charLower.contains("herself") || charLower.contains("archive") ||
+                            charLower.contains("guest")
+
+                        if (rawType == "tv") {
+                            if ((gSet.contains(10767) || gSet.contains(10763)) && epCount < 15) continue
+                            if ((gSet.contains(99) || gSet.contains(10764)) && (isSelf || charLower.isEmpty()) && !(epCount >= 10 && votes >= 200)) {
+                                continue
+                            }
+                            if (isSelf && epCount <= 3) continue
+                        } else {
+                            if (gSet.contains(99) && isSelf && votes < 200) continue
+                        }
+                        candidateCredits.add(c)
                     }
-                    candidateMovies.sortByDescending { m ->
-                        m.optDouble("popularity", 0.0) + minOf(300.0, m.optDouble("vote_count", 0.0) / 12.0)
-                    }
-                    if (candidateMovies.size > actorOffset + actorPageSize && safePage < 25) {
+                    candidateCredits.sortByDescending { c -> scoreActorCredit(c) }
+                    if (candidateCredits.size > actorOffset + actorPageSize && safePage < 25) {
                         hasMore = true
                     }
-                    for (m in candidateMovies.drop(actorOffset).take(actorPageSize)) {
-                        val mid = m.optInt("id", 0)
-                        val title = m.optString("title", m.optString("original_title", "Untitled Movie"))
-                        val year = m.optString("release_date", "").take(4).toIntOrNull() ?: 2024
-                        if (!canAddMovie(mid, title, year)) continue
-                        tmdbMovieCount++
-                        val posterPath = m.optString("poster_path", "")
+                    for (c in candidateCredits.drop(actorOffset).take(actorPageSize)) {
+                        val cid = c.optInt("id", 0)
+                        val rawType = c.optString("media_type", if (c.has("first_air_date") && !c.has("title")) "tv" else "movie").lowercase()
+                        val posterPath = c.optString("poster_path", "")
                         val poster = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else ""
-                        val rating = (m.optDouble("vote_average", 7.8).takeIf { !it.isNaN() && it > 0 } ?: 7.8)
-                        val rawOverview = stripHtml(m.optString("overview", ""))
+                        val rawOverview = stripHtml(c.optString("overview", ""))
                         val overview = if (actorName.isNotEmpty() && rawOverview.isNotEmpty()) {
                             "Starring $actorName · $rawOverview"
                         } else if (actorName.isNotEmpty()) {
@@ -936,31 +966,61 @@ object LiveMediaCatalogService {
                         } else {
                             rawOverview
                         }
-                        actorMovieResults.add(
-                            SearchResultItem(
-                                externalId = "movie_$mid",
-                                tmdbId = mid,
-                                mediaType = "movie",
-                                title = title,
-                                year = year,
-                                networkOrDirector = if (actorName.isNotEmpty()) "Starring $actorName" else "TMDB Feature Film",
-                                status = "Released",
-                                runtimeMins = 125,
-                                genresCsv = "Movie",
-                                castCsv = actorName,
-                                rating = Math.round(rating * 10.0) / 10.0,
-                                posterUrl = poster,
-                                overview = overview
+                        if (rawType == "tv") {
+                            val title = c.optString("name", c.optString("original_name", "Untitled Show"))
+                            val year = c.optString("first_air_date", "").take(4).toIntOrNull() ?: 2024
+                            if (!canAddShow(cid, title, year)) continue
+                            val rating = (c.optDouble("vote_average", 8.0).takeIf { !it.isNaN() && it > 0 } ?: 8.0)
+                            actorCreditResults.add(
+                                SearchResultItem(
+                                    externalId = "tmdb_tv_$cid",
+                                    tvmazeId = 0,
+                                    tmdbId = cid,
+                                    mediaType = "show",
+                                    title = title,
+                                    year = year,
+                                    networkOrDirector = "Streaming",
+                                    status = "Running",
+                                    runtimeMins = 45,
+                                    genresCsv = "TV Series",
+                                    castCsv = actorName,
+                                    rating = Math.round(rating * 10.0) / 10.0,
+                                    posterUrl = poster,
+                                    overview = overview
+                                )
                             )
-                        )
+                        } else {
+                            val title = c.optString("title", c.optString("original_title", "Untitled Movie"))
+                            val year = c.optString("release_date", "").take(4).toIntOrNull() ?: 2024
+                            if (!canAddMovie(cid, title, year)) continue
+                            tmdbMovieCount++
+                            val rating = (c.optDouble("vote_average", 7.8).takeIf { !it.isNaN() && it > 0 } ?: 7.8)
+                            actorCreditResults.add(
+                                SearchResultItem(
+                                    externalId = "movie_$cid",
+                                    tmdbId = cid,
+                                    mediaType = "movie",
+                                    title = title,
+                                    year = year,
+                                    networkOrDirector = if (actorName.isNotEmpty()) "Starring $actorName" else "TMDB Feature Film",
+                                    status = "Released",
+                                    runtimeMins = 125,
+                                    genresCsv = "Movie",
+                                    castCsv = actorName,
+                                    rating = Math.round(rating * 10.0) / 10.0,
+                                    posterUrl = poster,
+                                    overview = overview
+                                )
+                            )
+                        }
                     }
                 }
 
                 val topMultiIsPerson = (multiArr.length() > 0 &&
                     multiArr.optJSONObject(0)?.optString("media_type", "")?.equals("person", ignoreCase = true) == true) ||
                     matchedActors.any { normTitleKey(it.optString("name", "")) == normQ }
-                if (topMultiIsPerson && actorMovieResults.isNotEmpty()) {
-                    results.addAll(actorMovieResults)
+                if (topMultiIsPerson && actorCreditResults.isNotEmpty()) {
+                    results.addAll(actorCreditResults)
                 }
 
                 combinedItems.sortByDescending { item ->
@@ -1024,8 +1084,8 @@ object LiveMediaCatalogService {
                         )
                     }
                 }
-                if (!topMultiIsPerson && actorMovieResults.isNotEmpty()) {
-                    results.addAll(actorMovieResults)
+                if (!topMultiIsPerson && actorCreditResults.isNotEmpty()) {
+                    results.addAll(actorCreditResults)
                 }
             } catch (_: Exception) {}
         }
