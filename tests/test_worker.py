@@ -420,6 +420,19 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertIn("dao.deleteShow(", dialogs)
         self.assertIn("dao.deleteMovie(", dialogs)
 
+        # 4. Friends library must be virtualized via LazyColumn itemsIndexed + off-UI-thread Dispatchers.Default indexing (no ANR!)
+        self.assertNotIn("filteredFriendMovies.forEach", main_screen)
+        self.assertNotIn("filteredFriendShows.forEach", main_screen)
+        self.assertIn("PreparedFriendLibraryState", main_screen)
+        self.assertIn("withContext(Dispatchers.Default)", main_screen)
+        models_path = os.path.join(
+            ROOT_DIR, "android", "app", "src", "main", "java", "com", "tvtime", "tracker", "domain", "TvTimeModels.kt"
+        )
+        with open(models_path, "r", encoding="utf-8") as f:
+            models_src = f.read()
+        self.assertIn("PAREN_GROUP_REGEX", models_src)
+        self.assertIn("NON_ALNUM_REGEX", models_src)
+
     def test_local_python_server_helpers(self):
         import server
 

@@ -123,13 +123,18 @@ data class CompactedShowMeta(
 object TvTimeProgressCalculator {
 
     private val EP_CODE_REGEX = Regex("^S(\\d+)E(\\d+)$", RegexOption.IGNORE_CASE)
+    private val NON_ALNUM_REGEX = Regex("[^a-z0-9]+")
+    private val MOVIE_ID_REGEX = Regex("^(?:tmdb_)?movie_(\\d+)$", RegexOption.IGNORE_CASE)
+    private val PAREN_GROUP_REGEX = Regex("\\([^)]*\\)")
+    private val BRACKET_GROUP_REGEX = Regex("\\[[^\\]]*\\]")
+    private val VOWELS_REGEX = Regex("[aeiouy]")
 
     fun normalizeTitleKey(raw: String): String {
         return raw.lowercase()
             .replace("'", "")
             .replace("\u2019", "")
             .replace("&", " and ")
-            .replace(Regex("[^a-z0-9]+"), " ")
+            .replace(NON_ALNUM_REGEX, " ")
             .trim()
     }
 
@@ -139,7 +144,7 @@ object TvTimeProgressCalculator {
             return 0
         }
         if (rawTmdbId > 0) return rawTmdbId
-        val match = Regex("^(?:tmdb_)?movie_(\\d+)$", RegexOption.IGNORE_CASE).find(ext)
+        val match = MOVIE_ID_REGEX.find(ext)
         return match?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it > 0 } ?: 0
     }
 
@@ -182,14 +187,14 @@ object TvTimeProgressCalculator {
 
     fun normalizeRecTitle(raw: String): String {
         var clean = raw.lowercase()
-        val parenStripped = clean.replace(Regex("\\([^)]*\\)"), " ").replace(Regex("\\[[^\\]]*\\]"), " ").trim()
+        val parenStripped = clean.replace(PAREN_GROUP_REGEX, " ").replace(BRACKET_GROUP_REGEX, " ").trim()
         if (parenStripped.isNotEmpty()) clean = parenStripped
         clean = clean
             .replace("'", "")
             .replace("\u2019", "")
             .replace("&", " and ")
             .replace("sorcerers stone", "philosophers stone")
-            .replace(Regex("[^a-z0-9]+"), " ")
+            .replace(NON_ALNUM_REGEX, " ")
             .trim()
         if (clean.startsWith("im ")) {
             clean = "i am " + clean.substring(3)
@@ -208,7 +213,7 @@ object TvTimeProgressCalculator {
     }
 
     fun translitSkeleton(raw: String): String {
-        val base = normalizeRecTitle(raw).replace(Regex("[^a-z0-9]+"), "")
+        val base = normalizeRecTitle(raw).replace(NON_ALNUM_REGEX, "")
         if (base.isEmpty()) return ""
         val folded = base
             .replace("th", "t")
@@ -219,7 +224,7 @@ object TvTimeProgressCalculator {
             .replace("ph", "f")
             .replace("sh", "s")
             .replace("w", "v")
-        val combined = folded.first() + folded.substring(1).replace(Regex("[aeiouy]"), "")
+        val combined = folded.first() + folded.substring(1).replace(VOWELS_REGEX, "")
         val sb = StringBuilder()
         for (i in combined.indices) {
             if (i == 0 || combined[i] != combined[i - 1]) sb.append(combined[i])

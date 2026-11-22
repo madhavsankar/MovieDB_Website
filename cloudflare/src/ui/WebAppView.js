@@ -6935,16 +6935,64 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const myShowsList = Array.isArray(this.state.shows) ? this.state.shows : [];
         const myMoviesList = Array.isArray(this.state.movies) ? this.state.movies : [];
 
+        // Build O(1) lookup maps over myMoviesList & myShowsList so large 600+ libraries render instantaneously
+        const myMovById = new Map();
+        const myMovByTmdb = new Map();
+        const myMovByTitle = new Map();
+        for (const mm of myMoviesList) {
+          if (mm && mm.id) myMovById.set(String(mm.id), mm);
+          const cleanTmdb = this.cleanMovieTmdbId(mm && mm.id, mm && mm.tmdbId);
+          if (cleanTmdb > 0 && !myMovByTmdb.has(cleanTmdb)) myMovByTmdb.set(cleanTmdb, mm);
+          const normT = this.normalizeRecTitle(mm && mm.title);
+          if (normT) {
+            if (!myMovByTitle.has(normT)) myMovByTitle.set(normT, []);
+            myMovByTitle.get(normT).push(mm);
+          }
+        }
+        const findMyMovieFast = (fm) => {
+          if (!fm) return null;
+          if (fm.id && myMovById.has(String(fm.id))) return myMovById.get(String(fm.id));
+          const cleanFm = this.cleanMovieTmdbId(fm.id, fm.tmdbId);
+          if (cleanFm > 0 && myMovByTmdb.has(cleanFm)) return myMovByTmdb.get(cleanFm);
+          const normFm = this.normalizeRecTitle(fm.title);
+          const bucket = normFm ? myMovByTitle.get(normFm) : null;
+          return bucket ? bucket.find((mm) => this.doesRecMatchMovie(mm, fm)) || null : null;
+        };
+
+        const myShowById = new Map();
+        const myShowByTmdb = new Map();
+        const myShowByTvmaze = new Map();
+        const myShowByTitle = new Map();
+        for (const ms of myShowsList) {
+          if (ms && ms.id) myShowById.set(String(ms.id), ms);
+          if (ms && Number(ms.tmdbId) > 0 && !myShowByTmdb.has(Number(ms.tmdbId))) myShowByTmdb.set(Number(ms.tmdbId), ms);
+          if (ms && Number(ms.tvmazeId) > 0 && !myShowByTvmaze.has(Number(ms.tvmazeId))) myShowByTvmaze.set(Number(ms.tvmazeId), ms);
+          const normT = this.normalizeRecTitle(ms && ms.title);
+          if (normT) {
+            if (!myShowByTitle.has(normT)) myShowByTitle.set(normT, []);
+            myShowByTitle.get(normT).push(ms);
+          }
+        }
+        const findMyShowFast = (fs) => {
+          if (!fs) return null;
+          if (fs.id && myShowById.has(String(fs.id))) return myShowById.get(String(fs.id));
+          if (Number(fs.tmdbId) > 0 && myShowByTmdb.has(Number(fs.tmdbId))) return myShowByTmdb.get(Number(fs.tmdbId));
+          if (Number(fs.tvmazeId) > 0 && myShowByTvmaze.has(Number(fs.tvmazeId))) return myShowByTvmaze.get(Number(fs.tvmazeId));
+          const normFs = this.normalizeRecTitle(fs.title);
+          const bucket = normFs ? myShowByTitle.get(normFs) : null;
+          return bucket ? bucket.find((ms) => this.doesRecMatchShow(ms, fs)) || null : null;
+        };
+
         // Keep ONLY series & movies that the current user has NOT watched yet
         const friendShows = rawFriendShows.filter((s) => {
-          const myShow = myShowsList.find((myS) => this.doesRecMatchShow(myS, s));
+          const myShow = findMyShowFast(s);
           if (!myShow) return true;
           const myEff = this.getEffectiveShowStatus(myShow);
           const myProg = this.computeShowProgress(myShow);
           return myEff === "interested" && myProg.watchedCount === 0;
         });
         const friendMovies = rawFriendMovies.filter((m) => {
-          const myMovie = myMoviesList.find((myM) => this.doesRecMatchMovie(myM, m));
+          const myMovie = findMyMovieFast(m);
           return !myMovie || !myMovie.watched;
         });
 
@@ -7028,7 +7076,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               const statusBadge = m.watched
                 ? '<span class="text-[11px] font-bold text-emerald-400">✓ Watched</span>'
                 : '<span class="text-[11px] font-bold tv-yellow-text">Watchlist</span>';
-              const myMovie = myMoviesList.find((myM) => this.doesRecMatchMovie(myM, m));
+              const myMovie = findMyMovieFast(m);
               let addBtn = "";
               if (!myMovie) {
                 addBtn =
@@ -7104,7 +7152,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 : eff === "in_progress"
                 ? "tv-yellow-text"
                 : "text-zinc-400";
-            const myShow = myShowsList.find((myS) => this.doesRecMatchShow(myS, s));
+            const myShow = findMyShowFast(s);
             let addBtn = "";
             if (!myShow) {
               addBtn =
