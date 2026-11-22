@@ -2134,8 +2134,54 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                     json: async () => ({
                       d: [
                         { id: "tt10339970", l: "Chandanamazha", qid: "tvSeries", y: 2014, s: "Meghna Vincent, Shalu Kurian" },
+                        { id: "tt9999991", l: "Random NonIndian Sketch", qid: "tvSeries", y: 2019, s: "John Smith" },
                         { id: "tt0319164", l: "Chandanamarangal", qid: "movie", y: 2001 }
                       ]
+                    })
+                  };
+                }
+                if (u.includes("en.wikipedia.org") && u.includes("Random%20NonIndian%20Sketch")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      query: {
+                        pages: {
+                          "303": {
+                            pageid: 303,
+                            title: "Random NonIndian Sketch (TV series)",
+                            extract: "Random NonIndian Sketch is an American comedy series.",
+                            revisions: [{ "*": "{{Infobox television | num_episodes = 24 | runtime = 22 minutes | network = [[NBC]] }}" }]
+                          }
+                        }
+                      }
+                    })
+                  };
+                }
+                if (u.includes("api.themoviedb.org/3/tv/888888?append_to_response=credits")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      id: 888888,
+                      name: "Short British Miniseries",
+                      origin_country: ["GB"],
+                      original_language: "en",
+                      first_air_date: "2023-05-01",
+                      number_of_episodes: 2,
+                      episode_run_time: [55],
+                      seasons: [{ season_number: 1, episode_count: 2 }]
+                    })
+                  };
+                }
+                if (u.includes("api.themoviedb.org/3/tv/888888?append_to_response=season/1")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      "season/1": {
+                        episodes: [
+                          { episode_number: 1, name: "Part 1", air_date: "2023-05-01", runtime: 55 },
+                          { episode_number: 2, name: "Part 2", air_date: "2023-05-08", runtime: 55 }
+                        ]
+                      }
                     })
                   };
                 }
@@ -2222,6 +2268,12 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 env: { TMDB_API_KEY: "dummy" }
               });
 
+              const britishDetails = await LiveCatalogService.fetchFullShowFromTvMaze("tmdb_tv_888888", {
+                title: "Short British Miniseries",
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
+
               app.state = { shows: [], movies: [] };
               app.persistState = async () => {};
               const partialShow = {
@@ -2229,31 +2281,81 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 title: "Chandanamazha",
                 year: 2014,
                 runtimeMins: 22,
-                userStatus: "stopped",
+                userStatus: "interested",
                 totalEpisodes: 1173,
                 completedSeasons: {},
                 watchedEpisodes: [],
                 episodes: []
               };
               app.state.shows = [partialShow];
-              await app.setCountOnlyProgress("imdb_tv_tt10339970", 350, 1173);
+              await app.setCountOnlyProgress("imdb_tv_tt10339970", 350);
               const compactedPartial = FirestoreRepository.compactShowForStorage(app.state.shows[0]);
               const progPartial = app.computeShowProgress(compactedPartial);
               const wtPartial = app.computeShowWatchTime(compactedPartial);
 
+              await app.setCountOnlyProgress("imdb_tv_tt10339970", 1173);
+              const compactedFull = FirestoreRepository.compactShowForStorage(app.state.shows[0]);
+              const progFull = app.computeShowProgress(compactedFull);
+
+              // Long-press "Mark all episodes till here" on a 1-season 600-episode series + Pass-1 & Pass-2 compaction safety
+              const bigSeasonEps = [];
+              for (let i = 1; i <= 600; i++) {
+                bigSeasonEps.push({
+                  code: "S01E" + String(i).padStart(2, "0"),
+                  season: 1,
+                  number: i,
+                  title: "Episode " + i,
+                  airDate: "2020-01-01",
+                  runtimeMins: 22
+                });
+              }
+              const bigShow = {
+                id: "tmdb_tv_999600",
+                tmdbId: 999600,
+                title: "Long Single Season Show",
+                year: 2020,
+                runtimeMins: 22,
+                userStatus: "interested",
+                totalEpisodes: 600,
+                completedSeasons: {},
+                watchedEpisodes: [],
+                episodes: bigSeasonEps
+              };
+              app.state.shows.push(bigShow);
+              await app.markEpisodesUpTo("tmdb_tv_999600", "S01E450", false);
+              const pass1Big = app.compactShowForStorage(bigShow);
+              const pass2Big = app.compactShowForStorage(pass1Big);
+              const repoPass2Big = FirestoreRepository.compactShowForStorage(FirestoreRepository.compactShowForStorage(bigShow));
+              const progBig = app.computeShowProgress(pass2Big);
+              await app.markEpisodesUpTo("tmdb_tv_999600", "S01E200", true);
+              const progBigTrimmed = app.computeShowProgress(bigShow);
+
+              const searchShowIds = searchChandanamazha.results.filter((r) => r.mediaType === "show").map((r) => r.id);
+
               const out = JSON.stringify({
                 searchTopId: searchChandanamazha.results[0]?.id,
                 searchTopType: searchChandanamazha.results[0]?.mediaType,
+                searchTopTotal: searchChandanamazha.results[0]?.totalEpisodes,
+                searchShowIds,
                 chandanamazhaTotal: chandanamazhaDetails?.totalEpisodes,
                 chandanamazhaEpsLen: chandanamazhaDetails?.episodes?.length,
                 chandanamazhaNet: chandanamazhaDetails?.network,
                 parasparamTotal: parasparamDetails?.totalEpisodes,
                 parasparamRt: parasparamDetails?.runtimeMins,
                 parasparamEpsLen: parasparamDetails?.episodes?.length,
+                britishEpsLen: britishDetails?.episodes?.length,
+                britishCountOnly: Boolean(britishDetails?.countOnly),
                 partialStatus: compactedPartial.userStatus,
                 partialWatched: progPartial.watchedCount,
                 partialTotal: progPartial.total,
-                partialMins: wtPartial.minutes
+                partialMins: wtPartial.minutes,
+                fullStatus: compactedFull.userStatus,
+                fullWatched: progFull.watchedCount,
+                bigWatchedPass2: progBig.watchedCount,
+                bigTotalPass2: progBig.total,
+                bigLastNumPass2: progBig.lastWatchedEp?.number,
+                bigRepoWatchedLen: repoPass2Big.watchedEpisodes?.length,
+                bigTrimmedWatched: progBigTrimmed.watchedCount
               });
               if (typeof console !== "undefined" && console.log) console.log(out);
               else if (typeof print !== "undefined") print(out);
@@ -2263,16 +2365,27 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         out = self._run_js(harness)
         self.assertEqual(out["searchTopId"], "imdb_tv_tt10339970")
         self.assertEqual(out["searchTopType"], "show")
+        self.assertEqual(out["searchTopTotal"], 1173)
+        self.assertEqual(out["searchShowIds"], ["imdb_tv_tt10339970"])
         self.assertEqual(out["chandanamazhaTotal"], 1173)
         self.assertEqual(out["chandanamazhaEpsLen"], 0)
         self.assertEqual(out["chandanamazhaNet"], "Asianet")
         self.assertEqual(out["parasparamTotal"], 1524)
         self.assertEqual(out["parasparamRt"], 22)
         self.assertEqual(out["parasparamEpsLen"], 0)
+        self.assertEqual(out["britishEpsLen"], 2)
+        self.assertFalse(out["britishCountOnly"])
         self.assertEqual(out["partialStatus"], "stopped")
         self.assertEqual(out["partialWatched"], 350)
         self.assertEqual(out["partialTotal"], 1173)
         self.assertEqual(out["partialMins"], 350 * 22)
+        self.assertEqual(out["fullStatus"], "completed")
+        self.assertEqual(out["fullWatched"], 1173)
+        self.assertEqual(out["bigWatchedPass2"], 450)
+        self.assertEqual(out["bigTotalPass2"], 600)
+        self.assertEqual(out["bigLastNumPass2"], 450)
+        self.assertEqual(out["bigRepoWatchedLen"], 450)
+        self.assertEqual(out["bigTrimmedWatched"], 200)
 
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""

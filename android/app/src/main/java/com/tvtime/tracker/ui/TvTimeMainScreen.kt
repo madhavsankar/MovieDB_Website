@@ -708,6 +708,15 @@ fun TvTimeMainScreen(
                             val fallbackEps = listOf(
                                 EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
                             )
+                            val initialEpsJson = if (item.totalEpisodes > 1) {
+                                TvTimeProgressCalculator.serializeCompactedMeta(
+                                    totalEpisodes = item.totalEpisodes,
+                                    completedSeasons = emptyMap(),
+                                    episodes = emptyList()
+                                )
+                            } else {
+                                TvTimeProgressCalculator.serializeEpisodeList(fallbackEps)
+                            }
                             val initialShow = ShowEntity(
                                 userId = currentUserId,
                                 externalId = item.externalId,
@@ -723,7 +732,7 @@ fun TvTimeMainScreen(
                                 posterUrl = item.posterUrl,
                                 overview = item.overview,
                                 userStatus = "interested",
-                                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(fallbackEps)
+                                episodesJson = initialEpsJson
                             )
                             val insertedId = dao.insertShow(initialShow)
                             FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
@@ -884,6 +893,16 @@ fun TvTimeMainScreen(
                             val fallbackEps = listOf(
                                 EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
                             )
+                            val isInitialCountOnly = item.totalEpisodes > 1
+                            val initialEpsJson = if (isInitialCountOnly) {
+                                TvTimeProgressCalculator.serializeCompactedMeta(
+                                    totalEpisodes = item.totalEpisodes,
+                                    completedSeasons = emptyMap(),
+                                    episodes = emptyList()
+                                )
+                            } else {
+                                TvTimeProgressCalculator.serializeEpisodeList(fallbackEps)
+                            }
                             val initialShow = ShowEntity(
                                 userId = currentUserId,
                                 externalId = item.externalId,
@@ -899,8 +918,8 @@ fun TvTimeMainScreen(
                                 posterUrl = item.posterUrl,
                                 overview = item.overview,
                                 userStatus = "completed",
-                                watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(setOf("S01E01")),
-                                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(fallbackEps)
+                                watchedCodesCsv = if (isInitialCountOnly) "" else TvTimeProgressCalculator.serializeWatchedSet(setOf("S01E01")),
+                                episodesJson = initialEpsJson
                             )
                             val insertedId = dao.insertShow(initialShow)
                             FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)

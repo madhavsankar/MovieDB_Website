@@ -106,7 +106,8 @@ data class SearchResultItem(
     val rating: Double = 7.8,
     val posterUrl: String = "",
     val overview: String = "",
-    val imdbUrl: String = ""
+    val imdbUrl: String = "",
+    val totalEpisodes: Int = 0
 )
 
 data class SearchPageResult(
@@ -657,7 +658,8 @@ object TvTimeProgressCalculator {
             } else null
 
         val lastWatchedEp = epsOutsideComp.lastOrNull { normWatched.contains(it.code.trim().uppercase()) }
-            ?: normWatched.maxOrNull()?.let { parseEpisodeFromCode(it) }
+            ?: normWatched.mapNotNull { parseEpisodeFromCode(it) }
+                .maxWithOrNull(compareBy({ it.season }, { it.number }))
             ?: completedSeasons.keys.maxOrNull()?.let { maxS ->
                 val cnt = completedSeasons[maxS] ?: 1
                 EpisodeModel(

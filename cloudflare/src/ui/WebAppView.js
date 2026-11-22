@@ -1637,9 +1637,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           })
           .sort();
 
+        const validAllCodes = new Set(eps.map((e) => e.code));
+        const isWindowedInput = (Number(s.totalEpisodes) || 0) > eps.length + missingCompEps;
+
         const nonPresentWatchedCount = watchedOutsideComp.filter((code) => {
-          const sNum = this.parseSeasonFromCode(code);
-          return !sNum || !presentSeasons.has(String(sNum));
+          return !validAllCodes.has(code);
         }).length;
 
         const computedTotal = Math.max(
@@ -1764,7 +1766,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             .filter((code) => {
               const sNum = this.parseSeasonFromCode(code);
               if (sNum && completedSeasons[String(sNum)]) return false;
-              if (sNum && presentSeasons.has(String(sNum))) {
+              if (!isWindowedInput && sNum && presentSeasons.has(String(sNum))) {
                 return validPresentCodes.has(code);
               }
               return true;
@@ -4467,8 +4469,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           return;
         }
 
-        const fallbackEpisodes =
-          Array.isArray(item.episodes) && item.episodes.length > 0
+        const isInitialCountOnly = Boolean(item.countOnly) || (Number(item.totalEpisodes) > 1 && (!Array.isArray(item.episodes) || item.episodes.length === 0));
+        const fallbackEpisodes = isInitialCountOnly
+          ? []
+          : Array.isArray(item.episodes) && item.episodes.length > 0
             ? item.episodes.map((e) => this.compactEpisode(e))
             : [
                 {
@@ -4484,9 +4488,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           ...item,
           id: item.id,
           userStatus: isCompleted ? "completed" : "interested",
-          totalEpisodes: fallbackEpisodes.length,
+          totalEpisodes: isInitialCountOnly ? Math.max(Number(item.totalEpisodes) || 1, 1) : fallbackEpisodes.length,
           completedSeasons: {},
-          watchedEpisodes: isCompleted ? fallbackEpisodes.map((e) => e.code).sort() : [],
+          watchedEpisodes: isCompleted && !isInitialCountOnly ? fallbackEpisodes.map((e) => e.code).sort() : [],
           episodes: fallbackEpisodes,
           lastWatchedAt: isCompleted ? new Date().toISOString() : "",
         };
@@ -4576,13 +4580,16 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           return;
         }
 
+        const isPreviewCountOnly = Boolean(item.countOnly) || (Number(item.totalEpisodes) > 1 && (!Array.isArray(item.episodes) || item.episodes.length === 0));
         const previewShow = {
           ...item,
           userStatus: "preview",
+          totalEpisodes: isPreviewCountOnly ? Math.max(Number(item.totalEpisodes) || 1, 1) : undefined,
           watchedEpisodes: [],
           completedSeasons: {},
-          episodes:
-            Array.isArray(item.episodes) && item.episodes.length > 0
+          episodes: isPreviewCountOnly
+            ? []
+            : Array.isArray(item.episodes) && item.episodes.length > 0
               ? item.episodes
               : [
                   {
@@ -4835,6 +4842,230 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           this.openSeasons.add(seasonNum);
         }
         this.renderDetailSheet();
+      }
+
+      handleEpisodeClick(showId, epCode) {
+        if (this._epLongPressFired) {
+          this._epLongPressFired = false;
+          return;
+        }
+        this.toggleEpisodeCode(showId, epCode);
+      }
+
+      startEpLongPress(ev, showId, epCode) {
+        this.cancelEpLongPress();
+        this._epLongPressFired = false;
+        this._epLongPressTimer = setTimeout(() => {
+          this._epLongPressTimer = null;
+          this._epLongPressFired = true;
+          this.openEpisodeLongPressMenu(showId, epCode);
+        }, 450);
+      }
+
+      cancelEpLongPress() {
+        if (this._epLongPressTimer) {
+          clearTimeout(this._epLongPressTimer);
+          this._epLongPressTimer = null;
+        }
+      }
+
+      closeEpisodeLongPressMenu() {
+        if (typeof document === "undefined" || !document.getElementById) return;
+        const existing = document.getElementById("tvtime-ep-longpress-modal");
+        if (existing) existing.remove();
+      }
+
+      openEpisodeLongPressMenu(showId, epCode) {
+        if (typeof document === "undefined" || !document.createElement) return;
+        this.closeEpisodeLongPressMenu();
+        const show =
+          (this.state.shows || []).find((s) => s.id === showId) ||
+          (this.detailItem && this.detailItem.id === showId ? this.detailItem : null);
+        if (!show) return;
+        const eps = [...(Array.isArray(show.episodes) ? show.episodes : [])].sort(
+          (a, b) => (Number(a.season || 1) - Number(b.season || 1)) || (Number(a.number || 1) - Number(b.number || 1))
+        );
+        const normCode = String(epCode || "").trim().toUpperCase();
+        const targetEp = eps.find((e) => String(e.code || "").trim().toUpperCase() === normCode);
+        if (!targetEp) return;
+        const targetS = Number(targetEp.season) || 1;
+        const targetN = Number(targetEp.number) || 1;
+        const compObj =
+          show.completedSeasons && typeof show.completedSeasons === "object" && !Array.isArray(show.completedSeasons)
+            ? show.completedSeasons
+            : {};
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const unairedCodes = this.buildUnairedCodeSet(eps, todayIso, Object.keys(compObj).length > 0);
+        if (unairedCodes.has(normCode)) return;
+        const itemIsCompleted = String(show.userStatus || "").toLowerCase() === "completed";
+        const watchedSet = new Set(
+          (show.watchedEpisodes || [])
+            .map((c) => String(c || "").trim().toUpperCase())
+            .filter((c) => c && !unairedCodes.has(c))
+        );
+        const isEpWatchedNow = (e) => {
+          const c = String(e.code || "").trim().toUpperCase();
+          const s = Number(e.season) || 1;
+          return !unairedCodes.has(c) && (itemIsCompleted || Number(compObj[String(s)]) > 0 || watchedSet.has(c));
+        };
+        let airedUpTo = 0;
+        let allUpToWatched = true;
+        let watchedAfterCount = 0;
+        for (const e of eps) {
+          const c = String(e.code || "").trim().toUpperCase();
+          if (unairedCodes.has(c)) continue;
+          const s = Number(e.season) || 1;
+          const n = Number(e.number) || 1;
+          const atOrBefore = s < targetS || (s === targetS && n <= targetN);
+          const w = isEpWatchedNow(e);
+          if (atOrBefore) {
+            airedUpTo++;
+            if (!w) allUpToWatched = false;
+          } else if (w) {
+            watchedAfterCount++;
+          }
+        }
+        const dotLabel =
+          "S" + String(targetS).padStart(2, "0") + "·E" + String(targetN).padStart(2, "0");
+        const targetCurrentlyWatched = isEpWatchedNow(targetEp);
+        const primaryUnmarksAfter = Boolean(allUpToWatched && watchedAfterCount > 0);
+        const primaryLabel = primaryUnmarksAfter
+          ? "✓ Mark watched till " + dotLabel + " (" + airedUpTo + " eps)"
+          : "✓ Mark all episodes till here (" + airedUpTo + " eps)";
+
+        const modal = document.createElement("div");
+        modal.id = "tvtime-ep-longpress-modal";
+        modal.className = "fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-4";
+        modal.onclick = (ev) => {
+          if (ev.target === modal) this.closeEpisodeLongPressMenu();
+        };
+        modal.innerHTML =
+          '<div class="bg-[#18181f] border border-zinc-700/80 rounded-3xl p-4 w-full max-w-sm space-y-2.5 shadow-2xl">' +
+          '<div class="px-1 pb-1">' +
+          '<div class="text-xs font-extrabold tv-yellow-text uppercase tracking-wider">' +
+          escapeHtml(dotLabel) +
+          "</div>" +
+          '<div class="text-sm font-bold text-white truncate">' +
+          escapeHtml(targetEp.title || "Episode " + targetN) +
+          "</div></div>" +
+          '<button type="button" onclick="app.markEpisodesUpTo(&quot;' +
+          escapeHtml(showId) +
+          '&quot;, &quot;' +
+          escapeHtml(normCode) +
+          "&quot;, " +
+          (primaryUnmarksAfter ? "true" : "false") +
+          ')" class="w-full py-3 px-4 rounded-2xl tv-yellow-bg text-xs font-extrabold text-left">' +
+          escapeHtml(primaryLabel) +
+          "</button>" +
+          (!allUpToWatched && watchedAfterCount > 0
+            ? '<button type="button" onclick="app.markEpisodesUpTo(&quot;' +
+              escapeHtml(showId) +
+              '&quot;, &quot;' +
+              escapeHtml(normCode) +
+              '&quot;, true)" class="w-full py-2.5 px-4 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-white text-left">↺ Watched only till here (unmark ' +
+              watchedAfterCount +
+              " after)</button>"
+            : "") +
+          '<button type="button" onclick="app.closeEpisodeLongPressMenu(); app.toggleEpisodeCode(&quot;' +
+          escapeHtml(showId) +
+          '&quot;, &quot;' +
+          escapeHtml(normCode) +
+          '&quot;)" class="w-full py-2.5 px-4 rounded-2xl bg-zinc-800/80 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 text-left">' +
+          (targetCurrentlyWatched ? "✕ Unmark only " : "✓ Mark only ") +
+          escapeHtml(dotLabel) +
+          "</button>" +
+          '<button type="button" onclick="app.closeEpisodeLongPressMenu()" class="w-full py-2 rounded-2xl text-xs font-bold text-zinc-400 hover:text-white">Cancel</button>' +
+          "</div>";
+        if (document.body && typeof document.body.appendChild === "function") {
+          document.body.appendChild(modal);
+        }
+      }
+
+      async markEpisodesUpTo(showId, epCode, unmarkAfter = false) {
+        this.closeEpisodeLongPressMenu();
+        const show = this.ensureDetailShowInLibrary(showId);
+        if (!show) return;
+        this.detailItem = show;
+        const eps = [...(Array.isArray(show.episodes) ? show.episodes : [])].sort(
+          (a, b) => (Number(a.season || 1) - Number(b.season || 1)) || (Number(a.number || 1) - Number(b.number || 1))
+        );
+        const normCode = String(epCode || "").trim().toUpperCase();
+        const targetEp = eps.find((e) => String(e.code || "").trim().toUpperCase() === normCode);
+        if (!targetEp) return;
+        const targetS = Number(targetEp.season) || 1;
+        const targetN = Number(targetEp.number) || 1;
+        const hasCompactedSeasons = Boolean(show.completedSeasons && Object.keys(show.completedSeasons).length > 0);
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const unairedCodes = this.buildUnairedCodeSet(eps, todayIso, hasCompactedSeasons);
+        if (unairedCodes.has(normCode)) return;
+
+        const isWindowed = hasCompactedSeasons || (Number(show.totalEpisodes) || 0) > eps.length;
+        const validCodes =
+          !isWindowed && eps.length > 0
+            ? new Set(eps.map((e) => String(e.code || "").trim().toUpperCase()).filter(Boolean))
+            : null;
+        const set = new Set(
+          (show.watchedEpisodes || [])
+            .map((c) => String(c || "").trim().toUpperCase())
+            .filter((c) => c && !unairedCodes.has(c) && (!validCodes || validCodes.has(c)))
+        );
+        if (String(show.userStatus || "").toLowerCase() === "completed" && set.size === 0 && eps.length > 0) {
+          for (const e of eps) {
+            const c = String(e.code || "").trim().toUpperCase();
+            if (c && !unairedCodes.has(c)) set.add(c);
+          }
+        }
+        if (show.completedSeasons && typeof show.completedSeasons === "object") {
+          for (const sk of Object.keys(show.completedSeasons)) {
+            const sNum = Number(sk) || 0;
+            const sEps = eps.filter((e) => Number(e.season) === sNum);
+            if (sEps.length > 0) {
+              for (const e of sEps) {
+                const c = String(e.code || "").trim().toUpperCase();
+                if (c && !unairedCodes.has(c)) set.add(c);
+              }
+              delete show.completedSeasons[sk];
+            } else if (unmarkAfter && sNum > targetS) {
+              delete show.completedSeasons[sk];
+            }
+          }
+        }
+
+        for (const e of eps) {
+          const c = String(e.code || "").trim().toUpperCase();
+          if (!c || unairedCodes.has(c)) continue;
+          const s = Number(e.season) || 1;
+          const n = Number(e.number) || 1;
+          const atOrBefore = s < targetS || (s === targetS && n <= targetN);
+          if (atOrBefore) {
+            set.add(c);
+          } else if (unmarkAfter) {
+            set.delete(c);
+          }
+        }
+
+        if (unmarkAfter) {
+          for (const c of Array.from(set)) {
+            const m = /^S([0-9]+)E([0-9]+)$/i.exec(c);
+            if (m) {
+              const sN = Number(m[1]);
+              const eN = Number(m[2]);
+              if (sN > targetS || (sN === targetS && eN > targetN)) {
+                set.delete(c);
+              }
+            }
+          }
+        }
+
+        if (String(show.userStatus || "").toLowerCase() === "completed" && unmarkAfter) {
+          show.userStatus = "in_progress";
+        } else if (show.userStatus === "stopped" && !unmarkAfter) {
+          show.userStatus = "in_progress";
+        }
+        show.watchedEpisodes = Array.from(set).sort();
+        show.userStatus = this.getEffectiveShowStatus(show);
+        show.lastWatchedAt = new Date().toISOString();
+        await this.persistState();
       }
 
       async toggleEpisodeCode(showId, epCode) {
@@ -5138,11 +5369,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         );
       }
 
-      async setCountOnlyProgress(showId, watchedVal, totalVal) {
+      async setCountOnlyProgress(showId, watchedVal) {
         const show = this.ensureDetailShowInLibrary(showId);
         if (!show) return;
         this.detailItem = show;
-        const cleanTotal = Math.max(1, Math.min(25000, Math.floor(Number(totalVal) || Number(show.totalEpisodes) || 1)));
+        const progNow = this.computeShowProgress(show);
+        const cleanTotal = Math.max(1, Math.floor(Number(show.totalEpisodes) || Number(progNow.total) || 1));
         const cleanWatched = Math.max(0, Math.min(cleanTotal, Math.floor(Number(watchedVal) || 0)));
         show.totalEpisodes = cleanTotal;
         show.episodes = [];
@@ -5150,12 +5382,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (cleanWatched >= cleanTotal) {
           show.completedSeasons = {};
           show.userStatus = "completed";
-        } else if (cleanWatched <= 0) {
-          show.completedSeasons = {};
-          show.userStatus = show.userStatus === "stopped" ? "stopped" : "interested";
         } else {
-          show.completedSeasons = { "1": cleanWatched };
-          show.userStatus = show.userStatus === "stopped" ? "stopped" : "in_progress";
+          show.completedSeasons = cleanWatched > 0 ? { "1": cleanWatched } : {};
+          show.userStatus = "stopped";
         }
         show.lastWatchedAt = new Date().toISOString();
         await this.persistState();
@@ -5283,8 +5512,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           html +=
             '<div class="tv-card rounded-2xl p-4 space-y-3.5">' +
             '<div class="flex items-center justify-between">' +
-            '<div><h3 class="text-sm font-extrabold text-white">📺 Episode Count Tracker</h3>' +
-            '<p class="text-[11px] text-zinc-400">Track watched episode count without needing individual episode titles.</p></div>' +
+            '<div><h3 class="text-sm font-extrabold text-white">📺 Watched Episode Count</h3>' +
+            '<p class="text-[11px] text-zinc-400">Confirmed total: ' +
+            curT +
+            " episodes</p></div>" +
             '<span class="px-2.5 py-1 rounded-full bg-zinc-800 text-xs font-black tv-yellow-text">' +
             curW +
             " / " +
@@ -5295,60 +5526,21 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             '<div class="h-full bg-emerald-500 rounded-full" style="width:' +
             progForCount.pct +
             '%"></div></div>' +
-            '<div class="flex flex-wrap items-center gap-2">' +
-            '<button type="button" onclick="app.setCountOnlyProgress(&quot;' +
-            escapeHtml(item.id) +
-            "&quot;, " +
-            Math.max(0, curW - 10) +
-            ", " +
+            '<div class="flex items-end gap-2.5 pt-1">' +
+            '<div class="flex-1"><label class="block text-[10px] font-bold uppercase text-zinc-400 mb-1">Watched Episodes (of ' +
             curT +
-            ')" class="px-3 py-1.5 rounded-full tv-pill-bar border border-zinc-700 text-xs font-extrabold text-zinc-200 hover:text-white">-10</button>' +
-            '<button type="button" onclick="app.setCountOnlyProgress(&quot;' +
-            escapeHtml(item.id) +
-            "&quot;, " +
-            Math.max(0, curW - 1) +
-            ", " +
-            curT +
-            ')" class="px-3 py-1.5 rounded-full tv-pill-bar border border-zinc-700 text-xs font-extrabold text-zinc-200 hover:text-white">-1</button>' +
-            '<button type="button" onclick="app.setCountOnlyProgress(&quot;' +
-            escapeHtml(item.id) +
-            "&quot;, " +
-            Math.min(curT, curW + 1) +
-            ", " +
-            curT +
-            ')" class="px-3 py-1.5 rounded-full tv-pill-bar border border-zinc-700 text-xs font-extrabold tv-yellow-text hover:text-white">+1</button>' +
-            '<button type="button" onclick="app.setCountOnlyProgress(&quot;' +
-            escapeHtml(item.id) +
-            "&quot;, " +
-            Math.min(curT, curW + 10) +
-            ", " +
-            curT +
-            ')" class="px-3 py-1.5 rounded-full tv-pill-bar border border-zinc-700 text-xs font-extrabold tv-yellow-text hover:text-white">+10</button>' +
-            '<button type="button" onclick="app.setCountOnlyProgress(&quot;' +
-            escapeHtml(item.id) +
-            "&quot;, " +
-            curT +
-            ", " +
-            curT +
-            ')" class="px-3 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-xs font-extrabold text-emerald-300 hover:bg-emerald-500 hover:text-white">All (' +
-            curT +
-            ")</button>" +
-            "</div>" +
-            '<div class="grid grid-cols-2 gap-2.5 pt-1">' +
-            '<div><label class="block text-[10px] font-bold uppercase text-zinc-400 mb-1">Watched Episodes</label>' +
+            ")</label>" +
             '<input id="count-only-watched-input" type="number" min="0" max="' +
             curT +
             '" value="' +
             curW +
-            '" class="w-full rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2 text-sm font-bold text-white" /></div>' +
-            '<div><label class="block text-[10px] font-bold uppercase text-zinc-400 mb-1">Total Episodes</label>' +
-            '<input id="count-only-total-input" type="number" min="1" max="25000" value="' +
-            curT +
-            '" class="w-full rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2 text-sm font-bold text-white" /></div>' +
-            "</div>" +
+            '" onkeydown="if(event.key===&quot;Enter&quot;){app.setCountOnlyProgress(&quot;' +
+            escapeHtml(item.id) +
+            '&quot;, this.value);}" class="w-full rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2.5 text-sm font-bold text-white" /></div>' +
             '<button type="button" onclick="app.setCountOnlyProgress(&quot;' +
             escapeHtml(item.id) +
-            '&quot;, document.getElementById(&quot;count-only-watched-input&quot;).value, document.getElementById(&quot;count-only-total-input&quot;).value)" class="w-full py-2.5 rounded-full tv-yellow-bg text-xs font-extrabold">Save Episode Count</button>' +
+            '&quot;, document.getElementById(&quot;count-only-watched-input&quot;).value)" class="px-5 py-2.5 rounded-xl tv-yellow-bg text-xs font-extrabold shrink-0">Save</button>' +
+            "</div>" +
             "</div>";
           bodyEl.innerHTML = html;
           return;
@@ -5407,6 +5599,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
           if (isOpen) {
             html += '<div class="divide-y divide-zinc-800/70 px-3 pb-2">';
+            if (airedSeasonEps.length >= 20) {
+              html +=
+                '<div class="py-2 text-[11px] font-medium text-zinc-400">Tip: Long-press (or right-click) any episode tick to mark all episodes till there.</div>';
+            }
             for (const ep of sEps) {
               const epCodeUpper = String(ep.code || "").trim().toUpperCase();
               const isUnaired = unairedCodes.has(epCodeUpper);
@@ -5436,12 +5632,22 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   '<span class="px-2.5 py-1 rounded-full bg-zinc-800/90 border border-zinc-700/70 text-[10px] font-bold text-zinc-400 shrink-0">Upcoming</span>' +
                   "</div>";
               } else {
+                const escShowId = escapeHtml(item.id);
+                const escEpCode = escapeHtml(ep.code);
                 html +=
-                  '<div onclick="app.toggleEpisodeCode(&quot;' +
-                  escapeHtml(item.id) +
+                  '<div onclick="app.handleEpisodeClick(&quot;' +
+                  escShowId +
                   '&quot;, &quot;' +
-                  escapeHtml(ep.code) +
-                  '&quot;)" class="py-3 flex items-center gap-3 cursor-pointer">' +
+                  escEpCode +
+                  '&quot;)" oncontextmenu="event.preventDefault(); event.stopPropagation(); app.openEpisodeLongPressMenu(&quot;' +
+                  escShowId +
+                  '&quot;, &quot;' +
+                  escEpCode +
+                  '&quot;); return false;" ontouchstart="app.startEpLongPress(event, &quot;' +
+                  escShowId +
+                  '&quot;, &quot;' +
+                  escEpCode +
+                  '&quot;)" ontouchend="app.cancelEpLongPress()" ontouchmove="app.cancelEpLongPress()" ontouchcancel="app.cancelEpLongPress()" class="py-3 flex items-center gap-3 cursor-pointer select-none">' +
                   '<img src="' +
                   escapeHtml(thumb) +
                   '" loading="lazy" decoding="async" class="w-24 h-14 object-cover rounded-xl bg-zinc-900 shrink-0" />' +
@@ -5456,12 +5662,22 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   "</div>" +
                   "</div>" +
                   '<button type="button" title="' +
-                  (isWatched ? "Mark episode unwatched" : "Mark episode watched") +
-                  '" onclick="event.stopPropagation(); app.toggleEpisodeCode(&quot;' +
-                  escapeHtml(item.id) +
+                  (isWatched
+                    ? "Tap to unmark · Long-press or right-click for Mark till here"
+                    : "Tap to mark · Long-press or right-click for Mark till here") +
+                  '" onclick="event.stopPropagation(); app.handleEpisodeClick(&quot;' +
+                  escShowId +
                   '&quot;, &quot;' +
-                  escapeHtml(ep.code) +
-                  '&quot;)" class="' +
+                  escEpCode +
+                  '&quot;)" oncontextmenu="event.preventDefault(); event.stopPropagation(); app.openEpisodeLongPressMenu(&quot;' +
+                  escShowId +
+                  '&quot;, &quot;' +
+                  escEpCode +
+                  '&quot;); return false;" ontouchstart="event.stopPropagation(); app.startEpLongPress(event, &quot;' +
+                  escShowId +
+                  '&quot;, &quot;' +
+                  escEpCode +
+                  '&quot;)" ontouchend="app.cancelEpLongPress()" ontouchmove="app.cancelEpLongPress()" ontouchcancel="app.cancelEpLongPress()" class="' +
                   (isWatched ? "tv-check-btn !w-10 !h-10" : "tv-gray-eye-btn") +
                   '">' +
                   (isWatched ? CHECK_SVG : EYE_SVG) +

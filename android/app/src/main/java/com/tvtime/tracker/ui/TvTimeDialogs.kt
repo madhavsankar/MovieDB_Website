@@ -4,8 +4,10 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -13,6 +15,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -23,8 +27,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -40,7 +48,7 @@ import com.tvtime.tracker.domain.TvTimeProgressCalculator
 import com.tvtime.tracker.ui.theme.TvTimePalette
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ShowDetailBottomSheet(
     show: ShowEntity,
@@ -674,26 +682,22 @@ fun ShowDetailBottomSheet(
                 val isCountOnlySeries = episodes.isEmpty() ||
                     (episodes.size == 1 && totalEpisodesOverride > 1 && episodes.first().title.equals("Pilot", ignoreCase = true))
                 if (isCountOnlySeries) {
+                    val fixedTotal = prog.totalEpisodes.coerceAtLeast(1)
                     var watchedInputText by remember(prog.watchedCount) { mutableStateOf(prog.watchedCount.toString()) }
-                    var totalInputText by remember(prog.totalEpisodes) { mutableStateOf(prog.totalEpisodes.coerceAtLeast(1).toString()) }
 
-                    fun applyCountOnly(nextWatchedRaw: Int, nextTotalRaw: Int) {
-                        val cleanTotal = nextTotalRaw.coerceIn(1, 25000)
-                        val cleanWatched = nextWatchedRaw.coerceIn(0, cleanTotal)
-                        totalEpisodesOverride = cleanTotal
+                    fun applyCountOnly(nextWatchedRaw: Int) {
+                        val cleanWatched = nextWatchedRaw.coerceIn(0, fixedTotal)
+                        totalEpisodesOverride = fixedTotal
                         episodes = emptyList()
                         watchedSet = emptySet()
                         val nextComp: Map<Int, Int>
                         val nextStat: String
-                        if (cleanWatched >= cleanTotal) {
+                        if (cleanWatched >= fixedTotal) {
                             nextComp = emptyMap()
                             nextStat = "completed"
-                        } else if (cleanWatched <= 0) {
-                            nextComp = emptyMap()
-                            nextStat = if (userStatus == "stopped") "stopped" else "interested"
                         } else {
-                            nextComp = mapOf(1 to cleanWatched)
-                            nextStat = if (userStatus == "stopped") "stopped" else "in_progress"
+                            nextComp = if (cleanWatched > 0) mapOf(1 to cleanWatched) else emptyMap()
+                            nextStat = "stopped"
                         }
                         completedSeasons = nextComp
                         userStatus = nextStat
@@ -702,7 +706,7 @@ fun ShowDetailBottomSheet(
                             nextWatchedSet = emptySet(),
                             nextStatus = nextStat,
                             nextCompletedSeasons = nextComp,
-                            nextTotalOverride = cleanTotal
+                            nextTotalOverride = fixedTotal
                         )
                     }
 
@@ -730,12 +734,12 @@ fun ShowDetailBottomSheet(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "📺 Episode Count Tracker",
+                                            text = "📺 Watched Episode Count",
                                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold),
                                             color = Color.White
                                         )
                                         Text(
-                                            text = "Track watched episode count without needing individual episode titles.",
+                                            text = "Confirmed total: $fixedTotal episodes",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = TvTimePalette.TextSecondary
                                         )
@@ -745,7 +749,7 @@ fun ShowDetailBottomSheet(
                                         color = TvTimePalette.SurfacePill
                                     ) {
                                         Text(
-                                            text = "${prog.watchedCount} / ${prog.totalEpisodes}",
+                                            text = "${prog.watchedCount} / $fixedTotal",
                                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
                                             color = TvTimePalette.Yellow,
                                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
@@ -755,78 +759,102 @@ fun ShowDetailBottomSheet(
 
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    val curW = prog.watchedCount
-                                    val curT = prog.totalEpisodes.coerceAtLeast(1)
-                                    listOf(
-                                        "-10" to (curW - 10).coerceAtLeast(0),
-                                        "-1" to (curW - 1).coerceAtLeast(0),
-                                        "+1" to (curW + 1).coerceAtMost(curT),
-                                        "+10" to (curW + 10).coerceAtMost(curT),
-                                        "All" to curT
-                                    ).forEach { (btnLabel, targetW) ->
-                                        Surface(
-                                            onClick = { applyCountOnly(targetW, curT) },
-                                            shape = RoundedCornerShape(50),
-                                            color = if (btnLabel == "All") Color(0x3322C55E) else TvTimePalette.SurfacePill,
-                                            border = BorderStroke(1.dp, TvTimePalette.Border),
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Box(
-                                                contentAlignment = Alignment.Center,
-                                                modifier = Modifier.padding(vertical = 8.dp)
-                                            ) {
-                                                Text(
-                                                    text = btnLabel,
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    color = if (btnLabel == "All") Color(0xFF4ADE80) else Color.White
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     OutlinedTextField(
                                         value = watchedInputText,
                                         onValueChange = { watchedInputText = it.filter(Char::isDigit) },
-                                        label = { Text("Watched", fontSize = 11.sp) },
+                                        label = { Text("Watched Episodes (of $fixedTotal)", fontSize = 11.sp) },
                                         singleLine = true,
+                                        keyboardOptions = KeyboardOptions(
+                                            keyboardType = KeyboardType.Number,
+                                            imeAction = ImeAction.Done
+                                        ),
+                                        keyboardActions = KeyboardActions(
+                                            onDone = {
+                                                val wVal = watchedInputText.toIntOrNull() ?: prog.watchedCount
+                                                applyCountOnly(wVal)
+                                            }
+                                        ),
                                         modifier = Modifier.weight(1f)
                                     )
-                                    OutlinedTextField(
-                                        value = totalInputText,
-                                        onValueChange = { totalInputText = it.filter(Char::isDigit) },
-                                        label = { Text("Total Episodes", fontSize = 11.sp) },
-                                        singleLine = true,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-
-                                Button(
-                                    onClick = {
-                                        val wVal = watchedInputText.toIntOrNull() ?: prog.watchedCount
-                                        val tVal = totalInputText.toIntOrNull() ?: prog.totalEpisodes.coerceAtLeast(1)
-                                        applyCountOnly(wVal, tVal)
-                                    },
-                                    shape = RoundedCornerShape(50),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = TvTimePalette.Yellow,
-                                        contentColor = TvTimePalette.OnYellow
-                                    ),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("Save Episode Count", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                                    Button(
+                                        onClick = {
+                                            val wVal = watchedInputText.toIntOrNull() ?: prog.watchedCount
+                                            applyCountOnly(wVal)
+                                        },
+                                        shape = RoundedCornerShape(14.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = TvTimePalette.Yellow,
+                                            contentColor = TvTimePalette.OnYellow
+                                        ),
+                                        modifier = Modifier.height(54.dp)
+                                    ) {
+                                        Text("Save", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+                                    }
                                 }
                             }
                         }
                     }
                 } else {
+                val haptics = LocalHapticFeedback.current
+                var longPressedEpCode by remember { mutableStateOf<String?>(null) }
+
+                fun markEpisodesUpTo(targetEp: EpisodeModel, unmarkAfter: Boolean) {
+                    val validCodes = episodes.map { it.code.trim().uppercase() }.toSet()
+                    val nextSet = watchedSet
+                        .map { it.trim().uppercase() }
+                        .filter { !unairedCodes.contains(it) && (validCodes.isEmpty() || validCodes.contains(it)) }
+                        .toMutableSet()
+                    val nextComp = completedSeasons.toMutableMap()
+                    if (userStatus == "completed" && nextSet.isEmpty()) {
+                        episodes.forEach { epItem ->
+                            val c = epItem.code.trim().uppercase()
+                            if (c.isNotEmpty() && !unairedCodes.contains(c)) nextSet.add(c)
+                        }
+                    }
+                    if (nextComp.isNotEmpty()) {
+                        for ((sNum, _) in nextComp.toMap()) {
+                            val sList = episodes.filter { it.season == sNum }
+                            if (sList.isNotEmpty()) {
+                                sList.forEach { eItem ->
+                                    val c = eItem.code.trim().uppercase()
+                                    if (c.isNotEmpty() && !unairedCodes.contains(c)) nextSet.add(c)
+                                }
+                                nextComp.remove(sNum)
+                            } else if (unmarkAfter && sNum > targetEp.season) {
+                                nextComp.remove(sNum)
+                            }
+                        }
+                    }
+                    for (epItem in episodes) {
+                        val c = epItem.code.trim().uppercase()
+                        if (c.isEmpty() || unairedCodes.contains(c)) continue
+                        val isAtOrBefore = epItem.season < targetEp.season ||
+                            (epItem.season == targetEp.season && epItem.number <= targetEp.number)
+                        if (isAtOrBefore) {
+                            nextSet.add(c)
+                        } else if (unmarkAfter) {
+                            nextSet.remove(c)
+                        }
+                    }
+                    val baseStatus = when {
+                        userStatus == "completed" && unmarkAfter -> "in_progress"
+                        userStatus == "stopped" && !unmarkAfter -> "in_progress"
+                        else -> userStatus
+                    }
+                    completedSeasons = nextComp
+                    val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
+                    watchedSet = nextSet
+                    userStatus = nextStat
+                    persistUpdatedShow(
+                        nextWatchedSet = nextSet,
+                        nextStatus = nextStat,
+                        nextCompletedSeasons = nextComp
+                    )
+                }
+
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -973,6 +1001,16 @@ fun ShowDetailBottomSheet(
                         }
 
                         if (isSeasonOpen) {
+                            if (airedSeasonEps.size >= 20) {
+                                item(key = "season_hint_$seasonNum") {
+                                    Text(
+                                        text = "Tip: Long-press any episode's ✓ tick to mark all episodes till there.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = TvTimePalette.TextSecondary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
                             items(seasonEps, key = { "ep_${it.code}" }) { ep ->
                                 val epCodeUpper = ep.code.trim().uppercase()
                                 val isUnaired = unairedCodes.contains(epCodeUpper)
@@ -1037,7 +1075,17 @@ fun ShowDetailBottomSheet(
                                         .fillMaxWidth()
                                         .alpha(if (isUnaired) 0.6f else 1f)
                                         .then(
-                                            if (isUnaired) Modifier else Modifier.clickable { toggleSingleEpisode() }
+                                            if (isUnaired) {
+                                                Modifier
+                                            } else {
+                                                Modifier.combinedClickable(
+                                                    onClick = { toggleSingleEpisode() },
+                                                    onLongClick = {
+                                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        longPressedEpCode = epCodeUpper
+                                                    }
+                                                )
+                                            }
                                         )
                                         .padding(vertical = 6.dp, horizontal = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -1080,22 +1128,109 @@ fun ShowDetailBottomSheet(
                                             )
                                         }
                                     } else {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(40.dp)
-                                                .clip(CircleShape)
-                                                .background(
-                                                    if (isWatched) TvTimePalette.GreenProgress else Color(0xFF232329)
+                                        val isMenuOpen = longPressedEpCode == epCodeUpper
+                                        Box {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(40.dp)
+                                                    .clip(CircleShape)
+                                                    .background(
+                                                        if (isWatched) TvTimePalette.GreenProgress else Color(0xFF232329)
+                                                    )
+                                                    .combinedClickable(
+                                                        onClick = { toggleSingleEpisode() },
+                                                        onLongClick = {
+                                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                            longPressedEpCode = epCodeUpper
+                                                        }
+                                                    ),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = if (isWatched) "Watched" else "Mark Watched",
+                                                    tint = if (isWatched) Color.White else TvTimePalette.TextSecondary,
+                                                    modifier = Modifier.size(20.dp)
                                                 )
-                                                .clickable { toggleSingleEpisode() },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Check,
-                                                contentDescription = if (isWatched) "Watched" else "Mark Watched",
-                                                tint = if (isWatched) Color.White else TvTimePalette.TextSecondary,
-                                                modifier = Modifier.size(20.dp)
-                                            )
+                                            }
+                                            if (isMenuOpen) {
+                                                val airedUpTo = episodes.count { eItem ->
+                                                    val c = eItem.code.trim().uppercase()
+                                                    !unairedCodes.contains(c) && (
+                                                        eItem.season < ep.season ||
+                                                            (eItem.season == ep.season && eItem.number <= ep.number)
+                                                        )
+                                                }
+                                                val allUpToWatched = episodes.all { eItem ->
+                                                    val c = eItem.code.trim().uppercase()
+                                                    if (unairedCodes.contains(c)) {
+                                                        true
+                                                    } else if (eItem.season < ep.season || (eItem.season == ep.season && eItem.number <= ep.number)) {
+                                                        itemIsCompleted || (completedSeasons[eItem.season] ?: 0) > 0 || watchedSet.contains(c)
+                                                    } else {
+                                                        true
+                                                    }
+                                                }
+                                                val watchedAfterCount = episodes.count { eItem ->
+                                                    val c = eItem.code.trim().uppercase()
+                                                    !unairedCodes.contains(c) &&
+                                                        (eItem.season > ep.season || (eItem.season == ep.season && eItem.number > ep.number)) &&
+                                                        (itemIsCompleted || (completedSeasons[eItem.season] ?: 0) > 0 || watchedSet.contains(c))
+                                                }
+                                                DropdownMenu(
+                                                    expanded = true,
+                                                    onDismissRequest = { longPressedEpCode = null },
+                                                    modifier = Modifier.background(Color(0xFF1C1C24))
+                                                ) {
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                text = if (allUpToWatched && watchedAfterCount > 0) {
+                                                                    "✓ Mark watched till ${ep.formattedDotCode} ($airedUpTo eps)"
+                                                                } else {
+                                                                    "✓ Mark all episodes till here ($airedUpTo eps)"
+                                                                },
+                                                                color = TvTimePalette.Yellow,
+                                                                fontWeight = FontWeight.ExtraBold,
+                                                                fontSize = 13.sp
+                                                            )
+                                                        },
+                                                        onClick = {
+                                                            longPressedEpCode = null
+                                                            markEpisodesUpTo(ep, unmarkAfter = allUpToWatched && watchedAfterCount > 0)
+                                                        }
+                                                    )
+                                                    if (!allUpToWatched && watchedAfterCount > 0) {
+                                                        DropdownMenuItem(
+                                                            text = {
+                                                                Text(
+                                                                    text = "↺ Watched only till here (unmark $watchedAfterCount after)",
+                                                                    color = Color.White,
+                                                                    fontWeight = FontWeight.SemiBold,
+                                                                    fontSize = 12.sp
+                                                                )
+                                                            },
+                                                            onClick = {
+                                                                longPressedEpCode = null
+                                                                markEpisodesUpTo(ep, unmarkAfter = true)
+                                                            }
+                                                        )
+                                                    }
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                text = if (isWatched) "✕ Unmark only ${ep.formattedDotCode}" else "✓ Mark only ${ep.formattedDotCode}",
+                                                                color = TvTimePalette.TextSecondary,
+                                                                fontSize = 12.sp
+                                                            )
+                                                        },
+                                                        onClick = {
+                                                            longPressedEpCode = null
+                                                            toggleSingleEpisode()
+                                                        }
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }

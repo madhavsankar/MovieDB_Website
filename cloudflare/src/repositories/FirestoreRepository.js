@@ -156,9 +156,12 @@ export class FirestoreRepository {
       })
       .sort();
 
+    const validAllCodes = new Set(eps.map((e) => e.code));
+    const storedTotalRaw = Number(s.totalEpisodes) || 0;
+    const isWindowedInput = storedTotalRaw > eps.length + missingCompEps;
+
     const nonPresentWatchedCount = watchedOutsideComp.filter((code) => {
-      const sNum = FirestoreRepository.parseSeasonFromCode(code);
-      return !sNum || !presentSeasons.has(String(sNum));
+      return !validAllCodes.has(code);
     }).length;
 
     const computedTotal = Math.max(
@@ -291,7 +294,7 @@ export class FirestoreRepository {
         .filter((code) => {
           const sNum = FirestoreRepository.parseSeasonFromCode(code);
           if (sNum && completedSeasons[String(sNum)]) return false;
-          if (sNum && presentSeasons.has(String(sNum))) {
+          if (!isWindowedInput && sNum && presentSeasons.has(String(sNum))) {
             return validPresentCodes.has(code);
           }
           return true;
