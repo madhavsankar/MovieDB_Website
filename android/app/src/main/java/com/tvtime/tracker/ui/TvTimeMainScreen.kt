@@ -4406,6 +4406,7 @@ private fun CategoriesFullPageScreen(
     var segment by rememberSaveable { mutableStateOf("movies") } // "movies" | "shows"
     var movieLang by rememberSaveable { mutableStateOf("ta") }
     var movieYear by rememberSaveable { mutableStateOf("0") }
+    var showLang by rememberSaveable { mutableStateOf("all") }
     var showGenre by rememberSaveable { mutableStateOf("all") }
     var showYearFrom by rememberSaveable { mutableStateOf("0") }
     var showYearTo by rememberSaveable { mutableStateOf("0") }
@@ -4434,6 +4435,9 @@ private fun CategoriesFullPageScreen(
             "es" to "Spanish",
             "all" to "All Languages"
         )
+    }
+    val showLanguageOptions = remember(languageOptions) {
+        listOf("all" to "All Languages") + languageOptions.filter { it.first != "all" }
     }
     val movieYearOptions = remember {
         val maxY = maxOf(2026, java.time.LocalDate.now().year + 1)
@@ -4470,14 +4474,14 @@ private fun CategoriesFullPageScreen(
         )
     }
 
-    LaunchedEffect(segment, movieLang, movieYear, showGenre, showYearFrom, showYearTo, sortKey) {
+    LaunchedEffect(segment, movieLang, movieYear, showLang, showGenre, showYearFrom, showYearTo, sortKey) {
         isLoading = true
         isLoadingMore = false
         currentPage = 1
         rawResults = emptyList()
         val pageRes = LiveMediaCatalogService.discoverByCategoryPaged(
             mediaType = if (segment == "shows") "show" else "movie",
-            language = movieLang,
+            language = if (segment == "shows") showLang else movieLang,
             year = movieYear.toIntOrNull() ?: 0,
             yearFrom = showYearFrom.toIntOrNull() ?: 0,
             yearTo = showYearTo.toIntOrNull() ?: 0,
@@ -4558,7 +4562,7 @@ private fun CategoriesFullPageScreen(
             scope.launch {
                 val pageRes = LiveMediaCatalogService.discoverByCategoryPaged(
                     mediaType = if (segment == "shows") "show" else "movie",
-                    language = movieLang,
+                    language = if (segment == "shows") showLang else movieLang,
                     year = movieYear.toIntOrNull() ?: 0,
                     yearFrom = showYearFrom.toIntOrNull() ?: 0,
                     yearTo = showYearTo.toIntOrNull() ?: 0,
@@ -4619,7 +4623,7 @@ private fun CategoriesFullPageScreen(
                         color = Color.White
                     )
                     Text(
-                        text = "Find untracked movies (Year + Language) & series (Year Range + Genre)",
+                        text = "Find untracked movies (Language + Year) & series (Language + Genre + Year Range)",
                         style = MaterialTheme.typography.bodySmall,
                         color = TvTimePalette.TextSecondary
                     )
@@ -4695,6 +4699,14 @@ private fun CategoriesFullPageScreen(
                     }
                 } else {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        item {
+                            TvFilterDropdown(
+                                prefixLabel = "",
+                                selectedKey = showLang,
+                                options = showLanguageOptions,
+                                onSelect = { showLang = it }
+                            )
+                        }
                         item {
                             TvFilterDropdown(
                                 prefixLabel = "",

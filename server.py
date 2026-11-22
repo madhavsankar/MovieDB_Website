@@ -793,6 +793,8 @@ def discover_by_category(media_type="movie", language="", year=0, year_from=0, y
             params.append(f"first_air_date.lte={y2}-12-31")
         if clean_genre and clean_genre != "all":
             params.append(f"with_genres={urllib.parse.quote(clean_genre)}")
+        if clean_lang and clean_lang != "all":
+            params.append(f"with_original_language={urllib.parse.quote(clean_lang)}")
     else:
         yr = int(year or 0)
         if yr > 1900:

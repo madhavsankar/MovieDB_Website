@@ -1850,6 +1850,7 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
 
               const showCat = await LiveCatalogService.discoverByCategory({
                 mediaType: "show",
+                language: "ml",
                 yearFrom: 2005,
                 yearTo: 2010,
                 genre: "80",
@@ -1858,6 +1859,14 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 fetchImpl: mockFetch,
                 env: { TMDB_API_KEY: "dummy" }
               });
+
+              app.categorySegment = "shows";
+              app.categoryShowLang = "hi";
+              app.categoryShowGenre = "18";
+              app.categoryShowYearFrom = 2018;
+              app.categoryShowYearTo = 2025;
+              app.categorySort = "votes";
+              const builtShowCatUrl = app.buildCategoriesApiUrl(1);
 
               // Verify Web Categories filters out BOTH watched (completed) AND watchlist (interested) items
               app.state = {
@@ -1875,6 +1884,8 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
               const out = JSON.stringify({
                 movUrl: requestedUrls[0],
                 showUrl: requestedUrls[1],
+                builtShowCatUrl,
+                hasShowLangDropdown: WEB_APP_HTML.includes('id="cat-show-lang"'),
                 movHasMore: movCat.hasMore,
                 untrackedMovTitles: untrackedMov.map((m) => m.title),
                 untrackedShowTitles: untrackedShows.map((s) => s.title),
@@ -1892,6 +1903,9 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertIn("first_air_date.gte=2005-01-01", out["showUrl"])
         self.assertIn("first_air_date.lte=2010-12-31", out["showUrl"])
         self.assertIn("with_genres=80", out["showUrl"])
+        self.assertIn("with_original_language=ml", out["showUrl"])
+        self.assertIn("language=hi", out["builtShowCatUrl"])
+        self.assertTrue(out["hasShowLangDropdown"])
         self.assertTrue(out["movHasMore"])
         self.assertEqual(out["untrackedMovTitles"], ["Autograph"])
         self.assertEqual(out["untrackedShowTitles"], ["Dexter"])

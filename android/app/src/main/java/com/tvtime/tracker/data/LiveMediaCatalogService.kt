@@ -216,6 +216,9 @@ object LiveMediaCatalogService {
                     if (cleanGenre.isNotEmpty() && cleanGenre != "all") {
                         params.add("with_genres=${URLEncoder.encode(cleanGenre, "UTF-8")}")
                     }
+                    if (cleanLang.isNotEmpty() && cleanLang != "all") {
+                        params.add("with_original_language=${URLEncoder.encode(cleanLang, "UTF-8")}")
+                    }
                 } else {
                     if (year > 1900) params.add("primary_release_year=$year")
                     if (cleanLang.isNotEmpty() && cleanLang != "all") {

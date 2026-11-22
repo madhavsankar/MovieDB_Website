@@ -615,7 +615,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           </button>
           <div>
             <h2 class="text-lg font-extrabold text-white">🗂️ Categories</h2>
-            <p class="text-xs text-zinc-400">Find untracked movies (Year + Language) &amp; series (Year Range + Genre)</p>
+            <p class="text-xs text-zinc-400">Find untracked movies (Language + Year) &amp; series (Language + Genre + Year Range)</p>
           </div>
         </div>
       </div>
@@ -687,8 +687,32 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- Series Filter Bar: Genre + From Year + To Year + Sort -->
+      <!-- Series Filter Bar: Language + Genre + From Year + To Year + Sort -->
       <div id="cat-filters-shows" class="hidden flex items-center gap-2 flex-wrap">
+        <div class="relative flex items-center">
+          <select
+            id="cat-show-lang"
+            onchange="app.setCategoryShowLanguage(this.value)"
+            class="tv-pill-bar pl-3.5 pr-7 py-2 rounded-full text-xs font-extrabold text-yellow-400 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
+          >
+            <option value="all">All Languages</option>
+            <option value="ta">Tamil</option>
+            <option value="ml">Malayalam</option>
+            <option value="mr">Marathi</option>
+            <option value="hi">Hindi</option>
+            <option value="te">Telugu</option>
+            <option value="kn">Kannada</option>
+            <option value="bn">Bengali</option>
+            <option value="pa">Punjabi</option>
+            <option value="gu">Gujarati</option>
+            <option value="en">English</option>
+            <option value="ko">Korean</option>
+            <option value="ja">Japanese</option>
+            <option value="es">Spanish</option>
+          </select>
+          <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
+        </div>
+
         <div class="relative flex items-center">
           <select
             id="cat-show-genre"
@@ -1113,6 +1137,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.categorySegment = "movies"; // "movies" | "shows"
         this.categoryMovieLang = "ta";
         this.categoryMovieYear = 0; // 0 = All Years
+        this.categoryShowLang = "all";
         this.categoryShowGenre = "all";
         this.categoryShowYearFrom = 0;
         this.categoryShowYearTo = 0;
@@ -3970,6 +3995,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.fetchCategoryResults(true);
       }
 
+      setCategoryShowLanguage(lang) {
+        this.categoryShowLang = String(lang || "all");
+        this.fetchCategoryResults(true);
+      }
+
       setCategoryShowGenre(genre) {
         this.categoryShowGenre = String(genre || "all");
         this.fetchCategoryResults(true);
@@ -3999,6 +4029,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (isShow) {
           return (
             "/api/discover-categories?mediaType=show" +
+            "&language=" +
+            encodeURIComponent(this.categoryShowLang || "all") +
             "&genre=" +
             encodeURIComponent(this.categoryShowGenre || "all") +
             "&yearFrom=" +
