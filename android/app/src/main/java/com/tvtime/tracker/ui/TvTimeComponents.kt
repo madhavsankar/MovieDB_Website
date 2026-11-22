@@ -1,5 +1,6 @@
 package com.tvtime.tracker.ui
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.foundation.BorderStroke
@@ -28,6 +29,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -39,17 +41,84 @@ import com.tvtime.tracker.domain.SearchResultItem
 import com.tvtime.tracker.domain.TvTimeProgressCalculator
 import com.tvtime.tracker.ui.theme.TvTimePalette
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
 
 object RemoteBitmapCache {
-    private val cache = LruCache<String, ImageBitmap>(80)
+    // Byte-bounded (max 24 MB or 1/8th JVM heap) & synchronized LruCache preventing OutOfMemoryError crashes
+    private val maxCacheKb: Int = run {
+        val heapKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
+        (heapKb / 8).coerceIn(8 * 1024, 24 * 1024)
+    }
 
-    fun get(url: String): ImageBitmap? = cache.get(url)
+    private val cache = object : LruCache<String, ImageBitmap>(maxCacheKb) {
+        override fun sizeOf(key: String, value: ImageBitmap): Int {
+            // RGB_565 uses 2 bytes/pixel; estimate conservatively in KB
+            return ((value.width * value.height * 2) / 1024).coerceAtLeast(1)
+        }
+    }
 
-    fun put(url: String, bmp: ImageBitmap) {
-        cache.put(url, bmp)
+    val downloadSemaphore = Semaphore(6)
+
+    @Synchronized
+    fun get(key: String): ImageBitmap? = cache.get(key)
+
+    @Synchronized
+    fun put(key: String, bmp: ImageBitmap) {
+        cache.put(key, bmp)
+    }
+
+    @Synchronized
+    fun evictAll() {
+        cache.evictAll()
+    }
+
+    fun optimizePosterUrl(rawUrl: String, widthDp: Float): String {
+        val trimmed = rawUrl.trim()
+        if (!trimmed.contains("image.tmdb.org/t/p/")) return trimmed
+        val targetBucket = when {
+            widthDp <= 115f -> "w185"
+            widthDp <= 220f -> "w342"
+            else -> "w500"
+        }
+        return trimmed
+            .replace("/t/p/original/", "/t/p/$targetBucket/")
+            .replace("/t/p/w780/", "/t/p/$targetBucket/")
+            .replace("/t/p/w500/", "/t/p/$targetBucket/")
+    }
+
+    fun decodeSampledBitmap(bytes: ByteArray, reqWidthPx: Int, reqHeightPx: Int): ImageBitmap? {
+        if (bytes.isEmpty()) return null
+        val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, boundsOpts)
+        val srcW = boundsOpts.outWidth
+        val srcH = boundsOpts.outHeight
+        if (srcW <= 0 || srcH <= 0) return null
+
+        var sampleSize = 1
+        val targetW = reqWidthPx.coerceAtLeast(96)
+        val targetH = reqHeightPx.coerceAtLeast(96)
+        while ((srcW / (sampleSize * 2)) >= targetW && (srcH / (sampleSize * 2)) >= targetH) {
+            sampleSize *= 2
+        }
+
+        val decodeOpts = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
+        return try {
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpts)?.asImageBitmap()
+        } catch (_: OutOfMemoryError) {
+            evictAll()
+            val fallbackOpts = BitmapFactory.Options().apply {
+                inSampleSize = (sampleSize * 2).coerceAtLeast(2)
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
+            runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, fallbackOpts)?.asImageBitmap() }.getOrNull()
+        }
     }
 }
 
@@ -61,25 +130,48 @@ fun NetworkPosterImage(
     height: Dp = 96.dp,
     cornerRadius: Dp = 12.dp
 ) {
-    var bitmap by remember(url) { mutableStateOf( if (url.isNotBlank()) RemoteBitmapCache.get(url) else null ) }
+    val density = LocalDensity.current
+    val effectiveUrl = remember(url, width) {
+        if (url.isNotBlank()) RemoteBitmapCache.optimizePosterUrl(url, width.value) else ""
+    }
+    val reqWidthPx = remember(width, density) { with(density) { width.roundToPx() }.coerceAtLeast(64) }
+    val reqHeightPx = remember(height, density) { with(density) { height.roundToPx() }.coerceAtLeast(64) }
+    var bitmap by remember(effectiveUrl) {
+        mutableStateOf(if (effectiveUrl.isNotBlank()) RemoteBitmapCache.get(effectiveUrl) else null)
+    }
 
-    LaunchedEffect(url) {
-        if (url.isNotBlank() && bitmap == null) {
-            withContext(Dispatchers.IO) {
-                try {
-                    val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                        connectTimeout = 4500
-                        readTimeout = 4500
-                    }
-                    if (conn.responseCode in 200..299) {
-                        val bytes = conn.inputStream.use { it.readBytes() }
-                        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-                        if (decoded != null) {
-                            RemoteBitmapCache.put(url, decoded)
-                            bitmap = decoded
+    LaunchedEffect(effectiveUrl, reqWidthPx, reqHeightPx) {
+        if (effectiveUrl.isNotBlank() && bitmap == null) {
+            val cached = RemoteBitmapCache.get(effectiveUrl)
+            if (cached != null) {
+                bitmap = cached
+                return@LaunchedEffect
+            }
+            val loaded = withContext(Dispatchers.IO) {
+                RemoteBitmapCache.downloadSemaphore.withPermit {
+                    RemoteBitmapCache.get(effectiveUrl)?.let { return@withPermit it }
+                    try {
+                        val conn = (URL(effectiveUrl).openConnection() as HttpURLConnection).apply {
+                            connectTimeout = 4500
+                            readTimeout = 4500
                         }
+                        if (conn.responseCode in 200..299) {
+                            val bytes = conn.inputStream.use { it.readBytes() }
+                            val decoded = RemoteBitmapCache.decodeSampledBitmap(bytes, reqWidthPx, reqHeightPx)
+                            if (decoded != null) {
+                                RemoteBitmapCache.put(effectiveUrl, decoded)
+                            }
+                            decoded
+                        } else {
+                            null
+                        }
+                    } catch (_: Throwable) {
+                        null
                     }
-                } catch (_: Exception) {}
+                }
+            }
+            if (loaded != null) {
+                bitmap = loaded
             }
         }
     }

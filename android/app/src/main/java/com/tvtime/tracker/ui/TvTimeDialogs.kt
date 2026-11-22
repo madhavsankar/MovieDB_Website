@@ -197,6 +197,9 @@ fun ShowDetailBottomSheet(
                 isOngoingShow = isOngoingShow
             )
             val airedFetchedCount = TvTimeProgressCalculator.filterAiredEpisodes(sortedFetched).size.coerceAtLeast(1)
+            val wasAlreadyCompactedCompleted = show.userStatus.equals("completed", ignoreCase = true) &&
+                completedSeasons.isEmpty() &&
+                episodes.size <= 1
             episodes = sortedFetched
             completedSeasons = emptyMap()
             totalEpisodesOverride = airedFetchedCount
@@ -214,7 +217,8 @@ fun ShowDetailBottomSheet(
             } else {
                 emptySet()
             }
-            if (persistedShowId != 0L) {
+            // Only write back on open if the show wasn't already a compacted completed show (or if newly aired episodes moved it back to in_progress)
+            if (persistedShowId != 0L && (!wasAlreadyCompactedCompleted || nextEff != "completed")) {
                 persistUpdatedShow(
                     nextEpisodes = sortedFetched,
                     nextWatchedSet = nextWatched,

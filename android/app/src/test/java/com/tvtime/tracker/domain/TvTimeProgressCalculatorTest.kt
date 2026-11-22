@@ -42,6 +42,15 @@ class FakeTvTimeDao : TvTimeDao {
         return assignedId
     }
 
+    override suspend fun insertShows(shows: List<ShowEntity>) {
+        val assigned = shows.map { s ->
+            val assignedId = if (s.id == 0L) nextId++ else s.id
+            s.copy(id = assignedId)
+        }
+        val assignedIds = assigned.map { it.id }.toSet()
+        showsState.value = showsState.value.filterNot { assignedIds.contains(it.id) } + assigned
+    }
+
     override suspend fun updateShow(show: ShowEntity) {
         showsState.value = showsState.value.map { if (it.id == show.id) show else it }
     }
@@ -70,6 +79,15 @@ class FakeTvTimeDao : TvTimeDao {
         return assignedId
     }
 
+    override suspend fun insertMovies(movies: List<MovieEntity>) {
+        val assigned = movies.map { m ->
+            val assignedId = if (m.id == 0L) nextId++ else m.id
+            m.copy(id = assignedId)
+        }
+        val assignedIds = assigned.map { it.id }.toSet()
+        moviesState.value = moviesState.value.filterNot { assignedIds.contains(it.id) } + assigned
+    }
+
     override suspend fun updateMovie(movie: MovieEntity) {
         moviesState.value = moviesState.value.map { if (it.id == movie.id) movie else it }
     }
@@ -93,6 +111,15 @@ class FakeTvTimeDao : TvTimeDao {
         val entity = actor.copy(id = assignedId)
         actorsState.value = actorsState.value.filterNot { it.id == assignedId } + entity
         return assignedId
+    }
+
+    override suspend fun insertActors(actors: List<ActorEntity>) {
+        val assigned = actors.map { a ->
+            val assignedId = if (a.id == 0L) nextId++ else a.id
+            a.copy(id = assignedId)
+        }
+        val assignedIds = assigned.map { it.id }.toSet()
+        actorsState.value = actorsState.value.filterNot { assignedIds.contains(it.id) } + assigned
     }
 
     override suspend fun deleteActor(id: Long) {

@@ -87,6 +87,9 @@ interface TvTimeDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertShow(show: ShowEntity): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertShows(shows: List<ShowEntity>)
+
     @Update
     suspend fun updateShow(show: ShowEntity)
 
@@ -95,6 +98,14 @@ interface TvTimeDao {
 
     @Query("DELETE FROM shows WHERE userId = :userId")
     suspend fun deleteAllShowsForUser(userId: String)
+
+    @Transaction
+    suspend fun replaceShowsForUser(userId: String, shows: List<ShowEntity>) {
+        deleteAllShowsForUser(userId)
+        if (shows.isNotEmpty()) {
+            insertShows(shows)
+        }
+    }
 
     @Query("SELECT * FROM movies WHERE userId = :userId ORDER BY id DESC")
     fun observeMoviesForUser(userId: String): Flow<List<MovieEntity>>
@@ -108,6 +119,9 @@ interface TvTimeDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMovie(movie: MovieEntity): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMovies(movies: List<MovieEntity>)
+
     @Update
     suspend fun updateMovie(movie: MovieEntity)
 
@@ -116,6 +130,14 @@ interface TvTimeDao {
 
     @Query("DELETE FROM movies WHERE userId = :userId")
     suspend fun deleteAllMoviesForUser(userId: String)
+
+    @Transaction
+    suspend fun replaceMoviesForUser(userId: String, movies: List<MovieEntity>) {
+        deleteAllMoviesForUser(userId)
+        if (movies.isNotEmpty()) {
+            insertMovies(movies)
+        }
+    }
 
     @Query("SELECT * FROM followed_actors WHERE userId = :userId ORDER BY id DESC")
     fun observeActorsForUser(userId: String): Flow<List<ActorEntity>>
@@ -126,11 +148,22 @@ interface TvTimeDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertActor(actor: ActorEntity): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertActors(actors: List<ActorEntity>)
+
     @Query("DELETE FROM followed_actors WHERE id = :id")
     suspend fun deleteActor(id: Long)
 
     @Query("DELETE FROM followed_actors WHERE userId = :userId")
     suspend fun deleteAllActorsForUser(userId: String)
+
+    @Transaction
+    suspend fun replaceActorsForUser(userId: String, actors: List<ActorEntity>) {
+        deleteAllActorsForUser(userId)
+        if (actors.isNotEmpty()) {
+            insertActors(actors)
+        }
+    }
 }
 
 @Database(

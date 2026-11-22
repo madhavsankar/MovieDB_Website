@@ -420,9 +420,17 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertIn("dao.deleteShow(", dialogs)
         self.assertIn("dao.deleteMovie(", dialogs)
 
-        # 4. Friends library scroll-position preservation (never reset isComputing on myMovies/myShows updates & use stable item keys)
+        # 4. Friends library scroll-position preservation & Android crash/lag guards
         self.assertIn("key = { row -> row.stableKey }", main_screen)
         self.assertNotIn("preparedLibrary = preparedLibrary.copy(isComputing = true)", main_screen)
+        with open(os.path.join(ROOT_DIR, "android", "app", "src", "main", "java", "com", "tvtime", "tracker", "ui", "TvTimeComponents.kt"), "r", encoding="utf-8") as f:
+            components_kt = f.read()
+        with open(os.path.join(ROOT_DIR, "android", "app", "src", "main", "java", "com", "tvtime", "tracker", "data", "FirestoreSyncService.kt"), "r", encoding="utf-8") as f:
+            sync_kt = f.read()
+        self.assertIn("Bitmap.Config.RGB_565", components_kt)
+        self.assertIn("inSampleSize", components_kt)
+        self.assertIn("dao.replaceShowsForUser(", sync_kt)
+        self.assertIn("dao.replaceMoviesForUser(", sync_kt)
 
         # 4. Friends library must be virtualized via LazyColumn itemsIndexed + off-UI-thread Dispatchers.Default indexing (no ANR!)
         self.assertNotIn("filteredFriendMovies.forEach", main_screen)

@@ -46,6 +46,11 @@ object FirestoreSyncService {
     const val DEFAULT_USER_ID = "default"
     private val syncMutex = Mutex()
     private val socialCache = ConcurrentHashMap<String, SocialFriendsState>()
+    private val lastSyncedUpdatedAt = ConcurrentHashMap<String, String>()
+    private val lastPullEpochMs = ConcurrentHashMap<String, Long>()
+    private val MOVIE_NUMS_REGEX = Regex("\\b(?:[0-9]+|ii|iii|iv)\\b")
+    private val SANITIZE_UID_REGEX = Regex("[^a-z0-9_.-]")
+    private val HEADER_ALNUM_REGEX = Regex("[^a-z0-9]")
 
     private fun parseStringList(arr: JSONArray?): List<String> {
         if (arr == null) return emptyList()
@@ -466,7 +471,7 @@ object FirestoreSyncService {
         val titleToKeys = LinkedHashMap<String, MutableList<String>>()
         val skelToKeys = LinkedHashMap<String, MutableList<String>>()
         fun extractNums(s: String): String =
-            Regex("\\b(?:[0-9]+|ii|iii|iv)\\b").findAll(s).joinToString(",") { it.value }
+            MOVIE_NUMS_REGEX.findAll(s).joinToString(",") { it.value }
 
         for (rawMovie in movies) {
             val isCsv = rawMovie.externalId.startsWith("csv_", ignoreCase = true)
@@ -554,7 +559,7 @@ object FirestoreSyncService {
         val trimmed = (raw ?: "").trim().lowercase()
         if (trimmed.isEmpty()) return DEFAULT_USER_ID
         val withoutDomain = trimmed.substringBefore("@").removeSuffix("_gmail.com")
-        val cleaned = withoutDomain.replace(Regex("[^a-z0-9_.-]"), "_").take(64)
+        val cleaned = withoutDomain.replace(SANITIZE_UID_REGEX, "_").take(64)
         return cleaned.ifEmpty { DEFAULT_USER_ID }
     }
 
@@ -628,6 +633,7 @@ object FirestoreSyncService {
 
                 val social = socialCache[cleanUser] ?: readSocialFromRemoteUnlocked(cleanUser)
 
+                val nowIso = Instant.now().toString()
                 val payloadObj = JSONObject().apply {
                     put("userId", cleanUser)
                     put("email", displayUserLabel(cleanUser))
@@ -637,7 +643,7 @@ object FirestoreSyncService {
                     put("friends", JSONArray(social.friends))
                     put("incomingFriendRequests", JSONArray(social.incomingRequests))
                     put("outgoingFriendRequests", JSONArray(social.outgoingRequests))
-                    put("updatedAt", Instant.now().toString())
+                    put("updatedAt", nowIso)
                 }
 
                 val payloadStr = payloadObj.toString()
@@ -651,7 +657,7 @@ object FirestoreSyncService {
                             put("payload", JSONObject().put("stringValue", payloadStr))
                             put("showCount", JSONObject().put("integerValue", watchedShowsCount.toString()))
                             put("movieCount", JSONObject().put("integerValue", watchedMoviesCount.toString()))
-                            put("updatedAt", JSONObject().put("stringValue", Instant.now().toString()))
+                            put("updatedAt", JSONObject().put("stringValue", nowIso))
                         }
                     )
                 }
@@ -664,7 +670,12 @@ object FirestoreSyncService {
                     doOutput = true
                 }
                 conn.outputStream.use { it.write(firestoreBody.toString().toByteArray(Charsets.UTF_8)) }
-                conn.responseCode in 200..299
+                val ok = conn.responseCode in 200..299
+                if (ok) {
+                    lastSyncedUpdatedAt[cleanUser] = nowIso
+                    lastPullEpochMs[cleanUser] = System.currentTimeMillis()
+                }
+                ok
             } catch (_: Exception) {
                 false
             }
@@ -673,7 +684,8 @@ object FirestoreSyncService {
 
     suspend fun pullFromFirestoreIfNeeded(
         dao: TvTimeDao,
-        userId: String = DEFAULT_USER_ID
+        userId: String = DEFAULT_USER_ID,
+        force: Boolean = false
     ): Boolean = withContext(Dispatchers.IO) {
         syncMutex.withLock {
             val cleanUser = sanitizeUserId(userId)
@@ -682,7 +694,37 @@ object FirestoreSyncService {
                 ensureUserSeeded(dao, cleanUser)
                 return@withLock false
             }
+            val nowMs = System.currentTimeMillis()
+            val prevPullMs = lastPullEpochMs[cleanUser] ?: 0L
+            if (!force && prevPullMs > 0L && (nowMs - prevPullMs) < 15_000L) {
+                return@withLock true
+            }
             try {
+                val existingLocalShows = dao.getShowsForUser(cleanUser)
+                val existingLocalMovies = dao.getMoviesForUser(cleanUser)
+                val hasLocalLibrary = existingLocalShows.isNotEmpty() || existingLocalMovies.isNotEmpty()
+                val cachedUpdatedAt = lastSyncedUpdatedAt[cleanUser].orEmpty()
+
+                // Fast lightweight (< 0.3 KB) updatedAt check on automatic background resumes
+                if (!force && hasLocalLibrary && cachedUpdatedAt.isNotEmpty()) {
+                    val metaConn = (URL("$docUrl?mask.fieldPaths=updatedAt").openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        connectTimeout = 6000
+                        readTimeout = 8000
+                    }
+                    if (metaConn.responseCode in 200..299) {
+                        val metaJson = JSONObject(metaConn.inputStream.bufferedReader().use { it.readText() })
+                        val remoteTs = metaJson.optJSONObject("fields")
+                            ?.optJSONObject("updatedAt")
+                            ?.optString("stringValue", "")
+                            .orEmpty()
+                        if (remoteTs.isNotEmpty() && remoteTs == cachedUpdatedAt) {
+                            lastPullEpochMs[cleanUser] = System.currentTimeMillis()
+                            return@withLock true
+                        }
+                    }
+                }
+
                 val conn = (URL(docUrl).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 10000
@@ -695,7 +737,9 @@ object FirestoreSyncService {
 
                 val docText = conn.inputStream.bufferedReader().use { it.readText() }
                 val docJson = JSONObject(docText)
-                val payloadStr = docJson.optJSONObject("fields")
+                val docFields = docJson.optJSONObject("fields")
+                val remoteUpdatedAt = docFields?.optJSONObject("updatedAt")?.optString("stringValue", "").orEmpty()
+                val payloadStr = docFields
                     ?.optJSONObject("payload")
                     ?.optString("stringValue", "") ?: ""
                 if (payloadStr.isBlank()) {
@@ -704,46 +748,49 @@ object FirestoreSyncService {
                 }
 
                 val payload = JSONObject(payloadStr)
+                val effectiveUpdatedAt = remoteUpdatedAt.ifBlank { payload.optString("updatedAt", "") }
                 extractSocialFromPayload(payload, cleanUser)
+
+                if (!force && hasLocalLibrary && effectiveUpdatedAt.isNotEmpty() && effectiveUpdatedAt == cachedUpdatedAt) {
+                    lastPullEpochMs[cleanUser] = System.currentTimeMillis()
+                    return@withLock true
+                }
+
                 val showsArr = payload.optJSONArray("shows")
                 val moviesArr = payload.optJSONArray("movies")
                 val actorsArr = payload.optJSONArray("actors")
                 val decidedArr = payload.optJSONArray("decidedIds")
 
                 if (showsArr != null) {
-                    val parsedShows = mutableListOf<ShowEntity>()
-                    for (i in 0 until showsArr.length()) {
-                        val s = showsArr.optJSONObject(i) ?: continue
-                        parsedShows.add(parseShowJsonToEntity(s, cleanUser, i))
+                    val combinedShows = withContext(Dispatchers.Default) {
+                        val parsedShows = ArrayList<ShowEntity>(showsArr.length())
+                        for (i in 0 until showsArr.length()) {
+                            val s = showsArr.optJSONObject(i) ?: continue
+                            parsedShows.add(parseShowJsonToEntity(s, cleanUser, i))
+                        }
+                        if (parsedShows.isNotEmpty()) {
+                            deduplicateShows(parsedShows)
+                        } else {
+                            deduplicateShows(existingLocalShows)
+                        }
                     }
-                    val existingLocalShows = dao.getShowsForUser(cleanUser)
-                    val combinedShows = if (parsedShows.isNotEmpty()) {
-                        deduplicateShows(parsedShows)
-                    } else {
-                        deduplicateShows(existingLocalShows)
-                    }
-                    dao.deleteAllShowsForUser(cleanUser)
-                    for (showEntity in combinedShows) {
-                        dao.insertShow(showEntity)
-                    }
+                    dao.replaceShowsForUser(cleanUser, combinedShows)
                 }
 
                 if (moviesArr != null) {
-                    val parsedMovies = mutableListOf<MovieEntity>()
-                    for (i in 0 until moviesArr.length()) {
-                        val m = moviesArr.optJSONObject(i) ?: continue
-                        parsedMovies.add(parseMovieJsonToEntity(m, cleanUser, i))
+                    val combinedMovies = withContext(Dispatchers.Default) {
+                        val parsedMovies = ArrayList<MovieEntity>(moviesArr.length())
+                        for (i in 0 until moviesArr.length()) {
+                            val m = moviesArr.optJSONObject(i) ?: continue
+                            parsedMovies.add(parseMovieJsonToEntity(m, cleanUser, i))
+                        }
+                        if (parsedMovies.isNotEmpty()) {
+                            deduplicateMovies(parsedMovies)
+                        } else {
+                            deduplicateMovies(existingLocalMovies)
+                        }
                     }
-                    val existingLocalMovies = dao.getMoviesForUser(cleanUser)
-                    val combinedMovies = if (parsedMovies.isNotEmpty()) {
-                        deduplicateMovies(parsedMovies)
-                    } else {
-                        deduplicateMovies(existingLocalMovies)
-                    }
-                    dao.deleteAllMoviesForUser(cleanUser)
-                    for (movieEntity in combinedMovies) {
-                        dao.insertMovie(movieEntity)
-                    }
+                    dao.replaceMoviesForUser(cleanUser, combinedMovies)
                 }
 
                 if (actorsArr != null || decidedArr != null) {
@@ -751,7 +798,6 @@ object FirestoreSyncService {
                         .filter { it.role == "decided_rec" }
                         .mapNotNull { TvTimeProgressCalculator.canonicalizeDecidedId(it.externalId).takeIf { c -> c.isNotEmpty() } }
                     val insertedDecided = LinkedHashSet<String>(existingDecided)
-                    dao.deleteAllActorsForUser(cleanUser)
                     if (actorsArr != null) {
                         for (i in 0 until actorsArr.length()) {
                             val a = actorsArr.optJSONObject(i) ?: continue
@@ -769,18 +815,21 @@ object FirestoreSyncService {
                             if (c.isNotEmpty()) insertedDecided.add(c)
                         }
                     }
-                    for (did in insertedDecided) {
-                        dao.insertActor(
-                            ActorEntity(
-                                userId = cleanUser,
-                                externalId = did,
-                                name = did,
-                                role = "decided_rec"
-                            )
+                    val actorEntities = insertedDecided.map { did ->
+                        ActorEntity(
+                            userId = cleanUser,
+                            externalId = did,
+                            name = did,
+                            role = "decided_rec"
                         )
                     }
+                    dao.replaceActorsForUser(cleanUser, actorEntities)
                 }
 
+                if (effectiveUpdatedAt.isNotEmpty()) {
+                    lastSyncedUpdatedAt[cleanUser] = effectiveUpdatedAt
+                }
+                lastPullEpochMs[cleanUser] = System.currentTimeMillis()
                 ensureUserSeeded(dao, cleanUser)
                 true
             } catch (_: Exception) {
@@ -935,36 +984,31 @@ object FirestoreSyncService {
 
         val showsArr = root.optJSONArray("shows")
         if (showsArr != null) {
-            dao.deleteAllShowsForUser(cleanUser)
             val parsedShows = mutableListOf<ShowEntity>()
             for (i in 0 until showsArr.length()) {
                 val s = showsArr.optJSONObject(i) ?: continue
                 parsedShows.add(parseShowJsonToEntity(s, cleanUser, i))
             }
-            for (se in deduplicateShows(parsedShows)) {
-                dao.insertShow(se)
-                importedCount++
-            }
+            val deduped = deduplicateShows(parsedShows)
+            dao.replaceShowsForUser(cleanUser, deduped)
+            importedCount += deduped.size
         }
 
         val moviesArr = root.optJSONArray("movies")
         if (moviesArr != null) {
-            dao.deleteAllMoviesForUser(cleanUser)
             val parsedMovies = mutableListOf<MovieEntity>()
             for (i in 0 until moviesArr.length()) {
                 val m = moviesArr.optJSONObject(i) ?: continue
                 parsedMovies.add(parseMovieJsonToEntity(m, cleanUser, i))
             }
-            for (me in deduplicateMovies(parsedMovies)) {
-                dao.insertMovie(me)
-                importedCount++
-            }
+            val deduped = deduplicateMovies(parsedMovies)
+            dao.replaceMoviesForUser(cleanUser, deduped)
+            importedCount += deduped.size
         }
 
         val actorsArr = root.optJSONArray("actors")
         val decidedArr = root.optJSONArray("decidedIds")
         if (actorsArr != null || decidedArr != null) {
-            dao.deleteAllActorsForUser(cleanUser)
             val insertedDecided = LinkedHashSet<String>()
             if (actorsArr != null) {
                 for (i in 0 until actorsArr.length()) {
@@ -981,16 +1025,15 @@ object FirestoreSyncService {
                     if (c.isNotEmpty()) insertedDecided.add(c)
                 }
             }
-            for (did in insertedDecided) {
-                dao.insertActor(
-                    ActorEntity(
-                        userId = cleanUser,
-                        externalId = did,
-                        name = did,
-                        role = "decided_rec"
-                    )
+            val actorEntities = insertedDecided.map { did ->
+                ActorEntity(
+                    userId = cleanUser,
+                    externalId = did,
+                    name = did,
+                    role = "decided_rec"
                 )
             }
+            dao.replaceActorsForUser(cleanUser, actorEntities)
         }
         pushLocalStateToFirestore(dao, cleanUser)
         importedCount
@@ -1001,7 +1044,7 @@ object FirestoreSyncService {
         val rows = parseCsvRows(rawText)
         if (rows.isEmpty()) return@withContext 0
 
-        val firstRowLower = rows[0].map { it.lowercase().replace(Regex("[^a-z0-9]"), "") }
+        val firstRowLower = rows[0].map { it.lowercase().replace(HEADER_ALNUM_REGEX, "") }
         val hasHeader = firstRowLower.contains("title") ||
             firstRowLower.contains("name") ||
             firstRowLower.contains("show") ||
