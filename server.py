@@ -801,6 +801,8 @@ def discover_by_category(media_type="movie", language="", year=0, year_from=0, y
             params.append(f"primary_release_year={yr}")
         if clean_lang and clean_lang != "all":
             params.append(f"with_original_language={urllib.parse.quote(clean_lang)}")
+        if clean_genre and clean_genre != "all":
+            params.append(f"with_genres={urllib.parse.quote(clean_genre)}")
 
     endpoint = "/discover/tv?" if is_show else "/discover/movie?"
     url = f"https://api.themoviedb.org/3{endpoint}{'&'.join(params)}"

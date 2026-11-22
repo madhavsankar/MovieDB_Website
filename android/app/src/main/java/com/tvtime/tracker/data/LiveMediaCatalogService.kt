@@ -224,6 +224,9 @@ object LiveMediaCatalogService {
                     if (cleanLang.isNotEmpty() && cleanLang != "all") {
                         params.add("with_original_language=${URLEncoder.encode(cleanLang, "UTF-8")}")
                     }
+                    if (cleanGenre.isNotEmpty() && cleanGenre != "all") {
+                        params.add("with_genres=${URLEncoder.encode(cleanGenre, "UTF-8")}")
+                    }
                 }
 
                 val endpoint = if (isShow) "tv" else "movie"
@@ -1725,12 +1728,13 @@ object LiveMediaCatalogService {
         var matchedInfoboxTitle = ""
         if (cleanTitle.isNotEmpty()) {
             try {
-                val cands = mutableListOf(cleanTitle, "$cleanTitle (TV series)")
+                val cands = mutableListOf(cleanTitle, "$cleanTitle (Indian TV series)", "$cleanTitle (TV series)")
                 if (year > 1950) cands.add("$cleanTitle ($year TV series)")
                 if (cleanTitle.contains(":")) {
                     val afterColon = cleanTitle.substringAfter(":").trim()
                     if (afterColon.length >= 4) {
                         cands.add(afterColon)
+                        cands.add("$afterColon (Indian TV series)")
                         cands.add("$afterColon (TV series)")
                     }
                 }
@@ -1748,7 +1752,14 @@ object LiveMediaCatalogService {
                             pagesObj.optJSONObject(k)?.let { pageList.add(it) }
                         }
                     }
-                    pageList.sortByDescending { if (it.optString("title", "").contains("TV series", ignoreCase = true)) 1 else 0 }
+                    pageList.sortByDescending {
+                        val pt = it.optString("title", "")
+                        when {
+                            pt.contains("Indian TV series", ignoreCase = true) -> 2
+                            pt.contains("TV series", ignoreCase = true) -> 1
+                            else -> 0
+                        }
+                    }
                     for (page in pageList) {
                         val rev = page.optJSONArray("revisions")?.optJSONObject(0)
                         val wt = rev?.optJSONObject("slots")?.optJSONObject("main")?.optString("*", "")
@@ -1821,14 +1832,32 @@ object LiveMediaCatalogService {
                                 if (pageHasIndCat || isIndianSeriesMetadata(pTitle)) isIndian = true
                                 break
                             }
-                            val rows = wt.split("\n|-")
-                            for (row in rows) {
-                                if (!titleRowRe.containsMatchIn(row)) continue
-                                val cells = row.replace(WIKI_REF_TAG_REGEX, "").split("\n|").map { it.trim() }
-                                for (ci in cells.indices.reversed()) {
-                                    val candNum = PURE_DIGITS_REGEX.find(cells[ci].replace(",", ""))?.groupValues?.getOrNull(1)?.toIntOrNull()
-                                    if (candNum != null && candNum in 15..25000 && candNum != year) {
-                                        totalEps = candNum
+                            for (tbMatch in WIKI_TABLE_REGEX.findAll(wt)) {
+                                val cleanTb = tbMatch.value.replace(WIKI_REF_TAG_REGEX, "")
+                                val rows = cleanTb.split("\n|-")
+                                val header = rows.firstOrNull().orEmpty()
+                                if (!Regex("\\bepisodes?\\b", RegexOption.IGNORE_CASE).containsMatchIn(header)) continue
+                                val hCells = header.split(Regex("!!|\\n!")).map { it.trimStart('!', '|', ' ').trim() }.filter { it.isNotEmpty() }
+                                val epColIdx = hCells.indexOfFirst { Regex("\\bepisodes?\\b", RegexOption.IGNORE_CASE).containsMatchIn(it) }
+                                for (ri in 1 until rows.size) {
+                                    val row = rows[ri]
+                                    if (!titleRowRe.containsMatchIn(row)) continue
+                                    val cells = row.split(Regex("\\|\\||\\n\\|")).map { it.trim() }.filter { it.isNotEmpty() }
+                                    var picked = 0
+                                    if (epColIdx in cells.indices) {
+                                        picked = PURE_DIGITS_REGEX.find(cells[epColIdx].replace(",", ""))?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+                                    }
+                                    if (picked == 0) {
+                                        for (ci in cells.indices.reversed()) {
+                                            val candNum = PURE_DIGITS_REGEX.find(cells[ci].replace(",", ""))?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                            if (candNum != null && candNum !in 1950..2035) {
+                                                picked = candNum
+                                                break
+                                            }
+                                        }
+                                    }
+                                    if (picked in 15..25000 && picked != year) {
+                                        totalEps = picked
                                         if (status.isEmpty()) status = "Ended"
                                         if (pTitle.contains("broadcast by ", ignoreCase = true) && network.isEmpty()) {
                                             network = pTitle.substringAfter("broadcast by ", "").trim()

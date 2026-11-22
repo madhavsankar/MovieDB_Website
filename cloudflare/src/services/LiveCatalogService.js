@@ -1931,12 +1931,12 @@ export class LiveCatalogService {
     let matchedInfoboxPageId = 0;
     let matchedInfoboxTitle = "";
     if (cleanTitle) {
-      const candidates = [cleanTitle, `${cleanTitle} (TV series)`];
+      const candidates = [cleanTitle, `${cleanTitle} (Indian TV series)`, `${cleanTitle} (TV series)`];
       if (Number(year) > 1950) candidates.push(`${cleanTitle} (${year} TV series)`);
       if (cleanTitle.includes(":")) {
         const afterColon = cleanTitle.split(":").slice(1).join(":").trim();
         if (afterColon.length >= 4) {
-          candidates.push(afterColon, `${afterColon} (TV series)`);
+          candidates.push(afterColon, `${afterColon} (Indian TV series)`, `${afterColon} (TV series)`);
         }
       }
       try {
@@ -1945,7 +1945,10 @@ export class LiveCatalogService {
         if (resp && resp.ok) {
           const data = await resp.json();
           const pages = Object.values(data?.query?.pages || {}).filter((p) => p && Number(p.pageid) > 0);
-          pages.sort((a, b) => (/tv series/i.test(b.title || "") ? 1 : 0) - (/tv series/i.test(a.title || "") ? 1 : 0));
+          pages.sort((a, b) => {
+            const rank = (t) => (/indian tv series/i.test(t) ? 2 : /tv series/i.test(t) ? 1 : 0);
+            return rank(b.title || "") - rank(a.title || "");
+          });
           for (const page of pages) {
             const rev = page.revisions?.[0];
             const wt = rev?.slots?.main?.["*"] || rev?.["*"] || "";
@@ -2017,32 +2020,54 @@ export class LiveCatalogService {
                   if (pageHasIndianCat || LiveCatalogService.isIndianSeriesMetadata(pageTitleStr)) out.isIndian = true;
                   break;
                 }
-                const rows = wt.split(/\n\|-/);
-                for (const row of rows) {
-                  if (!titleRe.test(row)) continue;
-                  const cells = row
-                    .replace(/<ref[\s\S]*?(?:<\/ref>|\/>)/gi, "")
-                    .split(/\n\|/)
-                    .map((c) => c.trim());
-                  for (let ci = cells.length - 1; ci >= 0; ci--) {
-                    const mNum = /^([0-9]{2,5})$/.exec(cells[ci].replace(/,/g, ""));
-                    if (mNum) {
-                      const val = parseInt(mNum[1], 10);
-                      if (val >= 15 && val <= 25000 && val !== Number(year)) {
-                        out.totalEpisodes = val;
-                        out.status = out.status || "Ended";
-                        const netMatch = /broadcast by\s+(.+)$/i.exec(pageTitleStr);
-                        if (netMatch && !out.network) out.network = netMatch[1].trim();
-                        if (
-                          pageHasIndianCat ||
-                          LiveCatalogService.isIndianSeriesMetadata(pageTitleStr) ||
-                          LiveCatalogService.isIndianSeriesMetadata(row) ||
-                          LiveCatalogService.isIndianSeriesMetadata(wt.slice(0, 1500))
-                        ) {
-                          out.isIndian = true;
+                const tables = wt.match(/\{\|[\s\S]*?\|\}/g) || [];
+                for (const tb of tables) {
+                  const cleanTb = tb.replace(/<ref[\s\S]*?(?:<\/ref>|\/>)/gi, "");
+                  const rows = cleanTb.split(/\n\|-/);
+                  const header = rows[0] || "";
+                  if (!/\bepisodes?\b/i.test(header)) continue;
+                  const hCells = header
+                    .split(/!!|\n!/)
+                    .map((c) => c.replace(/^[\s!|]+/, "").trim())
+                    .filter(Boolean);
+                  const epColIdx = hCells.findIndex((c) => /\bepisodes?\b/i.test(c));
+                  for (let ri = 1; ri < rows.length; ri++) {
+                    const row = rows[ri];
+                    if (!titleRe.test(row)) continue;
+                    const cells = row
+                      .split(/\|\||\n\|/)
+                      .map((c) => c.trim())
+                      .filter(Boolean);
+                    let picked = 0;
+                    if (epColIdx >= 0 && cells[epColIdx]) {
+                      const mExact = /^([0-9]{2,5})$/.exec(cells[epColIdx].replace(/,/g, "").trim());
+                      if (mExact) picked = parseInt(mExact[1], 10);
+                    }
+                    if (!picked) {
+                      for (let ci = cells.length - 1; ci >= 0; ci--) {
+                        const mNum = /^([0-9]{2,5})$/.exec(cells[ci].replace(/,/g, ""));
+                        if (mNum) {
+                          const candVal = parseInt(mNum[1], 10);
+                          if (candVal >= 1950 && candVal <= 2035) continue;
+                          picked = candVal;
+                          break;
                         }
-                        break;
                       }
+                    }
+                    if (picked >= 15 && picked <= 25000 && picked !== Number(year)) {
+                      out.totalEpisodes = picked;
+                      out.status = out.status || "Ended";
+                      const netMatch = /broadcast by\s+(.+)$/i.exec(pageTitleStr);
+                      if (netMatch && !out.network) out.network = netMatch[1].trim();
+                      if (
+                        pageHasIndianCat ||
+                        LiveCatalogService.isIndianSeriesMetadata(pageTitleStr) ||
+                        LiveCatalogService.isIndianSeriesMetadata(row) ||
+                        LiveCatalogService.isIndianSeriesMetadata(wt.slice(0, 1500))
+                      ) {
+                        out.isIndian = true;
+                      }
+                      break;
                     }
                   }
                   if (out.totalEpisodes > 0) break;
@@ -2446,6 +2471,39 @@ export class LiveCatalogService {
           overview: stripHtml(ep.summary),
         }))
         .sort((a, b) => (a.season - b.season) || (a.number - b.number));
+
+      const isIndianTvMaze =
+        String(show.network?.country?.code || show.webChannel?.country?.code || "").toUpperCase() === "IN" ||
+        LiveCatalogService.isIndianSeriesMetadata(show.language || "") ||
+        LiveCatalogService.isIndianSeriesMetadata(rawNetwork);
+      const tvMazeSeasons = new Set(episodes.map((e) => Number(e.season) || 1)).size;
+      if (isIndianTvMaze && tvMazeSeasons <= 1 && episodes.length <= 200) {
+        const wikiMeta = await LiveCatalogService.lookupWikipediaShowMeta({
+          title: show.name || cleanTitle,
+          year,
+          fetchImpl,
+        });
+        const wikiTot = Number(wikiMeta.totalEpisodes) || 0;
+        if (wikiMeta.isIndian && wikiTot >= 50 && wikiTot >= episodes.length * 2) {
+          return {
+            id: `tvmaze_${show.id}`,
+            tvmazeId: show.id,
+            title: show.name || "Untitled Show",
+            year,
+            network: wikiMeta.network && network === "Streaming" ? wikiMeta.network : network,
+            status: wikiMeta.status || show.status || "Ended",
+            runtimeMins: Number(show.averageRuntime || show.runtime) || wikiMeta.runtimeMins || 22,
+            genres: Array.isArray(show.genres) ? show.genres : [],
+            cast: castList,
+            rating: Number(show.rating?.average) || 7.9,
+            posterUrl: posterUrl || wikiMeta.posterUrl || "",
+            overview: stripHtml(show.summary) || wikiMeta.overview || "",
+            totalEpisodes: wikiTot,
+            countOnly: true,
+            episodes: [],
+          };
+        }
+      }
 
       return {
         id: `tvmaze_${show.id}`,

@@ -1842,6 +1842,7 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
               const movCat = await LiveCatalogService.discoverByCategory({
                 mediaType: "movie",
                 language: "ta",
+                genre: "28",
                 year: 2004,
                 page: 1,
                 fetchImpl: mockFetch,
@@ -1859,6 +1860,13 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 fetchImpl: mockFetch,
                 env: { TMDB_API_KEY: "dummy" }
               });
+
+              app.categorySegment = "movies";
+              app.categoryMovieLang = "ta";
+              app.categoryMovieGenre = "28";
+              app.categoryMovieYear = 2004;
+              app.categorySort = "votes";
+              const builtMovieCatUrl = app.buildCategoriesApiUrl(1);
 
               app.categorySegment = "shows";
               app.categoryShowLang = "hi";
@@ -1884,7 +1892,9 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
               const out = JSON.stringify({
                 movUrl: requestedUrls[0],
                 showUrl: requestedUrls[1],
+                builtMovieCatUrl,
                 builtShowCatUrl,
+                hasMovieGenreDropdown: WEB_APP_HTML.includes('id="cat-movie-genre"'),
                 hasShowLangDropdown: WEB_APP_HTML.includes('id="cat-show-lang"'),
                 movHasMore: movCat.hasMore,
                 untrackedMovTitles: untrackedMov.map((m) => m.title),
@@ -1899,7 +1909,10 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         out = self._run_js(harness)
         self.assertIn("primary_release_year=2004", out["movUrl"])
         self.assertIn("with_original_language=ta", out["movUrl"])
+        self.assertIn("with_genres=28", out["movUrl"])
         self.assertIn("sort_by=vote_count.desc", out["movUrl"])
+        self.assertIn("genre=28", out["builtMovieCatUrl"])
+        self.assertTrue(out["hasMovieGenreDropdown"])
         self.assertIn("first_air_date.gte=2005-01-01", out["showUrl"])
         self.assertIn("first_air_date.lte=2010-12-31", out["showUrl"])
         self.assertIn("with_genres=80", out["showUrl"])
@@ -2354,7 +2367,7 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                           "101": {
                             pageid: 101,
                             title: "List of programs broadcast by Asianet",
-                            revisions: [{ "*": "|-\\n|3 February 2014\\n|''Chandanamazha''<ref>news</ref>\\n|9 December 2017\\n|Hindi TV series\\n|1173\\n|-" }]
+                            revisions: [{ "*": "{| class='wikitable'\\n!Series\\n!Premiere\\n!Original year\\n|-\\n|''The Night Manager''\\n|2023\\n|2017\\n|}\\n{| class='wikitable'\\n!Premiere date\\n!Series\\n!Last aired\\n!Notes\\n!Episodes\\n|-\\n|3 February 2014\\n|''Chandanamazha''<ref>news</ref>\\n|9 December 2017\\n|Hindi TV series\\n|1173\\n|}" }]
                           }
                         }
                       }

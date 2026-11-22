@@ -638,7 +638,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         </button>
       </div>
 
-      <!-- Movies Filter Bar: Language + Year + Sort -->
+      <!-- Movies Filter Bar: Language + Genre + Year + Sort -->
       <div id="cat-filters-movies" class="flex items-center gap-2 flex-wrap">
         <div class="relative flex items-center">
           <select
@@ -660,6 +660,32 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             <option value="ja">Japanese</option>
             <option value="es">Spanish</option>
             <option value="all">All Languages</option>
+          </select>
+          <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
+        </div>
+
+        <div class="relative flex items-center">
+          <select
+            id="cat-movie-genre"
+            onchange="app.setCategoryMovieGenre(this.value)"
+            class="tv-pill-bar pl-3.5 pr-7 py-2 rounded-full text-xs font-extrabold text-yellow-400 border border-zinc-800 focus:outline-none cursor-pointer appearance-none bg-[#1c1c22]"
+          >
+            <option value="all">All Genres</option>
+            <option value="28">Action</option>
+            <option value="12">Adventure</option>
+            <option value="16">Animation</option>
+            <option value="35">Comedy</option>
+            <option value="80">Crime</option>
+            <option value="99">Documentary</option>
+            <option value="18">Drama</option>
+            <option value="10751">Family</option>
+            <option value="14">Fantasy</option>
+            <option value="36">History</option>
+            <option value="27">Horror</option>
+            <option value="9648">Mystery</option>
+            <option value="10749">Romance</option>
+            <option value="878">Sci-Fi</option>
+            <option value="53">Thriller</option>
           </select>
           <span class="pointer-events-none absolute right-2.5 text-[10px] text-zinc-400">▾</span>
         </div>
@@ -1136,6 +1162,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.statsCompareError = "";
         this.categorySegment = "movies"; // "movies" | "shows"
         this.categoryMovieLang = "ta";
+        this.categoryMovieGenre = "all";
         this.categoryMovieYear = 0; // 0 = All Years
         this.categoryShowLang = "all";
         this.categoryShowGenre = "all";
@@ -3990,6 +4017,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.fetchCategoryResults(true);
       }
 
+      setCategoryMovieGenre(genre) {
+        this.categoryMovieGenre = String(genre || "all");
+        this.fetchCategoryResults(true);
+      }
+
       setCategoryMovieYear(yr) {
         this.categoryMovieYear = Number(yr) || 0;
         this.fetchCategoryResults(true);
@@ -4047,6 +4079,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           "/api/discover-categories?mediaType=movie" +
           "&language=" +
           encodeURIComponent(this.categoryMovieLang || "ta") +
+          "&genre=" +
+          encodeURIComponent(this.categoryMovieGenre || "all") +
           "&year=" +
           (Number(this.categoryMovieYear) || 0) +
           "&sort=" +

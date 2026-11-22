@@ -4424,6 +4424,7 @@ private fun CategoriesFullPageScreen(
 
     var segment by rememberSaveable { mutableStateOf("movies") } // "movies" | "shows"
     var movieLang by rememberSaveable { mutableStateOf("ta") }
+    var movieGenre by rememberSaveable { mutableStateOf("all") }
     var movieYear by rememberSaveable { mutableStateOf("0") }
     var showLang by rememberSaveable { mutableStateOf("all") }
     var showGenre by rememberSaveable { mutableStateOf("all") }
@@ -4470,6 +4471,26 @@ private fun CategoriesFullPageScreen(
         val maxY = maxOf(2026, java.time.LocalDate.now().year + 1)
         listOf("0" to "To: Any") + (maxY downTo 1960).map { y -> y.toString() to "To: $y" }
     }
+    val movieGenreOptions = remember {
+        listOf(
+            "all" to "All Genres",
+            "28" to "Action",
+            "12" to "Adventure",
+            "16" to "Animation",
+            "35" to "Comedy",
+            "80" to "Crime",
+            "99" to "Documentary",
+            "18" to "Drama",
+            "10751" to "Family",
+            "14" to "Fantasy",
+            "36" to "History",
+            "27" to "Horror",
+            "9648" to "Mystery",
+            "10749" to "Romance",
+            "878" to "Sci-Fi",
+            "53" to "Thriller"
+        )
+    }
     val showGenreOptions = remember {
         listOf(
             "all" to "All Genres",
@@ -4493,7 +4514,7 @@ private fun CategoriesFullPageScreen(
         )
     }
 
-    LaunchedEffect(segment, movieLang, movieYear, showLang, showGenre, showYearFrom, showYearTo, sortKey) {
+    LaunchedEffect(segment, movieLang, movieGenre, movieYear, showLang, showGenre, showYearFrom, showYearTo, sortKey) {
         isLoading = true
         isLoadingMore = false
         currentPage = 1
@@ -4504,7 +4525,7 @@ private fun CategoriesFullPageScreen(
             year = movieYear.toIntOrNull() ?: 0,
             yearFrom = showYearFrom.toIntOrNull() ?: 0,
             yearTo = showYearTo.toIntOrNull() ?: 0,
-            genre = showGenre,
+            genre = if (segment == "shows") showGenre else movieGenre,
             sort = sortKey,
             page = 1
         )
@@ -4585,7 +4606,7 @@ private fun CategoriesFullPageScreen(
                     year = movieYear.toIntOrNull() ?: 0,
                     yearFrom = showYearFrom.toIntOrNull() ?: 0,
                     yearTo = showYearTo.toIntOrNull() ?: 0,
-                    genre = showGenre,
+                    genre = if (segment == "shows") showGenre else movieGenre,
                     sort = sortKey,
                     page = nextP
                 )
@@ -4642,7 +4663,7 @@ private fun CategoriesFullPageScreen(
                         color = Color.White
                     )
                     Text(
-                        text = "Find untracked movies (Language + Year) & series (Language + Genre + Year Range)",
+                        text = "Find untracked movies & series by Language, Genre & Year",
                         style = MaterialTheme.typography.bodySmall,
                         color = TvTimePalette.TextSecondary
                     )
@@ -4697,6 +4718,14 @@ private fun CategoriesFullPageScreen(
                                 selectedKey = movieLang,
                                 options = languageOptions,
                                 onSelect = { movieLang = it }
+                            )
+                        }
+                        item {
+                            TvFilterDropdown(
+                                prefixLabel = "",
+                                selectedKey = movieGenre,
+                                options = movieGenreOptions,
+                                onSelect = { movieGenre = it }
                             )
                         }
                         item {
