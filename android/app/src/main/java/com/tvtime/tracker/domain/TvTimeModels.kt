@@ -546,7 +546,7 @@ object TvTimeProgressCalculator {
             todayIso = todayIso
         )
         val w = prog.watchedCount
-        val defRt = defaultRuntimeMins.coerceAtLeast(15)
+        val defRt = (defaultRuntimeMins.takeIf { it > 0 } ?: 45).coerceAtLeast(5)
         if (w <= 0) return 0 to 0
 
         val cleanComp = meta.completedSeasons.filter { it.key > 0 && it.value > 0 }

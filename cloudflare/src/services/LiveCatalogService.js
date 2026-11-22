@@ -2247,7 +2247,7 @@ export class LiveCatalogService {
     for (const s of shows) {
       const eps = Array.isArray(s.episodes) ? s.episodes : [];
       const rawStatus = String(s.userStatus || "").toLowerCase();
-      const defaultEpRuntime = Math.max(15, Number(s.runtimeMins) || 45);
+      const defaultEpRuntime = Math.max(5, Number(s.runtimeMins) || 45);
       const watchedSet = new Set(
         (s.watchedEpisodes || [])
           .map((c) => String(c || "").trim().toUpperCase())

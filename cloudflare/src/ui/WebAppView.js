@@ -1694,7 +1694,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               : Math.max(1, storedTotalNum, airedEps.length + missingCompEps);
           if (airedEps.length > 0 && !this.isSyntheticEpisodeList(eps)) {
             const sumRt = airedEps.reduce((acc, ep) => acc + (Number(ep.runtimeMins) || base.runtimeMins || 45), 0);
-            base.runtimeMins = Math.max(15, Math.round(sumRt / airedEps.length));
+            base.runtimeMins = Math.max(5, Math.round(sumRt / airedEps.length));
           }
           return {
             ...base,
@@ -3383,7 +3383,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                       const targetWatched = airedFull.length > 0 ? airedFull : sortedFull.slice(0, 1);
                       if (airedFull.length > 0) {
                         const sumRt = airedFull.reduce((acc, ep) => acc + (Number(ep.runtimeMins) || Number(s.runtimeMins) || 45), 0);
-                        s.runtimeMins = Math.max(15, Math.round(sumRt / airedFull.length));
+                        s.runtimeMins = Math.max(5, Math.round(sumRt / airedFull.length));
                       }
                       s.episodes = nextFutureEp ? [nextFutureEp] : [];
                       s.totalEpisodes = targetWatched.length;
@@ -5497,7 +5497,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       computeShowWatchTime(show, todayOverride) {
         const prog = this.computeShowProgress(show, todayOverride);
         const w = prog.watchedCount;
-        const defaultRt = Math.max(15, Number(show && show.runtimeMins) || 45);
+        const defaultRt = Math.max(5, Number(show && show.runtimeMins) || 45);
         if (w <= 0) return { watchedCount: 0, minutes: 0 };
 
         const episodes = Array.isArray(show.episodes) ? show.episodes : [];

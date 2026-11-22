@@ -220,7 +220,7 @@ export class FirestoreRepository {
           : Math.max(1, storedTotalNum, airedEps.length + missingCompEps);
       if (airedEps.length > 0 && !FirestoreRepository.isSyntheticEpisodeList(eps)) {
         const sumRt = airedEps.reduce((acc, ep) => acc + (Number(ep.runtimeMins) || base.runtimeMins || 45), 0);
-        base.runtimeMins = Math.max(15, Math.round(sumRt / airedEps.length));
+        base.runtimeMins = Math.max(5, Math.round(sumRt / airedEps.length));
       }
       return {
         ...base,

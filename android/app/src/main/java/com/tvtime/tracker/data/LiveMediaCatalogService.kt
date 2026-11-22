@@ -1280,7 +1280,7 @@ object LiveMediaCatalogService {
                                 year = year,
                                 networkOrDirector = network,
                                 status = show.optString("status", "Running"),
-                                runtimeMins = show.optInt("averageRuntime", show.optInt("runtime", 45)).coerceAtLeast(15),
+                                runtimeMins = (show.optInt("averageRuntime", show.optInt("runtime", 45)).takeIf { it > 0 } ?: 45).coerceAtLeast(5),
                                 genresCsv = genres.ifBlank { "TV Show" },
                                 rating = rating,
                                 posterUrl = poster,
@@ -1811,7 +1811,7 @@ object LiveMediaCatalogService {
                                     number = eNum,
                                     title = ep.optString("name", "Episode $eNum"),
                                     airDate = ep.optString("air_date", ""),
-                                    runtimeMins = ep.optInt("runtime", defaultRuntime).coerceAtLeast(15),
+                                    runtimeMins = (ep.optInt("runtime", defaultRuntime).takeIf { it > 0 } ?: defaultRuntime).coerceAtLeast(5),
                                     imageUrl = thumb,
                                     overview = stripHtml(ep.optString("overview", ""))
                                 )
@@ -1869,7 +1869,7 @@ object LiveMediaCatalogService {
                                     number = nextE,
                                     title = nextToAir.optString("name", "Episode $nextE"),
                                     airDate = nextToAir.optString("air_date", ""),
-                                    runtimeMins = nextToAir.optInt("runtime", defaultRuntime).coerceAtLeast(15),
+                                    runtimeMins = (nextToAir.optInt("runtime", defaultRuntime).takeIf { it > 0 } ?: defaultRuntime).coerceAtLeast(5),
                                     imageUrl = thumb,
                                     overview = stripHtml(nextToAir.optString("overview", ""))
                                 )
@@ -1902,7 +1902,7 @@ object LiveMediaCatalogService {
                         number = eNum,
                         title = e.optString("name", "Episode $eNum"),
                         airDate = e.optString("airdate", ""),
-                        runtimeMins = e.optInt("runtime", 45).coerceAtLeast(15),
+                        runtimeMins = (e.optInt("runtime", 45).takeIf { it > 0 } ?: 45).coerceAtLeast(5),
                         imageUrl = thumb,
                         overview = stripHtml(e.optString("summary", ""))
                     )
