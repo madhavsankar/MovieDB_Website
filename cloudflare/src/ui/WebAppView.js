@@ -1685,6 +1685,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             airedEps.length > 0 && !this.isSyntheticEpisodeList(eps) && storedTotalNum <= eps.length
               ? Math.max(1, airedEps.length + missingCompEps)
               : Math.max(1, storedTotalNum, airedEps.length + missingCompEps);
+          if (airedEps.length > 0 && !this.isSyntheticEpisodeList(eps)) {
+            const sumRt = airedEps.reduce((acc, ep) => acc + (Number(ep.runtimeMins) || base.runtimeMins || 45), 0);
+            base.runtimeMins = Math.max(15, Math.round(sumRt / airedEps.length));
+          }
           return {
             ...base,
             userStatus: "completed",
@@ -3351,6 +3355,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                     .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
                   const airedFull = this.getAiredEpisodes(sortedFull);
                   const isOngoing = String(full.status || s.status || "").toLowerCase() !== "ended";
+                  const todayIso = new Date().toISOString().slice(0, 10);
+                  let nextFutureEp = null;
+                  for (const ep of sortedFull) {
+                    if (this.isFutureEpisode(ep, todayIso)) {
+                      if (!nextFutureEp || ep.airDate < nextFutureEp.airDate) nextFutureEp = ep;
+                    }
+                  }
                   if (String(s.userStatus || "").toLowerCase() === "completed") {
                     if (isOngoing && knownTotal > 1 && airedFull.length > knownTotal) {
                       // New aired episodes arrived on a previously caught-up returning series
@@ -3359,22 +3370,41 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                       s.watchedEpisodes = airedFull.slice(0, knownTotal).map((e) => e.code).sort();
                       s.completedSeasons = {};
                       s.userStatus = "in_progress";
-                    } else {
+                      if (full.status) s.status = full.status;
+                      updatedAny = true;
+                    } else if (knownTotal <= 1) {
                       const targetWatched = airedFull.length > 0 ? airedFull : sortedFull.slice(0, 1);
-                      s.episodes = sortedFull;
+                      if (airedFull.length > 0) {
+                        const sumRt = airedFull.reduce((acc, ep) => acc + (Number(ep.runtimeMins) || Number(s.runtimeMins) || 45), 0);
+                        s.runtimeMins = Math.max(15, Math.round(sumRt / airedFull.length));
+                      }
+                      s.episodes = nextFutureEp ? [nextFutureEp] : [];
                       s.totalEpisodes = targetWatched.length;
-                      s.watchedEpisodes = targetWatched.map((e) => e.code).sort();
+                      s.watchedEpisodes = [];
                       s.completedSeasons = {};
+                      if (full.status) s.status = full.status;
+                      updatedAny = true;
+                    } else {
+                      // Keep completed returning series compacted so Statistics watch hours never jump mid-view!
+                      const curNextCode = eps.length === 1 ? String(eps[0].code || "") : "";
+                      const curNextDate = eps.length === 1 ? String(eps[0].airDate || "") : "";
+                      const newNextCode = nextFutureEp ? String(nextFutureEp.code || "") : "";
+                      const newNextDate = nextFutureEp ? String(nextFutureEp.airDate || "") : "";
+                      if (curNextCode !== newNextCode || curNextDate !== newNextDate) {
+                        s.episodes = nextFutureEp ? [nextFutureEp] : [];
+                        if (full.status) s.status = full.status;
+                        updatedAny = true;
+                      }
                     }
-                  } else {
+                  } else if (!hasSeasonOne && fullHasSeasonOne && eps.length <= 1) {
                     const expandedWatched = this.expandCompactedWatchedSet(s, sortedFull);
                     s.episodes = sortedFull;
                     s.totalEpisodes = Math.max(airedFull.length, 1);
                     s.watchedEpisodes = Array.from(expandedWatched).sort();
                     s.completedSeasons = {};
+                    if (full.status) s.status = full.status;
+                    updatedAny = true;
                   }
-                  if (full.status) s.status = full.status;
-                  updatedAny = true;
                 }
               }
             } catch (_) {}
@@ -6980,18 +7010,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           return bucket ? bucket.find((ms) => this.doesRecMatchShow(ms, fs)) || null : null;
         };
 
-        // Keep ONLY series & movies that the current user has NOT watched yet
-        const friendShows = rawFriendShows.filter((s) => {
-          const myShow = findMyShowFast(s);
-          if (!myShow) return true;
-          const myEff = this.getEffectiveShowStatus(myShow);
-          const myProg = this.computeShowProgress(myShow);
-          return myEff === "interested" && myProg.watchedCount === 0;
-        });
-        const friendMovies = rawFriendMovies.filter((m) => {
-          const myMovie = findMyMovieFast(m);
-          return !myMovie || !myMovie.watched;
-        });
+        // Keep ONLY series & movies NOT in the viewer's library at all (excludes completed, in_progress, watchlist, and stopped)
+        const friendShows = rawFriendShows.filter((s) => !findMyShowFast(s));
+        const friendMovies = rawFriendMovies.filter((m) => !findMyMovieFast(m));
 
         if (subEl) {
           subEl.textContent =

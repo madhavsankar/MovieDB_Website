@@ -221,31 +221,43 @@ fun TvTimeMainScreen(
         }
     }
 
-    // Refresh episode lists for running/ongoing series so newly aired episodes flip completed -> in_progress & future air dates appear
-    LaunchedEffect(homeTopSegment, shows.size, refreshTrigger) {
+    // Refresh episode lists for running/ongoing series ONLY when newly aired episodes arrive or upcoming schedule changes
+    LaunchedEffect(homeTopSegment, refreshTrigger, currentUserId) {
         val candidates = shows.filter {
             it.userStatus != "stopped" &&
                 !it.status.equals("Ended", ignoreCase = true) &&
                 !it.status.equals("Canceled", ignoreCase = true)
         }
-        if (candidates.isNotEmpty() && (homeTopSegment == "upcoming" || refreshTrigger >= 0)) {
-            var updatedAny = false
+        if (candidates.isNotEmpty() && (homeTopSegment == "upcoming" || refreshTrigger > 0)) {
+            val pendingUpdates = mutableListOf<ShowEntity>()
             for (s in candidates) {
                 val compMeta = TvTimeProgressCalculator.parseCompactedMeta(s.episodesJson)
                 val currentEps = compMeta.episodes
-                val hasUpcoming = TvTimeProgressCalculator.findNextUpcomingEpisode(currentEps) != null
-                if (!hasUpcoming || currentEps.size <= 1) {
+                val curUpcoming = TvTimeProgressCalculator.findNextUpcomingEpisode(currentEps)?.first
+                val isCompactedCompleted = s.userStatus.equals("completed", ignoreCase = true) && compMeta.totalEpisodes > 1
+                if (curUpcoming == null || currentEps.size <= 1) {
                     val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
                         tvmazeId = s.tvmazeId,
                         tmdbId = s.tmdbId,
                         title = s.title,
                         externalId = s.externalId
                     )
-                    val fetchedAiredCount = TvTimeProgressCalculator.filterAiredEpisodes(fetchedEps).size
-                    if (fetchedEps.size > currentEps.size ||
-                        fetchedAiredCount > compMeta.totalEpisodes ||
-                        TvTimeProgressCalculator.findNextUpcomingEpisode(fetchedEps) != null
-                    ) {
+                    if (fetchedEps.isEmpty()) continue
+                    val fetchedAired = TvTimeProgressCalculator.filterAiredEpisodes(fetchedEps)
+                    val fetchedUpcoming = TvTimeProgressCalculator.findNextUpcomingEpisode(fetchedEps)?.first
+                    if (isCompactedCompleted && fetchedAired.size <= compMeta.totalEpisodes) {
+                        // Still caught up: keep compacted so Statistics watch hours never jump mid-screen!
+                        val nextChanged = (curUpcoming?.code != fetchedUpcoming?.code) ||
+                            (curUpcoming?.airDate != fetchedUpcoming?.airDate)
+                        if (nextChanged) {
+                            val updatedCompJson = TvTimeProgressCalculator.serializeCompactedMeta(
+                                totalEpisodes = compMeta.totalEpisodes,
+                                completedSeasons = emptyMap(),
+                                episodes = if (fetchedUpcoming != null) listOf(fetchedUpcoming) else emptyList()
+                            )
+                            pendingUpdates.add(s.copy(episodesJson = updatedCompJson))
+                        }
+                    } else if (fetchedAired.size > compMeta.totalEpisodes || (!isCompactedCompleted && currentEps.size <= 1 && fetchedEps.size > currentEps.size)) {
                         val expandedWatched = TvTimeProgressCalculator.expandWatchedSetWithCompletedSeasons(
                             episodes = fetchedEps,
                             watchedCodes = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv),
@@ -261,24 +273,26 @@ fun TvTimeMainScreen(
                         )
                         val nextEff = TvTimeProgressCalculator.deriveEffectiveShowStatus(nextProg, s.userStatus)
                         val updatedWatchedCsv = TvTimeProgressCalculator.serializeWatchedSet(expandedWatched)
-                        if (nextEff != s.userStatus || fetchedEps.size != currentEps.size) {
-                            dao.updateShow(
-                                s.copy(
-                                    userStatus = nextEff,
-                                    episodesJson = TvTimeProgressCalculator.serializeEpisodeList(fetchedEps),
-                                    watchedCodesCsv = updatedWatchedCsv,
-                                    castCsv = if (s.castCsv.isBlank() && fetchedCast.isNotEmpty()) {
-                                        fetchedCast.joinToString(", ")
-                                    } else s.castCsv
-                                )
+                        pendingUpdates.add(
+                            s.copy(
+                                userStatus = nextEff,
+                                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(fetchedEps),
+                                watchedCodesCsv = updatedWatchedCsv,
+                                castCsv = if (s.castCsv.isBlank() && fetchedCast.isNotEmpty()) {
+                                    fetchedCast.joinToString(", ")
+                                } else s.castCsv
                             )
-                            updatedAny = true
-                        }
+                        )
                     }
                 }
             }
-            if (updatedAny && FirestoreSyncService.isUserAllowed(currentUserId)) {
-                FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+            if (pendingUpdates.isNotEmpty()) {
+                for (upd in pendingUpdates) {
+                    dao.updateShow(upd)
+                }
+                if (FirestoreSyncService.isUserAllowed(currentUserId)) {
+                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                }
             }
         }
     }
@@ -4172,18 +4186,19 @@ private fun FriendsFullPageScreen(
                 }
             }
 
+            // Exclude ALL movies & series already in the viewer's library (completed, in_progress, watchlist, or stopped)
             val unwatchedMovies = ArrayList<PreparedFriendMovieItem>(lib.movies.size)
             for (fm in lib.movies) {
                 val mine = matchMyMovie(fm)
-                if (mine == null || !mine.watched) {
-                    unwatchedMovies.add(PreparedFriendMovieItem(movie = fm, myMovie = mine))
+                if (mine == null) {
+                    unwatchedMovies.add(PreparedFriendMovieItem(movie = fm, myMovie = null))
                 }
             }
 
             val unwatchedShows = ArrayList<PreparedFriendShowItem>(lib.shows.size)
             for (fs in lib.shows) {
                 val mine = matchMyShow(fs)
-                if (mine != null && !(mine.eff == "interested" && mine.watchedCount == 0)) {
+                if (mine != null) {
                     continue
                 }
                 val fsProg = TvTimeProgressCalculator.computeShowProgressFromJson(

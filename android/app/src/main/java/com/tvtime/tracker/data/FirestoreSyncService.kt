@@ -211,6 +211,10 @@ object FirestoreSyncService {
             } else {
                 maxOf(meta.totalEpisodes, prog.watchedCount, 1)
             }
+            if (airedInMeta.isNotEmpty() && !isSyntheticEpisodeList(meta.episodes)) {
+                val avgRt = Math.round(airedInMeta.sumOf { (it.runtimeMins.takeIf { rt -> rt > 0 } ?: defaultRt).toDouble() } / airedInMeta.size).toInt().coerceAtLeast(15)
+                obj.put("runtimeMins", avgRt)
+            }
             obj.put("totalEpisodes", completedTotal)
             obj.put("watchedEpisodes", JSONArray())
             val futureArr = JSONArray()

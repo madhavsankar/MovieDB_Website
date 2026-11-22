@@ -1516,47 +1516,50 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
               shows: [
                 { id: "tvmaze_4712", tmdbId: 0, tvmazeId: 4712, title: "Death Note", year: 2015, userStatus: "completed", totalEpisodes: 37, episodes: [], watchedEpisodes: [] },
                 { id: "tmdb_tv_999", tmdbId: 999, title: "Already Watching Show", year: 2023, userStatus: "in_progress", totalEpisodes: 10, watchedEpisodes: ["S01E01"], episodes: [] },
-                { id: "tmdb_tv_777", tmdbId: 777, title: "My Watchlist Show", year: 2025, userStatus: "interested", totalEpisodes: 8, watchedEpisodes: [], episodes: [] }
-              ]
-            };
-            app.selectedFriendLibrary = {
-              movies: [
-                { id: "movie_120", tmdbId: 120, title: "The Lord of the Rings: The Fellowship of the Ring", year: 2001, watched: true },
-                { id: "movie_555", tmdbId: 555, title: "Shared Watchlist Movie", year: 2024, watched: false },
-                { id: "movie_888", tmdbId: 888, title: "Brand New Friend Movie", year: 2025, watched: false }
-              ],
-              shows: [
-                { id: "tmdb_tv_13916", tmdbId: 13916, title: "Death Note", year: 2006, userStatus: "completed", totalEpisodes: 37, episodes: [], watchedEpisodes: [] },
-                { id: "tmdb_tv_999", tmdbId: 999, title: "Already Watching Show", year: 2023, userStatus: "interested", totalEpisodes: 10, episodes: [], watchedEpisodes: [] },
-                { id: "tmdb_tv_777", tmdbId: 777, title: "My Watchlist Show", year: 2025, userStatus: "completed", totalEpisodes: 8, episodes: [], watchedEpisodes: [] },
-                { id: "tmdb_tv_333", tmdbId: 333, title: "Unwatched Friend Show", year: 2024, userStatus: "interested", totalEpisodes: 12, episodes: [], watchedEpisodes: [] }
-              ]
-            };
+                 { id: "tmdb_tv_777", tmdbId: 777, title: "My Watchlist Show", year: 2025, userStatus: "interested", totalEpisodes: 8, watchedEpisodes: [], episodes: [] },
+                 { id: "tmdb_tv_444", tmdbId: 444, title: "My Stopped Show", year: 2022, userStatus: "stopped", totalEpisodes: 20, watchedEpisodes: ["S01E01"], episodes: [] }
+               ]
+             };
+             app.selectedFriendLibrary = {
+               movies: [
+                 { id: "movie_120", tmdbId: 120, title: "The Lord of the Rings: The Fellowship of the Ring", year: 2001, watched: true },
+                 { id: "movie_555", tmdbId: 555, title: "Shared Watchlist Movie", year: 2024, watched: false },
+                 { id: "movie_888", tmdbId: 888, title: "Brand New Friend Movie", year: 2025, watched: false }
+               ],
+               shows: [
+                 { id: "tmdb_tv_13916", tmdbId: 13916, title: "Death Note", year: 2006, userStatus: "completed", totalEpisodes: 37, episodes: [], watchedEpisodes: [] },
+                 { id: "tmdb_tv_999", tmdbId: 999, title: "Already Watching Show", year: 2023, userStatus: "interested", totalEpisodes: 10, episodes: [], watchedEpisodes: [] },
+                 { id: "tmdb_tv_777", tmdbId: 777, title: "My Watchlist Show", year: 2025, userStatus: "completed", totalEpisodes: 8, episodes: [], watchedEpisodes: [] },
+                 { id: "tmdb_tv_444", tmdbId: 444, title: "My Stopped Show", year: 2022, userStatus: "completed", totalEpisodes: 20, episodes: [], watchedEpisodes: [] },
+                 { id: "tmdb_tv_333", tmdbId: 333, title: "Unwatched Friend Show", year: 2024, userStatus: "interested", totalEpisodes: 12, episodes: [], watchedEpisodes: [] }
+               ]
+             };
 
-            app.friendLibrarySegment = "shows";
-            app.friendLibraryFilter = "all";
-            app.renderFriendLibrary();
-            const showsHtml = domMap["friend-library-items"].innerHTML;
-            const subtitle = domMap["friend-library-subtitle"].textContent;
+             app.friendLibrarySegment = "shows";
+             app.friendLibraryFilter = "all";
+             app.renderFriendLibrary();
+             const showsHtml = domMap["friend-library-items"].innerHTML;
+             const subtitle = domMap["friend-library-subtitle"].textContent;
 
-            app.friendLibrarySegment = "movies";
-            app.friendLibraryFilter = "all";
-            app.renderFriendLibrary();
-            const moviesHtml = domMap["friend-library-items"].innerHTML;
+             app.friendLibrarySegment = "movies";
+             app.friendLibraryFilter = "all";
+             app.renderFriendLibrary();
+             const moviesHtml = domMap["friend-library-items"].innerHTML;
 
-            const out = JSON.stringify({ subtitle, showsHtml, moviesHtml });
-            if (typeof console !== "undefined" && console.log) console.log(out);
-            else if (typeof print !== "undefined") print(out);
+             const out = JSON.stringify({ subtitle, showsHtml, moviesHtml });
+             if (typeof console !== "undefined" && console.log) console.log(out);
+             else if (typeof print !== "undefined") print(out);
             """
         )
         out = self._run_js(harness)
-        self.assertEqual(out["subtitle"], "2 unwatched series · 2 unwatched movies")
+        self.assertEqual(out["subtitle"], "1 unwatched series · 1 unwatched movies")
         self.assertNotIn("Death Note", out["showsHtml"])
         self.assertNotIn("Already Watching Show", out["showsHtml"])
-        self.assertIn("My Watchlist Show", out["showsHtml"])
+        self.assertNotIn("My Watchlist Show", out["showsHtml"])
+        self.assertNotIn("My Stopped Show", out["showsHtml"])
         self.assertIn("Unwatched Friend Show", out["showsHtml"])
         self.assertNotIn("Fellowship of the Ring", out["moviesHtml"])
-        self.assertIn("Shared Watchlist Movie", out["moviesHtml"])
+        self.assertNotIn("Shared Watchlist Movie", out["moviesHtml"])
         self.assertIn("Brand New Friend Movie", out["moviesHtml"])
 
     def test_tba_blank_airdate_episodes_after_future_premiere_stay_unaired(self):
