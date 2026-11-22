@@ -2306,10 +2306,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (fBtn) fBtn.textContent = "↻ Syncing...";
         this.showSyncStatus("↻ Syncing library with Cloud Firestore...", false);
         try {
-          const localShows = Array.isArray(this.state.shows) ? [...this.state.shows] : [];
-          const localMovies = Array.isArray(this.state.movies) ? [...this.state.movies] : [];
-          const localDecided = Array.isArray(this.state.decidedIds) ? [...this.state.decidedIds] : [];
-          await this.loadState(true, { localShows, localMovies, localDecided });
+          await this.loadState(true);
           if (this.activeTab === "friends") {
             await this.searchFriendsOnServer(this.friendSearchQuery);
           }

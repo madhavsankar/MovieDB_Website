@@ -965,13 +965,19 @@ export class FirestoreRepository {
 
     const serializedPayload = JSON.stringify(payloadObj);
 
+    const watchedShowsCount = shows.filter((s) => {
+      const st = String(s?.userStatus || "").toLowerCase();
+      return st === "completed" || st === "in_progress" || st === "stopped";
+    }).length;
+    const watchedMoviesCount = movies.filter((m) => Boolean(m?.watched)).length;
+
     const firestoreBody = {
       fields: {
         userId: { stringValue: clean },
         email: { stringValue: payloadObj.email },
         payload: { stringValue: serializedPayload },
-        showCount: { integerValue: String(shows.length) },
-        movieCount: { integerValue: String(movies.length) },
+        showCount: { integerValue: String(watchedShowsCount) },
+        movieCount: { integerValue: String(watchedMoviesCount) },
         updatedAt: { stringValue: updatedAt },
       },
     };
@@ -1054,8 +1060,11 @@ export class FirestoreRepository {
         usersById.set(cleanQ, {
           userId: cleanQ,
           email: directDoc.state.email || cleanQ,
-          showCount: directDoc.state.shows.length,
-          movieCount: directDoc.state.movies.length,
+          showCount: directDoc.state.shows.filter((s) => {
+            const st = String(s?.userStatus || "").toLowerCase();
+            return st === "completed" || st === "in_progress" || st === "stopped";
+          }).length,
+          movieCount: directDoc.state.movies.filter((m) => Boolean(m?.watched)).length,
           relation: annotateRelation(cleanQ),
         });
       }

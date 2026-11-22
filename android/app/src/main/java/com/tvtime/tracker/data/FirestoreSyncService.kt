@@ -596,12 +596,20 @@ object FirestoreSyncService {
                 val actors = dao.getActorsForUser(cleanUser)
 
                 val showsArr = JSONArray()
+                var watchedShowsCount = 0
                 for (s in shows) {
-                    showsArr.put(compactShowEntityToFirestoreJson(s))
+                    val sj = compactShowEntityToFirestoreJson(s)
+                    val st = sj.optString("userStatus", "").lowercase()
+                    if (st == "completed" || st == "in_progress" || st == "stopped") {
+                        watchedShowsCount++
+                    }
+                    showsArr.put(sj)
                 }
 
                 val moviesArr = JSONArray()
+                var watchedMoviesCount = 0
                 for (m in movies) {
+                    if (m.watched) watchedMoviesCount++
                     moviesArr.put(compactMovieEntityToFirestoreJson(m))
                 }
 
@@ -637,8 +645,8 @@ object FirestoreSyncService {
                             put("userId", JSONObject().put("stringValue", cleanUser))
                             put("email", JSONObject().put("stringValue", displayUserLabel(cleanUser)))
                             put("payload", JSONObject().put("stringValue", payloadStr))
-                            put("showCount", JSONObject().put("integerValue", shows.size.toString()))
-                            put("movieCount", JSONObject().put("integerValue", movies.size.toString()))
+                            put("showCount", JSONObject().put("integerValue", watchedShowsCount.toString()))
+                            put("movieCount", JSONObject().put("integerValue", watchedMoviesCount.toString()))
                             put("updatedAt", JSONObject().put("stringValue", Instant.now().toString()))
                         }
                     )
@@ -705,10 +713,10 @@ object FirestoreSyncService {
                         parsedShows.add(parseShowJsonToEntity(s, cleanUser, i))
                     }
                     val existingLocalShows = dao.getShowsForUser(cleanUser)
-                    val combinedShows = if (existingLocalShows.size > parsedShows.size) {
-                        deduplicateShows(existingLocalShows + parsedShows)
-                    } else {
+                    val combinedShows = if (parsedShows.isNotEmpty()) {
                         deduplicateShows(parsedShows)
+                    } else {
+                        deduplicateShows(existingLocalShows)
                     }
                     dao.deleteAllShowsForUser(cleanUser)
                     for (showEntity in combinedShows) {
@@ -723,10 +731,10 @@ object FirestoreSyncService {
                         parsedMovies.add(parseMovieJsonToEntity(m, cleanUser, i))
                     }
                     val existingLocalMovies = dao.getMoviesForUser(cleanUser)
-                    val combinedMovies = if (existingLocalMovies.size > parsedMovies.size) {
-                        deduplicateMovies(existingLocalMovies + parsedMovies)
-                    } else {
+                    val combinedMovies = if (parsedMovies.isNotEmpty()) {
                         deduplicateMovies(parsedMovies)
+                    } else {
+                        deduplicateMovies(existingLocalMovies)
                     }
                     dao.deleteAllMoviesForUser(cleanUser)
                     for (movieEntity in combinedMovies) {
@@ -1186,8 +1194,17 @@ object FirestoreSyncService {
             payloadObj.put("updatedAt", Instant.now().toString())
             payloadObj.remove("actors")
             payloadObj.remove("followingUsers")
-            val showsCount = payloadObj.optJSONArray("shows")?.length() ?: 0
-            val moviesCount = payloadObj.optJSONArray("movies")?.length() ?: 0
+            val rawShowsArr = payloadObj.optJSONArray("shows") ?: JSONArray()
+            var showsCount = 0
+            for (i in 0 until rawShowsArr.length()) {
+                val st = rawShowsArr.optJSONObject(i)?.optString("userStatus", "")?.lowercase().orEmpty()
+                if (st == "completed" || st == "in_progress" || st == "stopped") showsCount++
+            }
+            val rawMoviesArr = payloadObj.optJSONArray("movies") ?: JSONArray()
+            var moviesCount = 0
+            for (i in 0 until rawMoviesArr.length()) {
+                if (rawMoviesArr.optJSONObject(i)?.optBoolean("watched", false) == true) moviesCount++
+            }
             val firestoreBody = JSONObject().apply {
                 put(
                     "fields",
