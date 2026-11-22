@@ -608,12 +608,13 @@ fun TvTimeMainScreen(
                                 externalId = item.externalId,
                                 year = item.year
                             )
-                            val isCountOnly = guide.episodes.isEmpty() && guide.totalEpisodesOverride > 1
+                            val isCountOnly = guide.countOnly || (guide.episodes.isEmpty() && guide.totalEpisodesOverride > 1)
                             val finalEpsJson = if (isCountOnly) {
                                 TvTimeProgressCalculator.serializeCompactedMeta(
-                                    totalEpisodes = guide.totalEpisodesOverride,
+                                    totalEpisodes = guide.totalEpisodesOverride.coerceAtLeast(1),
                                     completedSeasons = emptyMap(),
-                                    episodes = emptyList()
+                                    episodes = emptyList(),
+                                    countOnly = true
                                 )
                             } else {
                                 val finalEps = if (guide.episodes.isNotEmpty()) guide.episodes else listOf(
@@ -748,12 +749,13 @@ fun TvTimeMainScreen(
                             val latestRow = dao.getShowsForUser(currentUserId).firstOrNull { it.id == insertedId }
                             if (latestRow != null && (guide.episodes.isNotEmpty() || guide.totalEpisodesOverride > 1 || guide.cast.isNotEmpty())) {
                                 val isStillComp = latestRow.userStatus.equals("completed", ignoreCase = true)
-                                val isCountOnly = guide.episodes.isEmpty() && guide.totalEpisodesOverride > 1
+                                val isCountOnly = guide.countOnly || (guide.episodes.isEmpty() && guide.totalEpisodesOverride > 1)
                                 val nextEpsJson = if (isCountOnly) {
                                     TvTimeProgressCalculator.serializeCompactedMeta(
-                                        totalEpisodes = guide.totalEpisodesOverride,
+                                        totalEpisodes = guide.totalEpisodesOverride.coerceAtLeast(1),
                                         completedSeasons = emptyMap(),
-                                        episodes = emptyList()
+                                        episodes = emptyList(),
+                                        countOnly = true
                                     )
                                 } else {
                                     val finalEps = if (guide.episodes.isNotEmpty()) guide.episodes else fallbackEps
@@ -936,12 +938,13 @@ fun TvTimeMainScreen(
                             val latestRow = dao.getShowsForUser(currentUserId).firstOrNull { it.id == insertedId }
                             if (latestRow != null && (guide.episodes.isNotEmpty() || guide.totalEpisodesOverride > 1 || guide.cast.isNotEmpty())) {
                                 val isStillComp = latestRow.userStatus.equals("completed", ignoreCase = true)
-                                val isCountOnly = guide.episodes.isEmpty() && guide.totalEpisodesOverride > 1
+                                val isCountOnly = guide.countOnly || (guide.episodes.isEmpty() && guide.totalEpisodesOverride > 1)
                                 val nextEpsJson = if (isCountOnly) {
                                     TvTimeProgressCalculator.serializeCompactedMeta(
-                                        totalEpisodes = guide.totalEpisodesOverride,
+                                        totalEpisodes = guide.totalEpisodesOverride.coerceAtLeast(1),
                                         completedSeasons = emptyMap(),
-                                        episodes = emptyList()
+                                        episodes = emptyList(),
+                                        countOnly = true
                                     )
                                 } else {
                                     val finalEps = if (guide.episodes.isNotEmpty()) guide.episodes else fallbackEps
@@ -1079,6 +1082,7 @@ fun TvTimeMainScreen(
                         decidedIds = decidedIds,
                         swipeFilter = swipeMediaFilter,
                         onSelectSwipeFilter = { swipeMediaFilter = it },
+                        onOpenItem = handleAddOrOpenCatalogItem,
                         onSwipeDecision = { item, action ->
                             scope.launch {
                                 val canonicalId = TvTimeProgressCalculator.canonicalizeDecidedId(
@@ -1148,21 +1152,33 @@ fun TvTimeMainScreen(
                                             )
                                         }
                                         if (existingShow == null) {
-                                            val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+                                            val guide = LiveMediaCatalogService.fetchFullShowGuide(
                                                 tvmazeId = item.tvmazeId,
                                                 tmdbId = item.tmdbId,
                                                 title = item.title,
-                                                externalId = item.externalId
+                                                externalId = item.externalId,
+                                                year = item.year
                                             )
-                                            val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else listOf(
+                                            val isCountOnly = guide.countOnly || (guide.episodes.isEmpty() && guide.totalEpisodesOverride > 1)
+                                            val finalEps = if (guide.episodes.isNotEmpty()) guide.episodes else listOf(
                                                 EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
                                             )
-                                            val watchedCsv = if (isCompleted) {
+                                            val watchedCsv = if (isCompleted && !isCountOnly) {
                                                 val airedFinal = TvTimeProgressCalculator.filterAiredEpisodes(finalEps).ifEmpty { finalEps.take(1) }
                                                 TvTimeProgressCalculator.serializeWatchedSet(
                                                     airedFinal.map { it.code.uppercase() }.toSet()
                                                 )
                                             } else ""
+                                            val epsJson = if (isCountOnly) {
+                                                TvTimeProgressCalculator.serializeCompactedMeta(
+                                                    totalEpisodes = guide.totalEpisodesOverride.coerceAtLeast(1),
+                                                    completedSeasons = emptyMap(),
+                                                    episodes = emptyList(),
+                                                    countOnly = true
+                                                )
+                                            } else {
+                                                TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                                            }
                                             dao.insertShow(
                                                 ShowEntity(
                                                     userId = currentUserId,
@@ -1171,17 +1187,17 @@ fun TvTimeMainScreen(
                                                     tmdbId = item.tmdbId,
                                                     title = item.title,
                                                     year = item.year,
-                                                    network = cleanStreamingLabel,
-                                                    status = item.status,
-                                                    runtimeMins = item.runtimeMins,
+                                                    network = guide.networkOverride.ifBlank { cleanStreamingLabel },
+                                                    status = guide.statusOverride.ifBlank { item.status },
+                                                    runtimeMins = guide.runtimeMinsOverride.takeIf { it > 0 } ?: item.runtimeMins,
                                                     genresCsv = item.genresCsv,
-                                                    castCsv = fetchedCast.joinToString(", "),
+                                                    castCsv = guide.cast.joinToString(", "),
                                                     rating = item.rating,
-                                                    posterUrl = item.posterUrl,
-                                                    overview = item.overview,
+                                                    posterUrl = item.posterUrl.ifBlank { guide.posterOverride },
+                                                    overview = item.overview.ifBlank { guide.overviewOverride },
                                                     userStatus = if (isCompleted) "completed" else "interested",
                                                     watchedCodesCsv = watchedCsv,
-                                                    episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                                                    episodesJson = epsJson
                                                 )
                                             )
                                         }
@@ -1310,6 +1326,7 @@ fun TvTimeMainScreen(
                         myShows = shows,
                         myMovies = movies,
                         dao = dao,
+                        onOpenCatalogItem = handleAddOrOpenCatalogItem,
                         onBack = navigateBack
                     )
                 }
@@ -2683,6 +2700,7 @@ private fun SwipeRecommendationsTabScreen(
     decidedIds: Set<String>,
     swipeFilter: String,
     onSelectSwipeFilter: (String) -> Unit,
+    onOpenItem: (SearchResultItem) -> Unit,
     onSwipeDecision: (SearchResultItem, String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -2957,6 +2975,7 @@ private fun SwipeRecommendationsTabScreen(
                 }
 
                 Surface(
+                    onClick = { onOpenItem(topItem) },
                     shape = RoundedCornerShape(28.dp),
                     color = Color(0xFF18181D),
                     border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
@@ -4836,6 +4855,7 @@ private fun FriendsFullPageScreen(
     myShows: List<ShowEntity>,
     myMovies: List<MovieEntity>,
     dao: TvTimeDao,
+    onOpenCatalogItem: (SearchResultItem) -> Unit,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -5588,6 +5608,26 @@ private fun FriendsFullPageScreen(
                             val m = row.movie
                             val myMovie = row.myMovie
                             Surface(
+                                onClick = {
+                                    onOpenCatalogItem(
+                                        SearchResultItem(
+                                            externalId = m.externalId.ifBlank { if (m.tmdbId > 0) "movie_${m.tmdbId}" else "movie_${m.title.hashCode()}" },
+                                            mediaType = "movie",
+                                            tvmazeId = 0,
+                                            tmdbId = m.tmdbId,
+                                            title = m.title,
+                                            year = m.year,
+                                            networkOrDirector = m.streamingService.ifBlank { m.director },
+                                            status = "Released",
+                                            runtimeMins = m.runtimeMins,
+                                            genresCsv = m.genresCsv,
+                                            castCsv = m.castCsv,
+                                            rating = m.rating,
+                                            posterUrl = m.posterUrl,
+                                            overview = m.overview
+                                        )
+                                    )
+                                },
                                 shape = RoundedCornerShape(18.dp),
                                 color = TvTimePalette.SurfaceCard,
                                 border = BorderStroke(1.dp, TvTimePalette.Border),
@@ -5724,6 +5764,29 @@ private fun FriendsFullPageScreen(
                             val watchedCount = row.watchedCount
                             val totalCount = row.totalCount
                             Surface(
+                                onClick = {
+                                    val compMeta = TvTimeProgressCalculator.parseCompactedMeta(s.episodesJson)
+                                    onOpenCatalogItem(
+                                        SearchResultItem(
+                                            externalId = s.externalId.ifBlank { if (s.tmdbId > 0) "tmdb_tv_${s.tmdbId}" else "show_${s.title.hashCode()}" },
+                                            mediaType = "show",
+                                            tvmazeId = s.tvmazeId,
+                                            tmdbId = s.tmdbId,
+                                            title = s.title,
+                                            year = s.year,
+                                            networkOrDirector = s.network,
+                                            status = s.status,
+                                            runtimeMins = s.runtimeMins,
+                                            genresCsv = s.genresCsv,
+                                            castCsv = s.castCsv,
+                                            rating = s.rating,
+                                            posterUrl = s.posterUrl,
+                                            overview = s.overview,
+                                            totalEpisodes = totalCount,
+                                            countOnly = compMeta.countOnly || s.externalId.startsWith("imdb_tv_")
+                                        )
+                                    )
+                                },
                                 shape = RoundedCornerShape(18.dp),
                                 color = TvTimePalette.SurfaceCard,
                                 border = BorderStroke(1.dp, TvTimePalette.Border),

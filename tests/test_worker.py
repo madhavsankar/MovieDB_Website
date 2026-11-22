@@ -2528,6 +2528,40 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
               await app.markEpisodesUpTo("tmdb_tv_999600", "S01E200", true);
               const progBigTrimmed = app.computeShowProgress(bigShow);
 
+              // Test Universal Watched Episode Count on a multi-season show with real episodes (The Family Man: 19 eps across S1 & S2)
+              const fmShow = {
+                id: "tmdb_tv_93352",
+                tmdbId: 93352,
+                title: "The Family Man",
+                year: 2019,
+                runtimeMins: 45,
+                userStatus: "interested",
+                totalEpisodes: 19,
+                completedSeasons: {},
+                watchedEpisodes: [],
+                episodes: familyManDetails.episodes
+              };
+              app.state.shows.push(fmShow);
+              mockBodyEl.innerHTML = "";
+              globalThis.document = {
+                getElementById: (id) => (id === "detail-body" ? mockBodyEl : null)
+              };
+              app.detailItem = fmShow;
+              app.detailType = "show";
+              app.detailTab = "episodes";
+              app.openSeasons = new Set();
+              app.renderDetailSheet();
+              const fmEpisodesHtml = mockBodyEl.innerHTML;
+              delete globalThis.document;
+              const fmHasUniversalCountUi = fmEpisodesHtml.includes('id="count-only-watched-input"') && fmEpisodesHtml.includes("Season 1") && fmEpisodesHtml.includes("Season 2");
+              await app.setCountOnlyProgress("tmdb_tv_93352", 12);
+              const fmProgPartial = app.computeShowProgress(fmShow);
+              const fmStatusPartial = fmShow.userStatus;
+              const fmLastCodePartial = fmProgPartial.lastWatchedEp?.code;
+              await app.setCountOnlyProgress("tmdb_tv_93352", 19);
+              const fmProgFull = app.computeShowProgress(fmShow);
+              const fmStatusFull = fmShow.userStatus;
+
               const searchShowIds = searchChandanamazha.results.filter((r) => r.mediaType === "show").map((r) => r.id);
 
               const out = JSON.stringify({
@@ -2564,7 +2598,14 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 bigTotalPass2: progBig.total,
                 bigLastNumPass2: progBig.lastWatchedEp?.number,
                 bigRepoWatchedLen: repoPass2Big.watchedEpisodes?.length,
-                bigTrimmedWatched: progBigTrimmed.watchedCount
+                bigTrimmedWatched: progBigTrimmed.watchedCount,
+                fmHasUniversalCountUi,
+                fmWatchedPartial: fmProgPartial.watchedCount,
+                fmTotalPartial: fmProgPartial.total,
+                fmStatusPartial,
+                fmLastCodePartial,
+                fmWatchedFull: fmProgFull.watchedCount,
+                fmStatusFull
               });
               if (typeof console !== "undefined" && console.log) console.log(out);
               else if (typeof print !== "undefined") print(out);
@@ -2606,6 +2647,13 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["bigLastNumPass2"], 450)
         self.assertEqual(out["bigRepoWatchedLen"], 450)
         self.assertEqual(out["bigTrimmedWatched"], 200)
+        self.assertTrue(out["fmHasUniversalCountUi"])
+        self.assertEqual(out["fmWatchedPartial"], 12)
+        self.assertEqual(out["fmTotalPartial"], 19)
+        self.assertEqual(out["fmStatusPartial"], "stopped")
+        self.assertEqual(out["fmLastCodePartial"], "S02E02")
+        self.assertEqual(out["fmWatchedFull"], 19)
+        self.assertEqual(out["fmStatusFull"], "completed")
 
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""

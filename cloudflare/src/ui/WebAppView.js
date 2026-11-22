@@ -4336,8 +4336,20 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
       }
 
       findSearchItemById(itemId) {
+        const friendShows =
+          this.selectedFriendLibrary && Array.isArray(this.selectedFriendLibrary.shows)
+            ? this.selectedFriendLibrary.shows
+            : [];
+        const friendMovies =
+          this.selectedFriendLibrary && Array.isArray(this.selectedFriendLibrary.movies)
+            ? this.selectedFriendLibrary.movies
+            : [];
         return (
           (this.searchResults || []).find((r) => r.id === itemId) ||
+          (this.categoryResults || []).find((r) => r.id === itemId) ||
+          (this.recPool || []).find((r) => r.id === itemId) ||
+          friendShows.find((r) => r.id === itemId) ||
+          friendMovies.find((r) => r.id === itemId) ||
           (this.searchItemCache ? this.searchItemCache.get(itemId) : null) ||
           null
         );
@@ -4745,7 +4757,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             const hadSeasonOne = prevEps.some((e) => Number(e.season) === 1);
             const wasSynthetic = this.isSyntheticEpisodeList(prevEps);
             const prevWatchedCount = (show.watchedEpisodes || []).length;
-            if (!show.countOnly && !String(show.id || "").startsWith("imdb_tv_") && (prevEps.length === 0 || wasSynthetic)) {
+            const isPlaceholderPilot = prevEps.length === 1 && prevEps[0].title === "Pilot" && (Number(show.totalEpisodes) || 0) <= 1;
+            if (!show.countOnly && !String(show.id || "").startsWith("imdb_tv_") && (prevEps.length === 0 || wasSynthetic || isPlaceholderPilot)) {
               show._loadingGuide = true;
             }
             fetch(detailsUrl)
@@ -5427,6 +5440,83 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const show = this.ensureDetailShowInLibrary(showId);
         if (!show) return;
         this.detailItem = show;
+        let curEps = Array.isArray(show.episodes) ? show.episodes : [];
+        const initComp =
+          show.completedSeasons && typeof show.completedSeasons === "object" && !Array.isArray(show.completedSeasons)
+            ? show.completedSeasons
+            : {};
+        const needsFullFetch =
+          !show.countOnly &&
+          !String(show.id || "").startsWith("imdb_tv_") &&
+          ((Number(show.totalEpisodes) || 0) > curEps.length ||
+            Object.keys(initComp).length > 0 ||
+            (curEps.length === 1 && curEps[0].title === "Pilot"));
+        if (needsFullFetch) {
+          const detailsUrl = this.getShowDetailsUrl(show);
+          if (detailsUrl) {
+            try {
+              const res = await fetch(detailsUrl);
+              if (res.ok) {
+                const full = await res.json();
+                if (full && Array.isArray(full.episodes) && full.episodes.length > 0) {
+                  show.episodes = full.episodes
+                    .map((e) => this.compactEpisode(e))
+                    .sort((a, b) => (Number(a.season || 1) - Number(b.season || 1)) || (Number(a.number || 1) - Number(b.number || 1)));
+                  show.completedSeasons = {};
+                  delete show.countOnly;
+                  curEps = show.episodes;
+                } else if (full && full.countOnly && Number(full.totalEpisodes) > 0) {
+                  show.episodes = [];
+                  show.totalEpisodes = Math.max(Number(full.totalEpisodes) || 1, 1);
+                  show.countOnly = true;
+                  curEps = [];
+                }
+              }
+            } catch (_) {}
+          }
+        }
+        const sortedEps = [...curEps].sort(
+          (a, b) => (Number(a.season || 1) - Number(b.season || 1)) || (Number(a.number || 1) - Number(b.number || 1))
+        );
+        const hasRealGuide = sortedEps.length > 0 && !this.isSyntheticEpisodeList(sortedEps) && !show.countOnly;
+        if (hasRealGuide) {
+          const compObj =
+            show.completedSeasons && typeof show.completedSeasons === "object" && !Array.isArray(show.completedSeasons)
+              ? show.completedSeasons
+              : {};
+          const todayIso = new Date().toISOString().slice(0, 10);
+          const unairedCodes = this.buildUnairedCodeSet(sortedEps, todayIso, Object.keys(compObj).length > 0);
+          const airedEps = sortedEps.filter((e) => !unairedCodes.has(String(e.code || "").trim().toUpperCase()));
+          const targetPool = airedEps.length > 0 ? airedEps : sortedEps;
+          const cleanTotal = Math.max(1, targetPool.length);
+          const cleanWatched = Math.max(0, Math.min(cleanTotal, Math.floor(Number(watchedVal) || 0)));
+          show.episodes = sortedEps;
+          show.totalEpisodes = cleanTotal;
+          show.completedSeasons = {};
+          delete show.countOnly;
+          if (cleanWatched >= cleanTotal) {
+            show.watchedEpisodes = targetPool
+              .map((e) => String(e.code || "").trim().toUpperCase())
+              .filter(Boolean)
+              .sort();
+            show.userStatus = "completed";
+            this.openSeasons = new Set();
+          } else {
+            const chosen = targetPool.slice(0, cleanWatched);
+            show.watchedEpisodes = chosen
+              .map((e) => String(e.code || "").trim().toUpperCase())
+              .filter(Boolean)
+              .sort();
+            show.userStatus = "stopped";
+            if (chosen.length > 0) {
+              const lastSeason = Number(chosen[chosen.length - 1].season) || 1;
+              this.openSeasons = new Set([lastSeason]);
+            }
+          }
+          show.lastWatchedAt = new Date().toISOString();
+          await this.persistState();
+          return;
+        }
         const progNow = this.computeShowProgress(show);
         const cleanTotal = Math.max(1, Math.floor(Number(show.totalEpisodes) || Number(progNow.total) || 1));
         const cleanWatched = Math.max(0, Math.min(cleanTotal, Math.floor(Number(watchedVal) || 0)));
@@ -5561,48 +5651,59 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const isCountOnlySeries =
           (Boolean(item.countOnly) || String(item.id || "").startsWith("imdb_tv_")) &&
           (episodes.length === 0 || this.isSyntheticEpisodeList(episodes));
-        if (item._loadingGuide && !isCountOnlySeries && episodes.length === 0) {
+        const isPlaceholderSingleEp =
+          episodes.length === 1 && episodes[0].title === "Pilot" && (Number(item.totalEpisodes) || 0) <= 1;
+        if (item._loadingGuide && !isCountOnlySeries && (episodes.length === 0 || isPlaceholderSingleEp)) {
           bodyEl.innerHTML =
             html +
             '<p class="text-xs text-zinc-400 text-center py-8">Loading seasons &amp; episodes...</p>';
           return;
         }
+        const airedCountInGuide = episodes.filter(
+          (e) => !unairedCodes.has(String(e.code || "").trim().toUpperCase())
+        ).length;
+        const curT = isCountOnlySeries
+          ? Math.max(progForCount.total, 1)
+          : Math.max(airedCountInGuide, progForCount.total, 1);
+        const curW = Math.min(progForCount.watchedCount, curT);
+        const barPct = Math.min(100, Math.round((curW / curT) * 100));
+        const subCaption = isCountOnlySeries
+          ? "Confirmed total: " + curT + " episodes"
+          : "Enter how many episodes you watched (of " + curT + " aired)";
+        html +=
+          '<div class="tv-card rounded-2xl p-4 space-y-3 mb-3">' +
+          '<div class="flex items-center justify-between">' +
+          '<div><h3 class="text-sm font-extrabold text-white">📺 Watched Episode Count</h3>' +
+          '<p class="text-[11px] text-zinc-400">' +
+          subCaption +
+          "</p></div>" +
+          '<span class="px-2.5 py-1 rounded-full bg-zinc-800 text-xs font-black tv-yellow-text">' +
+          curW +
+          " / " +
+          curT +
+          "</span>" +
+          "</div>" +
+          '<div class="w-full h-2 rounded-full bg-zinc-900 overflow-hidden">' +
+          '<div class="h-full bg-emerald-500 rounded-full" style="width:' +
+          barPct +
+          '%"></div></div>' +
+          '<div class="flex items-end gap-2.5 pt-0.5">' +
+          '<div class="flex-1"><label class="block text-[10px] font-bold uppercase text-zinc-400 mb-1">Watched Episodes (of ' +
+          curT +
+          ")</label>" +
+          '<input id="count-only-watched-input" type="number" min="0" max="' +
+          curT +
+          '" value="' +
+          curW +
+          '" onkeydown="if(event.key===&quot;Enter&quot;){app.setCountOnlyProgress(&quot;' +
+          escapeHtml(item.id) +
+          '&quot;, this.value);}" class="w-full rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2.5 text-sm font-bold text-white" /></div>' +
+          '<button type="button" onclick="app.setCountOnlyProgress(&quot;' +
+          escapeHtml(item.id) +
+          '&quot;, document.getElementById(&quot;count-only-watched-input&quot;).value)" class="px-5 py-2.5 rounded-xl tv-yellow-bg text-xs font-extrabold shrink-0">Save</button>' +
+          "</div>" +
+          "</div>";
         if (isCountOnlySeries) {
-          const curW = progForCount.watchedCount;
-          const curT = Math.max(progForCount.total, 1);
-          html +=
-            '<div class="tv-card rounded-2xl p-4 space-y-3.5">' +
-            '<div class="flex items-center justify-between">' +
-            '<div><h3 class="text-sm font-extrabold text-white">📺 Watched Episode Count</h3>' +
-            '<p class="text-[11px] text-zinc-400">Confirmed total: ' +
-            curT +
-            " episodes</p></div>" +
-            '<span class="px-2.5 py-1 rounded-full bg-zinc-800 text-xs font-black tv-yellow-text">' +
-            curW +
-            " / " +
-            curT +
-            "</span>" +
-            "</div>" +
-            '<div class="w-full h-2 rounded-full bg-zinc-900 overflow-hidden">' +
-            '<div class="h-full bg-emerald-500 rounded-full" style="width:' +
-            progForCount.pct +
-            '%"></div></div>' +
-            '<div class="flex items-end gap-2.5 pt-1">' +
-            '<div class="flex-1"><label class="block text-[10px] font-bold uppercase text-zinc-400 mb-1">Watched Episodes (of ' +
-            curT +
-            ")</label>" +
-            '<input id="count-only-watched-input" type="number" min="0" max="' +
-            curT +
-            '" value="' +
-            curW +
-            '" onkeydown="if(event.key===&quot;Enter&quot;){app.setCountOnlyProgress(&quot;' +
-            escapeHtml(item.id) +
-            '&quot;, this.value);}" class="w-full rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2.5 text-sm font-bold text-white" /></div>' +
-            '<button type="button" onclick="app.setCountOnlyProgress(&quot;' +
-            escapeHtml(item.id) +
-            '&quot;, document.getElementById(&quot;count-only-watched-input&quot;).value)" class="px-5 py-2.5 rounded-xl tv-yellow-bg text-xs font-extrabold shrink-0">Save</button>' +
-            "</div>" +
-            "</div>";
           bodyEl.innerHTML = html;
           return;
         }
@@ -6744,6 +6845,12 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           '<button onclick="app.decideSwipeCard(&quot;ignore&quot;)" class="flex flex-col items-center gap-1 group">' +
           '<div class="w-14 h-14 rounded-full bg-zinc-900 border-2 border-rose-500/60 text-rose-400 group-hover:bg-rose-500 group-hover:text-white flex items-center justify-center text-xl font-black shadow-lg transition">✕</div>' +
           '<span class="text-[11px] font-bold text-zinc-400 group-hover:text-rose-400">Ignore</span>' +
+          "</button>" +
+          '<button onclick="app.addOrOpenSearchResult(&quot;' +
+          escapeHtml(topItem.id) +
+          '&quot;)" class="flex flex-col items-center gap-1 group">' +
+          '<div class="w-12 h-12 rounded-full bg-zinc-900 border-2 border-zinc-600 text-zinc-200 group-hover:bg-zinc-700 group-hover:text-white flex items-center justify-center text-sm font-black shadow-lg transition">ℹ</div>' +
+          '<span class="text-[11px] font-bold text-zinc-400 group-hover:text-white">Details</span>' +
           "</button>" +
           '<button onclick="app.decideSwipeCard(&quot;watchlist&quot;)" class="flex flex-col items-center gap-1 group">' +
           '<div class="w-14 h-14 rounded-full bg-zinc-900 border-2 border-yellow-400/70 tv-yellow-text group-hover:bg-yellow-400 group-hover:text-black flex items-center justify-center text-lg font-black shadow-lg transition">' +
@@ -7892,7 +7999,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   "</div>";
               }
               return (
-                '<div class="tv-pill-bar rounded-2xl p-2.5 flex items-center justify-between gap-3 border border-zinc-800/80">' +
+                '<div onclick="app.addOrOpenSearchResult(&quot;' +
+                escapeHtml(m.id) +
+                '&quot;)" class="tv-pill-bar rounded-2xl p-2.5 flex items-center justify-between gap-3 border border-zinc-800/80 cursor-pointer hover:border-zinc-700 transition">' +
                 '<div class="flex items-center gap-3 min-w-0">' +
                 '<img src="' +
                 escapeHtml(poster) +
@@ -7974,7 +8083,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 "</div>";
             }
             return (
-              '<div class="tv-pill-bar rounded-2xl p-2.5 flex items-center justify-between gap-3 border border-zinc-800/80">' +
+              '<div onclick="app.addOrOpenSearchResult(&quot;' +
+              escapeHtml(s.id) +
+              '&quot;)" class="tv-pill-bar rounded-2xl p-2.5 flex items-center justify-between gap-3 border border-zinc-800/80 cursor-pointer hover:border-zinc-700 transition">' +
               '<div class="flex items-center gap-3 min-w-0">' +
               '<img src="' +
               escapeHtml(poster) +
