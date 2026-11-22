@@ -1292,10 +1292,13 @@ object LiveMediaCatalogService {
             } catch (_: Exception) {}
         }
 
-        // 2. IMDb + iTunes Movies Fallback ONLY on page 1 when TMDB returned < 5 movies (tmdbId = 0 so fake IDs never pollute)
-        if (safePage == 1 && tmdbMovieCount < 5) {
+        // 2. IMDb + iTunes Fallback on page 1 when TMDB returned < 5 movies OR < 3 TV shows (e.g. Chandanamazha, Karuthamuthu, Parasparam)
+        val tvShowCountBeforeImdb = results.count { it.mediaType == "show" }
+        if (safePage == 1 && (tmdbMovieCount < 5 || tvShowCountBeforeImdb < 3)) {
+            var tvShowCountNow = tvShowCountBeforeImdb
             try {
-                val conn = (URL("https://v3.sg.media-imdb.com/suggestion/x/$encoded.json").openConnection() as HttpURLConnection).apply {
+                val firstChar = q.firstOrNull()?.lowercaseChar()?.takeIf { it in 'a'..'z' || it in '0'..'9' } ?: 'x'
+                val conn = (URL("https://v3.sg.media-imdb.com/suggestion/$firstChar/$encoded.json").openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 5000
                     readTimeout = 5000
@@ -1304,7 +1307,65 @@ object LiveMediaCatalogService {
                     val text = conn.inputStream.bufferedReader().use { it.readText() }
                     val root = JSONObject(text)
                     val arr = root.optJSONArray("d") ?: JSONArray()
-                    // Resolve top IMDb tt* hit to canonical TMDB ID when TMDB direct search missed a transliterated spelling
+
+                    // Resolve top IMDb tvSeries tt* hit via TMDB /find when TMDB + TVMaze had 0 TV matches
+                    if (tvShowCountNow == 0 && (tmdbToken.isNotEmpty() || tmdbKey.isNotEmpty())) {
+                        for (i in 0 until minOf(2, arr.length())) {
+                            val imObj = arr.optJSONObject(i) ?: continue
+                            val ttId = imObj.optString("id", "")
+                            val qid = imObj.optString("qid", "").lowercase()
+                            if (!ttId.startsWith("tt") || (qid != "tvseries" && qid != "tvminiseries")) continue
+                            try {
+                                val findBase = "https://api.themoviedb.org/3/find/$ttId?external_source=imdb_id&language=en-US"
+                                val findUrl = if (tmdbToken.isNotEmpty()) findBase else "$findBase&api_key=$tmdbKey"
+                                val fConn = (URL(findUrl).openConnection() as HttpURLConnection).apply {
+                                    requestMethod = "GET"
+                                    setRequestProperty("Accept", "application/json")
+                                    if (tmdbToken.isNotEmpty()) setRequestProperty("Authorization", "Bearer $tmdbToken")
+                                    connectTimeout = 4000
+                                    readTimeout = 4000
+                                }
+                                if (fConn.responseCode in 200..299) {
+                                    val fRoot = JSONObject(fConn.inputStream.bufferedReader().use { it.readText() })
+                                    val tvArr = fRoot.optJSONArray("tv_results") ?: JSONArray()
+                                    for (ti in 0 until tvArr.length()) {
+                                        val tv = tvArr.optJSONObject(ti) ?: continue
+                                        val tid = tv.optInt("id", 0)
+                                        val tTitle = tv.optString("name", tv.optString("original_name", imObj.optString("l", "")))
+                                        val tYear = tv.optString("first_air_date", "").take(4).toIntOrNull() ?: imObj.optInt("y", 2024)
+                                        if (tid <= 0 || !canAddShow(tid, tTitle, tYear)) continue
+                                        tvShowCountNow++
+                                        val pPath = tv.optString("poster_path", "")
+                                        val poster = if (pPath.isNotBlank() && pPath != "null") {
+                                            "https://image.tmdb.org/t/p/w500$pPath"
+                                        } else {
+                                            imObj.optJSONObject("i")?.optString("imageUrl", "") ?: ""
+                                        }
+                                        val rating = (tv.optDouble("vote_average", 8.0).takeIf { !it.isNaN() && it > 0 } ?: 8.0)
+                                        results.add(
+                                            SearchResultItem(
+                                                externalId = "tmdb_tv_$tid",
+                                                tvmazeId = 0,
+                                                tmdbId = tid,
+                                                mediaType = "show",
+                                                title = tTitle,
+                                                year = tYear,
+                                                networkOrDirector = "Streaming",
+                                                status = "Running",
+                                                runtimeMins = 45,
+                                                genresCsv = "TV Series",
+                                                rating = Math.round(rating * 10.0) / 10.0,
+                                                posterUrl = poster,
+                                                overview = stripHtml(tv.optString("overview", ""))
+                                            )
+                                        )
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+
+                    // Resolve top IMDb movie tt* hit to canonical TMDB ID when TMDB direct search missed a transliterated spelling
                     if (tmdbMovieCount == 0 && (tmdbToken.isNotEmpty() || tmdbKey.isNotEmpty())) {
                         for (i in 0 until minOf(2, arr.length())) {
                             val imObj = arr.optJSONObject(i) ?: continue
@@ -1365,7 +1426,31 @@ object LiveMediaCatalogService {
                         val title = m.optString("l", "")
                         val qid = m.optString("qid", "").lowercase()
                         if (id.isBlank() || title.isBlank()) continue
-                        if (qid == "movie" || qid == "feature" || qid == "tvmovie") {
+                        if (tvShowCountNow < 3 && (qid == "tvseries" || qid == "tvminiseries")) {
+                            val year = m.optInt("y", 2024)
+                            if (!canAddShow(0, title, year)) continue
+                            tvShowCountNow++
+                            val stars = m.optString("s", "")
+                            val poster = m.optJSONObject("i")?.optString("imageUrl", "") ?: ""
+                            results.add(
+                                SearchResultItem(
+                                    externalId = "imdb_tv_$id",
+                                    tvmazeId = 0,
+                                    tmdbId = 0,
+                                    mediaType = "show",
+                                    title = title,
+                                    year = year,
+                                    networkOrDirector = "Television",
+                                    status = "Ended",
+                                    runtimeMins = 22,
+                                    genresCsv = "TV Series",
+                                    castCsv = stars,
+                                    rating = 8.0,
+                                    posterUrl = poster,
+                                    overview = if (stars.isNotBlank()) "TV Series · Starring $stars" else "TV Series"
+                                )
+                            )
+                        } else if (tmdbMovieCount < 5 && (qid == "movie" || qid == "feature" || qid == "tvmovie")) {
                             val year = m.optInt("y", 2024)
                             if (!canAddMovie(0, title, year)) continue
                             val stars = m.optString("s", "")
@@ -1392,8 +1477,9 @@ object LiveMediaCatalogService {
                 }
             } catch (_: Exception) {}
 
-            try {
-                val conn = (URL("https://itunes.apple.com/search?term=$encoded&country=US&entity=movie&limit=8").openConnection() as HttpURLConnection).apply {
+            if (tmdbMovieCount < 5) {
+                try {
+                    val conn = (URL("https://itunes.apple.com/search?term=$encoded&country=US&entity=movie&limit=8").openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 5000
                     readTimeout = 5000
@@ -1431,9 +1517,213 @@ object LiveMediaCatalogService {
                     }
                 }
             } catch (_: Exception) {}
+            }
         }
 
         SearchPageResult(items = results, hasMore = hasMore)
+    }
+
+    data class ShowGuideEnrichment(
+        val episodes: List<EpisodeModel>,
+        val cast: List<String>,
+        val totalEpisodesOverride: Int = 0,
+        val runtimeMinsOverride: Int = 0,
+        val overviewOverride: String = "",
+        val posterOverride: String = "",
+        val networkOverride: String = "",
+        val statusOverride: String = ""
+    )
+
+    private val WIKI_NUM_EPS_REGEX = Regex("num_episodes\\s*=\\s*(?:\\{\\{[^}|]*\\|)?\\s*([0-9][0-9,]*)", RegexOption.IGNORE_CASE)
+    private val WIKI_RUNTIME_REGEX = Regex("runtime\\s*=\\s*[^0-9\\n]{0,25}([0-9]{2,3})", RegexOption.IGNORE_CASE)
+    private val WIKI_NETWORK_REGEX = Regex("network\\s*=\\s*(?:\\[\\[([^\\]|]+)(?:\\|[^\\]]+)?\\]\\]|([^\\n|<{}]+))", RegexOption.IGNORE_CASE)
+    private val WIKI_REF_TAG_REGEX = Regex("<ref[\\s\\S]*?(?:</ref>|/>)", RegexOption.IGNORE_CASE)
+    private val PURE_DIGITS_REGEX = Regex("^([0-9]{2,5})$")
+
+    suspend fun lookupWikipediaShowMeta(
+        title: String,
+        year: Int = 0,
+        imdbId: String = ""
+    ): ShowGuideEnrichment = withContext(Dispatchers.IO) {
+        val cleanTitle = title.trim()
+        val cleanImdb = imdbId.trim().lowercase().takeIf { it.startsWith("tt") && it.drop(2).all(Char::isDigit) }.orEmpty()
+        var totalEps = 0
+        var runtime = 0
+        var network = ""
+        var overview = ""
+        var poster = ""
+        var status = ""
+
+        fun openWiki(url: String): JSONObject? {
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", "MovieDBTracker/1.0 (https://moviedb-website.madhavsankar.workers.dev)")
+                connectTimeout = 5000
+                readTimeout = 5000
+            }
+            if (conn.responseCode !in 200..299) return null
+            return JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+        }
+
+        fun parseInfobox(wt: String) {
+            if (wt.isBlank()) return
+            WIKI_NUM_EPS_REGEX.find(wt)?.groupValues?.getOrNull(1)?.replace(",", "")?.toIntOrNull()?.let { n ->
+                if (n in 2..25000) totalEps = n
+            }
+            WIKI_RUNTIME_REGEX.find(wt)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { r ->
+                if (r in 10..180) runtime = r
+            }
+            WIKI_NETWORK_REGEX.find(wt)?.let { m ->
+                val netStr = (m.groupValues.getOrNull(1).orEmpty().ifBlank { m.groupValues.getOrNull(2).orEmpty() }).trim()
+                if (netStr.isNotEmpty() && netStr.length <= 40 && network.isEmpty()) network = netStr
+            }
+            if (wt.contains("present", ignoreCase = true) && wt.contains("last_aired", ignoreCase = true)) {
+                status = "Running"
+            } else if (wt.contains("last_aired", ignoreCase = true)) {
+                status = "Ended"
+            }
+        }
+
+        // 1. Direct Wikipedia Infobox lookup
+        if (cleanTitle.isNotEmpty()) {
+            try {
+                val cands = mutableListOf(cleanTitle, "$cleanTitle (TV series)")
+                if (year > 1950) cands.add("$cleanTitle ($year TV series)")
+                val encTitles = URLEncoder.encode(cands.joinToString("|"), "UTF-8")
+                val root = openWiki(
+                    "https://en.wikipedia.org/w/api.php?action=query&titles=$encTitles&prop=revisions|extracts|pageimages&exintro=1&explaintext=1&rvprop=content&rvsection=0&piprop=thumbnail&pithumbsize=500&format=json&redirects=1&origin=*"
+                )
+                val pagesObj = root?.optJSONObject("query")?.optJSONObject("pages")
+                if (pagesObj != null) {
+                    val pageList = mutableListOf<JSONObject>()
+                    val keys = pagesObj.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        if ((k.toIntOrNull() ?: -1) > 0) {
+                            pagesObj.optJSONObject(k)?.let { pageList.add(it) }
+                        }
+                    }
+                    pageList.sortByDescending { if (it.optString("title", "").contains("TV series", ignoreCase = true)) 1 else 0 }
+                    for (page in pageList) {
+                        val rev = page.optJSONArray("revisions")?.optJSONObject(0)
+                        val wt = rev?.optJSONObject("slots")?.optJSONObject("main")?.optString("*", "")
+                            ?: rev?.optString("*", "")
+                            ?: ""
+                        if (!wt.contains("Infobox television", ignoreCase = true) && !wt.contains("num_episodes", ignoreCase = true)) {
+                            continue
+                        }
+                        parseInfobox(wt)
+                        if (overview.isEmpty()) overview = page.optString("extract", "").trim().take(500)
+                        if (poster.isEmpty()) poster = page.optJSONObject("thumbnail")?.optString("source", "").orEmpty()
+                        if (totalEps > 0) break
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 2. Wikipedia Broadcaster Program List / Search Fallback (e.g. Chandanamazha -> List of programs broadcast by Asianet -> 1173 eps)
+        if (totalEps == 0 && cleanTitle.isNotEmpty()) {
+            try {
+                val sQuery = URLEncoder.encode("\"$cleanTitle\" serial OR \"television series\"", "UTF-8")
+                val sRoot = openWiki("https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=$sQuery&srlimit=3&format=json&origin=*")
+                val sArr = sRoot?.optJSONObject("query")?.optJSONArray("search") ?: JSONArray()
+                val hitTitles = (0 until minOf(2, sArr.length()))
+                    .mapNotNull { sArr.optJSONObject(it)?.optString("title", "")?.takeIf(String::isNotBlank) }
+                if (hitTitles.isNotEmpty()) {
+                    val pRoot = openWiki(
+                        "https://en.wikipedia.org/w/api.php?action=query&titles=${URLEncoder.encode(hitTitles.joinToString("|"), "UTF-8")}&prop=revisions&rvprop=content&format=json&redirects=1&origin=*"
+                    )
+                    val pagesObj = pRoot?.optJSONObject("query")?.optJSONObject("pages")
+                    val titleRowRe = Regex("(?:'+'|\\[\\[(?:[^\\]|]*\\|)?)" + Regex.escape(cleanTitle) + "(?:'+'|\\]\\])", RegexOption.IGNORE_CASE)
+                    if (pagesObj != null) {
+                        val keys = pagesObj.keys()
+                        while (keys.hasNext() && totalEps == 0) {
+                            val page = pagesObj.optJSONObject(keys.next()) ?: continue
+                            val rev = page.optJSONArray("revisions")?.optJSONObject(0)
+                            val wt = rev?.optJSONObject("slots")?.optJSONObject("main")?.optString("*", "")
+                                ?: rev?.optString("*", "")
+                                ?: ""
+                            if (wt.isBlank()) continue
+                            parseInfobox(wt)
+                            if (totalEps > 0) break
+                            val rows = wt.split("\n|-")
+                            for (row in rows) {
+                                if (!titleRowRe.containsMatchIn(row)) continue
+                                val cells = row.replace(WIKI_REF_TAG_REGEX, "").split("\n|").map { it.trim() }
+                                for (ci in cells.indices.reversed()) {
+                                    val candNum = PURE_DIGITS_REGEX.find(cells[ci].replace(",", ""))?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                    if (candNum != null && candNum in 5..25000 && candNum != year) {
+                                        totalEps = candNum
+                                        if (status.isEmpty()) status = "Ended"
+                                        val pTitle = page.optString("title", "")
+                                        if (pTitle.contains("broadcast by ", ignoreCase = true) && network.isEmpty()) {
+                                            network = pTitle.substringAfter("broadcast by ", "").trim()
+                                        }
+                                        break
+                                    }
+                                }
+                                if (totalEps > 0) break
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 3. Wikidata SPARQL Fallback by IMDb ID (P345 -> P1113)
+        if (totalEps == 0 && cleanImdb.isNotEmpty()) {
+            try {
+                val sparql = "SELECT ?episodes ?duration WHERE { ?item wdt:P345 \"$cleanImdb\" . OPTIONAL { ?item wdt:P1113 ?episodes . } OPTIONAL { ?item wdt:P2047 ?duration . } } LIMIT 1"
+                val wdRoot = openWiki("https://query.wikidata.org/sparql?format=json&query=${URLEncoder.encode(sparql, "UTF-8")}")
+                val b = wdRoot?.optJSONObject("results")?.optJSONArray("bindings")?.optJSONObject(0)
+                val epVal = b?.optJSONObject("episodes")?.optString("value", "")?.toIntOrNull() ?: 0
+                if (epVal in 2..25000) totalEps = epVal
+                val durVal = b?.optJSONObject("duration")?.optString("value", "")?.toIntOrNull() ?: 0
+                if (durVal in 10..180 && runtime == 0) runtime = durVal
+            } catch (_: Exception) {}
+        }
+
+        ShowGuideEnrichment(
+            episodes = emptyList(),
+            cast = emptyList(),
+            totalEpisodesOverride = totalEps,
+            runtimeMinsOverride = runtime,
+            overviewOverride = overview,
+            posterOverride = poster,
+            networkOverride = network,
+            statusOverride = status
+        )
+    }
+
+    suspend fun fetchFullShowGuide(
+        tvmazeId: Int,
+        tmdbId: Int = 0,
+        title: String = "",
+        externalId: String = "",
+        year: Int = 0
+    ): ShowGuideEnrichment = withContext(Dispatchers.IO) {
+        val isImdbTv = externalId.startsWith("imdb_tv_tt", ignoreCase = true)
+        val imdbId = if (isImdbTv) externalId.removePrefix("imdb_tv_") else ""
+        val (eps, cast) = if (isImdbTv) {
+            emptyList<EpisodeModel>() to emptyList<String>()
+        } else {
+            fetchFullShowEpisodesAndCast(tvmazeId = tvmazeId, tmdbId = tmdbId, title = title, externalId = externalId)
+        }
+        if (eps.size <= 3 && (isImdbTv || title.isNotBlank())) {
+            val wiki = lookupWikipediaShowMeta(title = title, year = year, imdbId = imdbId)
+            if (wiki.totalEpisodesOverride > eps.size && (isImdbTv || wiki.totalEpisodesOverride >= 5)) {
+                return@withContext wiki.copy(
+                    episodes = emptyList(),
+                    cast = cast,
+                    runtimeMinsOverride = wiki.runtimeMinsOverride.takeIf { it > 0 } ?: 22
+                )
+            }
+        }
+        ShowGuideEnrichment(
+            episodes = eps,
+            cast = cast,
+            totalEpisodesOverride = eps.size
+        )
     }
 
     /**

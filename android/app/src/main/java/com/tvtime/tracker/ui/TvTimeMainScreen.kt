@@ -601,15 +601,26 @@ fun TvTimeMainScreen(
                         if (existing != null) {
                             selectedShowForDetail = existing
                         } else {
-                            val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+                            val guide = LiveMediaCatalogService.fetchFullShowGuide(
                                 tvmazeId = item.tvmazeId,
                                 tmdbId = item.tmdbId,
                                 title = item.title,
-                                externalId = item.externalId
+                                externalId = item.externalId,
+                                year = item.year
                             )
-                            val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else listOf(
-                                EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
-                            )
+                            val isCountOnly = guide.episodes.isEmpty() && guide.totalEpisodesOverride > 1
+                            val finalEpsJson = if (isCountOnly) {
+                                TvTimeProgressCalculator.serializeCompactedMeta(
+                                    totalEpisodes = guide.totalEpisodesOverride,
+                                    completedSeasons = emptyMap(),
+                                    episodes = emptyList()
+                                )
+                            } else {
+                                val finalEps = if (guide.episodes.isNotEmpty()) guide.episodes else listOf(
+                                    EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
+                                )
+                                TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                            }
                             selectedShowForDetail = ShowEntity(
                                 id = 0L,
                                 userId = currentUserId,
@@ -618,16 +629,16 @@ fun TvTimeMainScreen(
                                 tmdbId = item.tmdbId,
                                 title = item.title,
                                 year = item.year,
-                                network = item.networkOrDirector,
-                                status = item.status,
-                                runtimeMins = item.runtimeMins,
+                                network = guide.networkOverride.ifBlank { item.networkOrDirector },
+                                status = guide.statusOverride.ifBlank { item.status },
+                                runtimeMins = guide.runtimeMinsOverride.takeIf { it > 0 } ?: item.runtimeMins,
                                 genresCsv = item.genresCsv,
-                                castCsv = fetchedCast.joinToString(", "),
+                                castCsv = guide.cast.joinToString(", ").ifBlank { item.castCsv },
                                 rating = item.rating,
-                                posterUrl = item.posterUrl,
-                                overview = item.overview,
+                                posterUrl = item.posterUrl.ifBlank { guide.posterOverride },
+                                overview = item.overview.ifBlank { guide.overviewOverride },
                                 userStatus = "preview",
-                                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                                episodesJson = finalEpsJson
                             )
                         }
                     }
@@ -716,25 +727,44 @@ fun TvTimeMainScreen(
                             )
                             val insertedId = dao.insertShow(initialShow)
                             FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                            val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+                            val guide = LiveMediaCatalogService.fetchFullShowGuide(
                                 tvmazeId = item.tvmazeId,
                                 tmdbId = item.tmdbId,
                                 title = item.title,
-                                externalId = item.externalId
+                                externalId = item.externalId,
+                                year = item.year
                             )
                             val latestRow = dao.getShowsForUser(currentUserId).firstOrNull { it.id == insertedId }
-                            if (latestRow != null && (fetchedEps.isNotEmpty() || fetchedCast.isNotEmpty())) {
-                                val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else fallbackEps
+                            if (latestRow != null && (guide.episodes.isNotEmpty() || guide.totalEpisodesOverride > 1 || guide.cast.isNotEmpty())) {
                                 val isStillComp = latestRow.userStatus.equals("completed", ignoreCase = true)
+                                val isCountOnly = guide.episodes.isEmpty() && guide.totalEpisodesOverride > 1
+                                val nextEpsJson = if (isCountOnly) {
+                                    TvTimeProgressCalculator.serializeCompactedMeta(
+                                        totalEpisodes = guide.totalEpisodesOverride,
+                                        completedSeasons = emptyMap(),
+                                        episodes = emptyList()
+                                    )
+                                } else {
+                                    val finalEps = if (guide.episodes.isNotEmpty()) guide.episodes else fallbackEps
+                                    TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                                }
+                                val nextWatchedCsv = if (isStillComp && !isCountOnly) {
+                                    val finalEps = if (guide.episodes.isNotEmpty()) guide.episodes else fallbackEps
+                                    TvTimeProgressCalculator.serializeWatchedSet(finalEps.map { it.code }.toSet())
+                                } else if (isStillComp && isCountOnly) {
+                                    ""
+                                } else {
+                                    latestRow.watchedCodesCsv
+                                }
                                 dao.updateShow(
                                     latestRow.copy(
-                                        castCsv = fetchedCast.joinToString(", ").ifBlank { latestRow.castCsv },
-                                        watchedCodesCsv = if (isStillComp) {
-                                            TvTimeProgressCalculator.serializeWatchedSet(finalEps.map { it.code }.toSet())
-                                        } else {
-                                            latestRow.watchedCodesCsv
-                                        },
-                                        episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                                        castCsv = guide.cast.joinToString(", ").ifBlank { latestRow.castCsv },
+                                        runtimeMins = guide.runtimeMinsOverride.takeIf { it > 0 } ?: latestRow.runtimeMins,
+                                        posterUrl = latestRow.posterUrl.ifBlank { guide.posterOverride },
+                                        overview = latestRow.overview.ifBlank { guide.overviewOverride },
+                                        network = if (latestRow.network == "Streaming" || latestRow.network == "Television") guide.networkOverride.ifBlank { latestRow.network } else latestRow.network,
+                                        watchedCodesCsv = nextWatchedCsv,
+                                        episodesJson = nextEpsJson
                                     )
                                 )
                                 FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
@@ -874,26 +904,45 @@ fun TvTimeMainScreen(
                             )
                             val insertedId = dao.insertShow(initialShow)
                             FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                            val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+                            val guide = LiveMediaCatalogService.fetchFullShowGuide(
                                 tvmazeId = item.tvmazeId,
                                 tmdbId = item.tmdbId,
                                 title = item.title,
-                                externalId = item.externalId
+                                externalId = item.externalId,
+                                year = item.year
                             )
                             val latestRow = dao.getShowsForUser(currentUserId).firstOrNull { it.id == insertedId }
-                            if (latestRow != null && (fetchedEps.isNotEmpty() || fetchedCast.isNotEmpty())) {
-                                val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else fallbackEps
-                                val airedFinal = TvTimeProgressCalculator.filterAiredEpisodes(finalEps).ifEmpty { finalEps.take(1) }
+                            if (latestRow != null && (guide.episodes.isNotEmpty() || guide.totalEpisodesOverride > 1 || guide.cast.isNotEmpty())) {
                                 val isStillComp = latestRow.userStatus.equals("completed", ignoreCase = true)
+                                val isCountOnly = guide.episodes.isEmpty() && guide.totalEpisodesOverride > 1
+                                val nextEpsJson = if (isCountOnly) {
+                                    TvTimeProgressCalculator.serializeCompactedMeta(
+                                        totalEpisodes = guide.totalEpisodesOverride,
+                                        completedSeasons = emptyMap(),
+                                        episodes = emptyList()
+                                    )
+                                } else {
+                                    val finalEps = if (guide.episodes.isNotEmpty()) guide.episodes else fallbackEps
+                                    TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                                }
+                                val nextWatchedCsv = if (isStillComp && !isCountOnly) {
+                                    val finalEps = if (guide.episodes.isNotEmpty()) guide.episodes else fallbackEps
+                                    val airedFinal = TvTimeProgressCalculator.filterAiredEpisodes(finalEps).ifEmpty { finalEps.take(1) }
+                                    TvTimeProgressCalculator.serializeWatchedSet(airedFinal.map { it.code }.toSet())
+                                } else if (isStillComp && isCountOnly) {
+                                    ""
+                                } else {
+                                    latestRow.watchedCodesCsv
+                                }
                                 dao.updateShow(
                                     latestRow.copy(
-                                        castCsv = fetchedCast.joinToString(", ").ifBlank { latestRow.castCsv },
-                                        watchedCodesCsv = if (isStillComp) {
-                                            TvTimeProgressCalculator.serializeWatchedSet(airedFinal.map { it.code }.toSet())
-                                        } else {
-                                            latestRow.watchedCodesCsv
-                                        },
-                                        episodesJson = TvTimeProgressCalculator.serializeEpisodeList(finalEps)
+                                        castCsv = guide.cast.joinToString(", ").ifBlank { latestRow.castCsv },
+                                        runtimeMins = guide.runtimeMinsOverride.takeIf { it > 0 } ?: latestRow.runtimeMins,
+                                        posterUrl = latestRow.posterUrl.ifBlank { guide.posterOverride },
+                                        overview = latestRow.overview.ifBlank { guide.overviewOverride },
+                                        network = if (latestRow.network == "Streaming" || latestRow.network == "Television") guide.networkOverride.ifBlank { latestRow.network } else latestRow.network,
+                                        watchedCodesCsv = nextWatchedCsv,
+                                        episodesJson = nextEpsJson
                                     )
                                 )
                                 FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)

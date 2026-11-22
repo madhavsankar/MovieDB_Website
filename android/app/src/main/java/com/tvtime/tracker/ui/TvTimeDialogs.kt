@@ -175,12 +175,35 @@ fun ShowDetailBottomSheet(
                 showOverview = fetchedOv
             }
         }
-        val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+        val guide = LiveMediaCatalogService.fetchFullShowGuide(
             tvmazeId = show.tvmazeId,
             tmdbId = show.tmdbId,
             title = show.title,
-            externalId = show.externalId
+            externalId = show.externalId,
+            year = show.year
         )
+        val fetchedEps = guide.episodes
+        val fetchedCast = guide.cast
+        if (guide.overviewOverride.isNotBlank() && showOverview.isBlank()) {
+            showOverview = guide.overviewOverride
+        }
+        if (fetchedEps.isEmpty() && guide.totalEpisodesOverride > 1 && episodes.size <= 1) {
+            val prevTotal = totalEpisodesOverride
+            totalEpisodesOverride = maxOf(guide.totalEpisodesOverride, prevTotal)
+            episodes = emptyList()
+            if (fetchedCast.isNotEmpty()) castCsv = fetchedCast.joinToString(", ")
+            if (persistedShowId != 0L && guide.totalEpisodesOverride > prevTotal) {
+                persistUpdatedShow(
+                    nextEpisodes = emptyList(),
+                    nextWatchedSet = if (userStatus == "completed") emptySet() else watchedSet,
+                    nextStatus = userStatus,
+                    nextCastCsv = castCsv,
+                    nextCompletedSeasons = completedSeasons,
+                    nextTotalOverride = totalEpisodesOverride,
+                    nextOverview = showOverview
+                )
+            }
+        }
         val hadSeasonOne = episodes.any { it.season == 1 }
         val fetchedHasSeasonOne = fetchedEps.any { it.season == 1 }
         if (fetchedEps.isNotEmpty() && (fetchedEps.size > episodes.size || completedSeasons.isNotEmpty() || (!hadSeasonOne && fetchedHasSeasonOne))) {
@@ -648,6 +671,162 @@ fun ShowDetailBottomSheet(
                     }
                 }
 
+                val isCountOnlySeries = episodes.isEmpty() ||
+                    (episodes.size == 1 && totalEpisodesOverride > 1 && episodes.first().title.equals("Pilot", ignoreCase = true))
+                if (isCountOnlySeries) {
+                    var watchedInputText by remember(prog.watchedCount) { mutableStateOf(prog.watchedCount.toString()) }
+                    var totalInputText by remember(prog.totalEpisodes) { mutableStateOf(prog.totalEpisodes.coerceAtLeast(1).toString()) }
+
+                    fun applyCountOnly(nextWatchedRaw: Int, nextTotalRaw: Int) {
+                        val cleanTotal = nextTotalRaw.coerceIn(1, 25000)
+                        val cleanWatched = nextWatchedRaw.coerceIn(0, cleanTotal)
+                        totalEpisodesOverride = cleanTotal
+                        episodes = emptyList()
+                        watchedSet = emptySet()
+                        val nextComp: Map<Int, Int>
+                        val nextStat: String
+                        if (cleanWatched >= cleanTotal) {
+                            nextComp = emptyMap()
+                            nextStat = "completed"
+                        } else if (cleanWatched <= 0) {
+                            nextComp = emptyMap()
+                            nextStat = if (userStatus == "stopped") "stopped" else "interested"
+                        } else {
+                            nextComp = mapOf(1 to cleanWatched)
+                            nextStat = if (userStatus == "stopped") "stopped" else "in_progress"
+                        }
+                        completedSeasons = nextComp
+                        userStatus = nextStat
+                        persistUpdatedShow(
+                            nextEpisodes = emptyList(),
+                            nextWatchedSet = emptySet(),
+                            nextStatus = nextStat,
+                            nextCompletedSeasons = nextComp,
+                            nextTotalOverride = cleanTotal
+                        )
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = TvTimePalette.SurfaceCard,
+                            border = BorderStroke(1.dp, TvTimePalette.Border),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "📺 Episode Count Tracker",
+                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            text = "Track watched episode count without needing individual episode titles.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = TvTimePalette.TextSecondary
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = TvTimePalette.SurfacePill
+                                    ) {
+                                        Text(
+                                            text = "${prog.watchedCount} / ${prog.totalEpisodes}",
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
+                                            color = TvTimePalette.Yellow,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    val curW = prog.watchedCount
+                                    val curT = prog.totalEpisodes.coerceAtLeast(1)
+                                    listOf(
+                                        "-10" to (curW - 10).coerceAtLeast(0),
+                                        "-1" to (curW - 1).coerceAtLeast(0),
+                                        "+1" to (curW + 1).coerceAtMost(curT),
+                                        "+10" to (curW + 10).coerceAtMost(curT),
+                                        "All" to curT
+                                    ).forEach { (btnLabel, targetW) ->
+                                        Surface(
+                                            onClick = { applyCountOnly(targetW, curT) },
+                                            shape = RoundedCornerShape(50),
+                                            color = if (btnLabel == "All") Color(0x3322C55E) else TvTimePalette.SurfacePill,
+                                            border = BorderStroke(1.dp, TvTimePalette.Border),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier.padding(vertical = 8.dp)
+                                            ) {
+                                                Text(
+                                                    text = btnLabel,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = if (btnLabel == "All") Color(0xFF4ADE80) else Color.White
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = watchedInputText,
+                                        onValueChange = { watchedInputText = it.filter(Char::isDigit) },
+                                        label = { Text("Watched", fontSize = 11.sp) },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedTextField(
+                                        value = totalInputText,
+                                        onValueChange = { totalInputText = it.filter(Char::isDigit) },
+                                        label = { Text("Total Episodes", fontSize = 11.sp) },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+
+                                Button(
+                                    onClick = {
+                                        val wVal = watchedInputText.toIntOrNull() ?: prog.watchedCount
+                                        val tVal = totalInputText.toIntOrNull() ?: prog.totalEpisodes.coerceAtLeast(1)
+                                        applyCountOnly(wVal, tVal)
+                                    },
+                                    shape = RoundedCornerShape(50),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = TvTimePalette.Yellow,
+                                        contentColor = TvTimePalette.OnYellow
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Save Episode Count", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                } else {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -923,6 +1102,7 @@ fun ShowDetailBottomSheet(
                             }
                         }
                     }
+                }
                 }
             }
         }

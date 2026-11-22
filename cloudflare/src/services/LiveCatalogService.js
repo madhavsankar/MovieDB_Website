@@ -732,9 +732,65 @@ export class LiveCatalogService {
         }
       }
 
-      if (tmdbMovieCount < 5 && imdbRes.status === "fulfilled" && imdbRes.value && imdbRes.value.ok) {
+      const tvShowCountBeforeImdb = results.filter((r) => r.mediaType === "show").length;
+      if ((tmdbMovieCount < 5 || tvShowCountBeforeImdb < 3) && imdbRes.status === "fulfilled" && imdbRes.value && imdbRes.value.ok) {
         const imdbData = await imdbRes.value.json();
         const imdbItems = Array.isArray(imdbData?.d) ? imdbData.d : [];
+        let tvShowCountNow = tvShowCountBeforeImdb;
+
+        // When TMDB + TVMaze returned 0 TV matches (e.g. transliterated spelling or missing regional show),
+        // first try resolving IMDb's top tvSeries hit via TMDB `/find/{ttId}?external_source=imdb_id`!
+        if (tvShowCountNow === 0) {
+          const topImdbShows = imdbItems
+            .filter((it) => {
+              const qid = String(it?.qid || "").toLowerCase();
+              return /^tt\d+$/i.test(String(it?.id || "")) && (qid === "tvseries" || qid === "tvminiseries");
+            })
+            .slice(0, 2);
+          for (const imShow of topImdbShows) {
+            const findReq = LiveCatalogService._buildTmdbRequest(
+              `/find/${encodeURIComponent(imShow.id)}?external_source=imdb_id&language=en-US`,
+              env
+            );
+            if (!findReq) continue;
+            try {
+              const fr = await fetchImpl(findReq.url, { headers: findReq.headers });
+              if (fr.ok) {
+                const fd = await fr.json();
+                for (const tv of fd?.tv_results || []) {
+                  const tvId = Number(tv?.id) || 0;
+                  if (tvId <= 0 || seenShowTmdbIds.has(tvId)) continue;
+                  const title = tv.name || tv.original_name || imShow.l || "Untitled Show";
+                  const firstAir = String(tv.first_air_date || "");
+                  const year = firstAir ? parseInt(firstAir.slice(0, 4), 10) || Number(imShow.y) || 2024 : Number(imShow.y) || 2024;
+                  const baseTitle = normalizeBaseTitle(title);
+                  const showKey = `${normalizeSearchTitle(title)}_${year}`;
+                  if (seenShowTitles.has(showKey) || hasShowNearYear(baseTitle, year)) continue;
+                  seenShowTmdbIds.add(tvId);
+                  seenShowTitles.add(showKey);
+                  recordShowTitleYear(baseTitle, year);
+                  tvShowCountNow += 1;
+                  results.push({
+                    id: `tmdb_tv_${tvId}`,
+                    tvmazeId: 0,
+                    tmdbId: tvId,
+                    mediaType: "show",
+                    title,
+                    year,
+                    network: "Streaming",
+                    status: "Running",
+                    runtimeMins: 45,
+                    genres: ["TV Series"],
+                    rating: tv.vote_average ? Math.round(Number(tv.vote_average) * 10) / 10 : 8.0,
+                    posterUrl: tv.poster_path ? `https://image.tmdb.org/t/p/w500${tv.poster_path}` : imShow.i?.imageUrl || "",
+                    overview: stripHtml(tv.overview || ""),
+                  });
+                }
+              }
+            } catch (_) {}
+          }
+        }
+
         // When TMDB missed a transliterated/misspelled movie query (e.g. "ala vaikuntapuramloo"),
         // resolve IMDb's top tt* hit to its canonical TMDB movie ID via `/find/{ttId}?external_source=imdb_id`!
         if (tmdbMovieCount === 0) {
@@ -790,7 +846,32 @@ export class LiveCatalogService {
         for (const item of imdbItems) {
           if (!item || !item.id || !item.l) continue;
           const qid = String(item.qid || "").toLowerCase();
-          if (qid === "movie" || qid === "feature" || qid === "tvmovie") {
+          if (tvShowCountNow < 3 && (qid === "tvseries" || qid === "tvminiseries")) {
+            const year = Number(item.y) || 2024;
+            const showKey = `${normalizeSearchTitle(item.l)}_${year}`;
+            const baseShowTitle = normalizeBaseTitle(item.l);
+            if (seenShowTitles.has(showKey) || hasShowNearYear(baseShowTitle, year)) continue;
+            seenShowTitles.add(showKey);
+            recordShowTitleYear(baseShowTitle, year);
+            tvShowCountNow += 1;
+            const castArr = item.s ? String(item.s).split(",").map((c) => c.trim()).filter(Boolean) : [];
+            results.push({
+              id: `imdb_tv_${item.id}`,
+              tvmazeId: 0,
+              tmdbId: 0,
+              mediaType: "show",
+              title: item.l,
+              year,
+              network: "Television",
+              status: "Ended",
+              runtimeMins: 22,
+              genres: ["TV Series"],
+              cast: castArr,
+              rating: 8.0,
+              posterUrl: item.i?.imageUrl || "",
+              overview: item.s ? `TV Series · Starring ${item.s}` : "TV Series",
+            });
+          } else if (tmdbMovieCount < 5 && (qid === "movie" || qid === "feature" || qid === "tvmovie")) {
             const year = Number(item.y) || 2024;
             const key = `${normalizeSearchTitle(item.l)}_${year}`;
             const baseTitle = normalizeBaseTitle(item.l);
@@ -1635,11 +1716,149 @@ export class LiveCatalogService {
   }
 
   /**
-   * Fetches full TV show details + complete episode list + cast from TMDB (`/3/tv/:id`) or TVMaze (`/shows/:id?embed[]=episodes&embed[]=cast`).
+   * Resolves episode count, runtime, network, overview, and poster via Wikipedia Infoboxes,
+   * Wikipedia Broadcaster Program Tables (e.g. Chandanamazha -> 1,173 eps on Asianet), and Wikidata P1113.
+   */
+  static async lookupWikipediaShowMeta({ title = "", year = 0, imdbId = "", fetchImpl = fetch } = {}) {
+    const cleanTitle = String(title || "").trim();
+    const cleanImdb = /^tt\d+$/i.test(String(imdbId || "").trim()) ? String(imdbId).trim().toLowerCase() : "";
+    const out = { totalEpisodes: 0, runtimeMins: 0, network: "", overview: "", posterUrl: "", status: "" };
+    if (!cleanTitle && !cleanImdb) return out;
+    const wikiHeaders = { "User-Agent": "MovieDBTracker/1.0 (https://moviedb-website.madhavsankar.workers.dev)" };
+
+    const parseInfoboxWikitext = (wt) => {
+      if (!wt) return;
+      const mEps = wt.match(/num_episodes\s*=\s*(?:\{\{[^}|]*\|)?\s*([0-9][0-9,]*)/i);
+      if (mEps) {
+        const n = parseInt(mEps[1].replace(/,/g, ""), 10);
+        if (n >= 2 && n <= 25000) out.totalEpisodes = n;
+      }
+      const mRt = wt.match(/runtime\s*=\s*[^0-9\n]{0,25}([0-9]{2,3})/i);
+      if (mRt) {
+        const r = parseInt(mRt[1], 10);
+        if (r >= 10 && r <= 180) out.runtimeMins = r;
+      }
+      const mNet = wt.match(/network\s*=\s*(?:\[\[([^\]|]+)(?:\|[^\]]+)?\]\]|([^\n|<{}]+))/i);
+      if (mNet && !out.network) {
+        const netStr = String(mNet[1] || mNet[2] || "").trim();
+        if (netStr && netStr.length <= 40) out.network = netStr;
+      }
+      if (/last_aired\s*=\s*[^\n]*present/i.test(wt)) {
+        out.status = "Running";
+      } else if (/last_aired\s*=\s*[^\n]*[0-9]{4}/i.test(wt)) {
+        out.status = "Ended";
+      }
+    };
+
+    // 1. Direct Wikipedia Infobox lookup (e.g. "Parasparam (TV series)" -> 1524 eps, "Vanambadi (TV series)" -> 1013 eps, "Karuthamuthu" -> 1450 eps)
+    if (cleanTitle) {
+      const candidates = [cleanTitle, `${cleanTitle} (TV series)`];
+      if (Number(year) > 1950) candidates.push(`${cleanTitle} (${year} TV series)`);
+      try {
+        const directUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(candidates.join("|"))}&prop=revisions|extracts|pageimages&exintro=1&explaintext=1&rvprop=content&rvsection=0&piprop=thumbnail&pithumbsize=500&format=json&redirects=1&origin=*`;
+        const resp = await fetchImpl(directUrl, { headers: wikiHeaders });
+        if (resp && resp.ok) {
+          const data = await resp.json();
+          const pages = Object.values(data?.query?.pages || {}).filter((p) => p && Number(p.pageid) > 0);
+          // Prefer "(TV series)" page if multiple match
+          pages.sort((a, b) => (/tv series/i.test(b.title || "") ? 1 : 0) - (/tv series/i.test(a.title || "") ? 1 : 0));
+          for (const page of pages) {
+            const rev = page.revisions?.[0];
+            const wt = rev?.slots?.main?.["*"] || rev?.["*"] || "";
+            if (!/infobox\s+television/i.test(wt) && !/num_episodes/i.test(wt)) continue;
+            parseInfoboxWikitext(wt);
+            if (page.extract && !out.overview) {
+              out.overview = String(page.extract).trim().slice(0, 500);
+            }
+            if (page.thumbnail?.source && !out.posterUrl) {
+              out.posterUrl = String(page.thumbnail.source);
+            }
+            if (out.totalEpisodes > 0) break;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 2. Wikipedia Broadcaster Program List / Search Fallback (e.g. "Chandanamazha" -> "List of programs broadcast by Asianet" -> 1173 eps)
+    if (out.totalEpisodes === 0 && cleanTitle) {
+      try {
+        const sQuery = `"${cleanTitle}" serial OR "television series"`;
+        const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(sQuery)}&srlimit=3&format=json&origin=*`;
+        const sResp = await fetchImpl(searchUrl, { headers: wikiHeaders });
+        if (sResp && sResp.ok) {
+          const sData = await sResp.json();
+          const hits = (sData?.query?.search || []).map((h) => h?.title).filter(Boolean);
+          if (hits.length > 0) {
+            const pUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(hits.slice(0, 2).join("|"))}&prop=revisions&rvprop=content&format=json&redirects=1&origin=*`;
+            const pResp = await fetchImpl(pUrl, { headers: wikiHeaders });
+            if (pResp && pResp.ok) {
+              const pData = await pResp.json();
+              const escTitle = cleanTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const titleRe = new RegExp(`(?:'+'|\\[\\[(?:[^\\]|]*\\|)?)${escTitle}(?:'+'|\\]\\])`, "i");
+              for (const page of Object.values(pData?.query?.pages || {})) {
+                const rev = page?.revisions?.[0];
+                const wt = rev?.slots?.main?.["*"] || rev?.["*"] || "";
+                if (!wt) continue;
+                parseInfoboxWikitext(wt);
+                if (out.totalEpisodes > 0) break;
+                const rows = wt.split(/\n\|-/);
+                for (const row of rows) {
+                  if (!titleRe.test(row)) continue;
+                  const cells = row
+                    .replace(/<ref[\s\S]*?(?:<\/ref>|\/>)/gi, "")
+                    .split(/\n\|/)
+                    .map((c) => c.trim());
+                  for (let ci = cells.length - 1; ci >= 0; ci--) {
+                    const mNum = /^([0-9]{2,5})$/.exec(cells[ci].replace(/,/g, ""));
+                    if (mNum) {
+                      const val = parseInt(mNum[1], 10);
+                      if (val >= 5 && val <= 25000 && val !== Number(year)) {
+                        out.totalEpisodes = val;
+                        out.status = out.status || "Ended";
+                        const netMatch = /broadcast by\s+(.+)$/i.exec(String(page?.title || ""));
+                        if (netMatch && !out.network) out.network = netMatch[1].trim();
+                        break;
+                      }
+                    }
+                  }
+                  if (out.totalEpisodes > 0) break;
+                }
+                if (out.totalEpisodes > 0) break;
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 3. Wikidata SPARQL Fallback by IMDb ID (P345 -> P1113 number of episodes)
+    if (out.totalEpisodes === 0 && cleanImdb) {
+      try {
+        const sparql = `SELECT ?episodes ?duration WHERE { ?item wdt:P345 "${cleanImdb}" . OPTIONAL { ?item wdt:P1113 ?episodes . } OPTIONAL { ?item wdt:P2047 ?duration . } } LIMIT 1`;
+        const wdUrl = `https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(sparql)}`;
+        const wdResp = await fetchImpl(wdUrl, { headers: wikiHeaders });
+        if (wdResp && wdResp.ok) {
+          const wdData = await wdResp.json();
+          const b = wdData?.results?.bindings?.[0];
+          const epVal = parseInt(b?.episodes?.value || "0", 10);
+          if (epVal >= 2 && epVal <= 25000) out.totalEpisodes = epVal;
+          const durVal = parseInt(b?.duration?.value || "0", 10);
+          if (durVal >= 10 && durVal <= 180 && !out.runtimeMins) out.runtimeMins = durVal;
+        }
+      } catch (_) {}
+    }
+
+    return out;
+  }
+
+  /**
+   * Fetches full TV show details + complete episode list + cast from TMDB (`/3/tv/:id`), TVMaze, or IMDb+Wikipedia count-only fallback.
    */
   static async fetchFullShowFromTvMaze(tvmazeId, { title = "", fetchImpl = fetch, env = null } = {}) {
     let rawStr = String(tvmazeId || "").trim();
     const cleanTitle = String(title || "").trim();
+    const isImdbTvId = /^imdb_tv_tt\d+$/i.test(rawStr);
+    const extractedImdbId = isImdbTvId ? rawStr.replace(/^imdb_tv_/i, "") : "";
     if (rawStr.startsWith("movie_")) {
       const isNonTmdbMovie = rawStr.startsWith("movie_tt") || rawStr.startsWith("movie_itunes_");
       let tmdbId = isNonTmdbMovie ? 0 : Number(rawStr.replace(/^movie_/, "").replace(/\D/g, ""));
@@ -1698,8 +1917,75 @@ export class LiveCatalogService {
       return null;
     }
 
+    // For IMDb TV series IDs (e.g. imdb_tv_tt10339970 Chandanamazha), resolve via TMDB /find/{ttId} first;
+    // never blindly match an unrelated same-name TMDB stub from a different decade!
+    if (isImdbTvId && extractedImdbId) {
+      const findTvReq = LiveCatalogService._buildTmdbRequest(
+        `/find/${encodeURIComponent(extractedImdbId)}?external_source=imdb_id&language=en-US`,
+        env
+      );
+      if (findTvReq) {
+        try {
+          const fr = await fetchImpl(findTvReq.url, { headers: findTvReq.headers });
+          if (fr.ok) {
+            const fd = await fr.json();
+            const matchedTvId = Number(fd?.tv_results?.[0]?.id || 0);
+            if (matchedTvId > 0) {
+              rawStr = `tmdb_tv_${matchedTvId}`;
+            }
+          }
+        } catch (_) {}
+      }
+      if (rawStr.startsWith("imdb_tv_")) {
+        const wikiMeta = await LiveCatalogService.lookupWikipediaShowMeta({
+          title: cleanTitle,
+          imdbId: extractedImdbId,
+          fetchImpl,
+        });
+        // Also pull poster & year & cast from IMDb suggestion index if needed
+        let imdbPoster = "";
+        let imdbYear = 2024;
+        let imdbCast = [];
+        try {
+          const suggKey = (cleanTitle || extractedImdbId)[0].toLowerCase().replace(/[^a-z0-9]/, "x");
+          const suggUrl = `https://v3.sg.media-imdb.com/suggestion/${suggKey}/${encodeURIComponent(cleanTitle || extractedImdbId)}.json`;
+          const sResp = await fetchImpl(suggUrl);
+          if (sResp && sResp.ok) {
+            const sJson = await sResp.json();
+            const hit = (sJson?.d || []).find((d) => String(d?.id || "").toLowerCase() === extractedImdbId.toLowerCase());
+            if (hit) {
+              imdbPoster = hit.i?.imageUrl || "";
+              imdbYear = Number(hit.y) || 2024;
+              if (hit.s) {
+                imdbCast = String(hit.s).split(",").map((c) => c.trim()).filter(Boolean);
+              }
+            }
+          }
+        } catch (_) {}
+        const resolvedTotal = Math.max(wikiMeta.totalEpisodes || 0, 1);
+        return {
+          id: rawStr,
+          tvmazeId: 0,
+          tmdbId: 0,
+          title: cleanTitle || "Untitled Show",
+          year: imdbYear,
+          network: wikiMeta.network || "Television",
+          status: wikiMeta.status || "Ended",
+          runtimeMins: wikiMeta.runtimeMins || 22,
+          genres: ["TV Series"],
+          cast: imdbCast,
+          rating: 8.0,
+          posterUrl: imdbPoster || wikiMeta.posterUrl || "",
+          overview: wikiMeta.overview || (imdbCast.length > 0 ? `TV Series · Starring ${imdbCast.join(", ")}` : "TV Series"),
+          totalEpisodes: resolvedTotal,
+          countOnly: true,
+          episodes: [],
+        };
+      }
+    }
+
     // Resolve non-TMDB / non-TVMaze synthetic IDs (e.g. csv_show_*) via title search on TMDB first
-    if (!rawStr.startsWith("tmdb_tv_") && !Number(rawStr.replace(/^tvmaze_/, "")) && cleanTitle) {
+    if (!rawStr.startsWith("tmdb_tv_") && !isImdbTvId && !Number(rawStr.replace(/^tvmaze_/, "")) && cleanTitle) {
       const searchTvReq = LiveCatalogService._buildTmdbRequest(
         `/search/tv?query=${encodeURIComponent(cleanTitle)}&include_adult=false&language=en-US&page=1`,
         env
@@ -1832,6 +2118,40 @@ export class LiveCatalogService {
               }
             }
             episodes.sort((a, b) => (a.season - b.season) || (a.number - b.number));
+
+            // When TMDB only has 1-3 stub episodes for a long-running regional serial (e.g. Parasparam, Vanambadi, Kudumbavilakku),
+            // check Wikipedia/Wikidata for the true total episode count and switch to clean count-only mode!
+            if (episodes.length <= 3) {
+              const tmdbReportedTotal = Number(show.number_of_episodes) || 0;
+              const wikiMeta = await LiveCatalogService.lookupWikipediaShowMeta({
+                title: show.name || cleanTitle,
+                year,
+                fetchImpl,
+              });
+              const bestTotal = Math.max(wikiMeta.totalEpisodes || 0, tmdbReportedTotal);
+              if (bestTotal > episodes.length && bestTotal >= 5) {
+                const hasExplicitTmdbRt = Array.isArray(show.episode_run_time) && Number(show.episode_run_time[0]) > 0;
+                return {
+                  id: `tmdb_tv_${show.id}`,
+                  tvmazeId: 0,
+                  tmdbId: show.id,
+                  title: show.name || "Untitled Show",
+                  year,
+                  network: wikiMeta.network && network === "Streaming" ? wikiMeta.network : network,
+                  status: wikiMeta.status || show.status || "Running",
+                  runtimeMins: hasExplicitTmdbRt ? defaultRuntime : wikiMeta.runtimeMins || 22,
+                  genres: (show.genres || []).map((g) => g?.name).filter(Boolean),
+                  cast: castList,
+                  rating: show.vote_average ? Math.round(Number(show.vote_average) * 10) / 10 : 8.0,
+                  posterUrl: posterUrl || wikiMeta.posterUrl || "",
+                  overview: stripHtml(show.overview) || wikiMeta.overview || "",
+                  totalEpisodes: bestTotal,
+                  countOnly: true,
+                  episodes: [],
+                };
+              }
+            }
+
             return {
               id: `tmdb_tv_${show.id}`,
               tvmazeId: 0,

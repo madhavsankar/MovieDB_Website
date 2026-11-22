@@ -2088,6 +2088,192 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertTrue(out["hasEpisodesRow"])
         self.assertTrue(out["hasMoviesRow"])
 
+    def test_imdb_tv_series_fallback_and_wikipedia_episode_count_only(self):
+        """Verifies IMDb tvSeries fallback ('chandanamazha' -> imdb_tv_tt10339970) and Wikipedia episode-count-only resolution (1173 eps for Chandanamazha, 1524 eps for sparse 1-ep Parasparam)."""
+        import re as _re
+
+        def load_cf(rel):
+            with open(os.path.join(ROOT_DIR, "cloudflare", "src", *rel), "r", encoding="utf-8") as f:
+                s = _re.sub(r"^import\s+.*?;\s*$", "", f.read(), flags=_re.MULTILINE)
+            return s.replace("export class ", "class ").replace("export function ", "function ").replace("export const ", "const ")
+
+        svc_src = load_cf(("services", "LiveCatalogService.js"))
+        repo_src = load_cf(("repositories", "FirestoreRepository.js"))
+        view_src = load_cf(("ui", "WebAppView.js"))
+
+        harness = (
+            """
+            function formatEpisodeCode(season, number) {
+              return "S" + String(season || 1).padStart(2, "0") + "E" + String(number || 1).padStart(2, "0");
+            }
+            function stripHtml(raw) {
+              return String(raw || "").replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim();
+            }
+            """
+            + svc_src
+            + "\n"
+            + repo_src
+            + "\n"
+            + view_src
+            + """
+            (async () => {
+              const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+              const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+              const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+              (new Function(clientJs))();
+              const app = Object.create(globalThis.TvTimeClientClass.prototype);
+
+              const mockFetch = async (url) => {
+                const u = String(url);
+                if (u.includes("/search/multi")) return { ok: true, json: async () => ({ results: [] }) };
+                if (u.includes("api.tvmaze.com")) return { ok: true, json: async () => [] };
+                if (u.includes("/find/tt10339970")) return { ok: true, json: async () => ({ tv_results: [], movie_results: [] }) };
+                if (u.includes("v3.sg.media-imdb.com") && u.toLowerCase().includes("chandanamazha")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      d: [
+                        { id: "tt10339970", l: "Chandanamazha", qid: "tvSeries", y: 2014, s: "Meghna Vincent, Shalu Kurian" },
+                        { id: "tt0319164", l: "Chandanamarangal", qid: "movie", y: 2001 }
+                      ]
+                    })
+                  };
+                }
+                if (u.includes("en.wikipedia.org") && u.includes("list=search")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      query: { search: [{ title: "List of programs broadcast by Asianet" }] }
+                    })
+                  };
+                }
+                if (u.includes("en.wikipedia.org") && u.includes("List%20of%20programs%20broadcast%20by%20Asianet")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      query: {
+                        pages: {
+                          "101": {
+                            pageid: 101,
+                            title: "List of programs broadcast by Asianet",
+                            revisions: [{ "*": "|-\\n|3 February 2014\\n|''Chandanamazha''<ref>news</ref>\\n|9 December 2017\\n|Hindi TV series\\n|1173\\n|-" }]
+                          }
+                        }
+                      }
+                    })
+                  };
+                }
+                if (u.includes("en.wikipedia.org") && u.includes("Parasparam")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      query: {
+                        pages: {
+                          "202": {
+                            pageid: 202,
+                            title: "Parasparam (TV series)",
+                            extract: "Parasparam is an Indian Malayalam soap opera.",
+                            revisions: [{ "*": "{{Infobox television | num_episodes = 1,524 | runtime = 22 minutes | network = [[Asianet]] | last_aired = 31 August 2018 }}" }]
+                          }
+                        }
+                      }
+                    })
+                  };
+                }
+                if (u.includes("api.themoviedb.org/3/tv/327059?append_to_response=credits")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      id: 327059,
+                      name: "Parasparam",
+                      first_air_date: "2013-07-22",
+                      number_of_episodes: 1,
+                      episode_run_time: [],
+                      seasons: [{ season_number: 1, episode_count: 1 }]
+                    })
+                  };
+                }
+                if (u.includes("api.themoviedb.org/3/tv/327059?append_to_response=season/1")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      "season/1": { episodes: [{ episode_number: 1, name: "Episode 1", air_date: "2013-07-22" }] }
+                    })
+                  };
+                }
+                return { ok: true, json: async () => ({ results: [] }) };
+              };
+
+              const searchChandanamazha = await LiveCatalogService.searchMulti("chandanamazha", {
+                page: 1,
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
+
+              const chandanamazhaDetails = await LiveCatalogService.fetchFullShowFromTvMaze("imdb_tv_tt10339970", {
+                title: "Chandanamazha",
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
+
+              const parasparamDetails = await LiveCatalogService.fetchFullShowFromTvMaze("tmdb_tv_327059", {
+                title: "Parasparam",
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
+
+              app.state = { shows: [], movies: [] };
+              app.persistState = async () => {};
+              const partialShow = {
+                id: "imdb_tv_tt10339970",
+                title: "Chandanamazha",
+                year: 2014,
+                runtimeMins: 22,
+                userStatus: "stopped",
+                totalEpisodes: 1173,
+                completedSeasons: {},
+                watchedEpisodes: [],
+                episodes: []
+              };
+              app.state.shows = [partialShow];
+              await app.setCountOnlyProgress("imdb_tv_tt10339970", 350, 1173);
+              const compactedPartial = FirestoreRepository.compactShowForStorage(app.state.shows[0]);
+              const progPartial = app.computeShowProgress(compactedPartial);
+              const wtPartial = app.computeShowWatchTime(compactedPartial);
+
+              const out = JSON.stringify({
+                searchTopId: searchChandanamazha.results[0]?.id,
+                searchTopType: searchChandanamazha.results[0]?.mediaType,
+                chandanamazhaTotal: chandanamazhaDetails?.totalEpisodes,
+                chandanamazhaEpsLen: chandanamazhaDetails?.episodes?.length,
+                chandanamazhaNet: chandanamazhaDetails?.network,
+                parasparamTotal: parasparamDetails?.totalEpisodes,
+                parasparamRt: parasparamDetails?.runtimeMins,
+                parasparamEpsLen: parasparamDetails?.episodes?.length,
+                partialStatus: compactedPartial.userStatus,
+                partialWatched: progPartial.watchedCount,
+                partialTotal: progPartial.total,
+                partialMins: wtPartial.minutes
+              });
+              if (typeof console !== "undefined" && console.log) console.log(out);
+              else if (typeof print !== "undefined") print(out);
+            })();
+            """
+        )
+        out = self._run_js(harness)
+        self.assertEqual(out["searchTopId"], "imdb_tv_tt10339970")
+        self.assertEqual(out["searchTopType"], "show")
+        self.assertEqual(out["chandanamazhaTotal"], 1173)
+        self.assertEqual(out["chandanamazhaEpsLen"], 0)
+        self.assertEqual(out["chandanamazhaNet"], "Asianet")
+        self.assertEqual(out["parasparamTotal"], 1524)
+        self.assertEqual(out["parasparamRt"], 22)
+        self.assertEqual(out["parasparamEpsLen"], 0)
+        self.assertEqual(out["partialStatus"], "stopped")
+        self.assertEqual(out["partialWatched"], 350)
+        self.assertEqual(out["partialTotal"], 1173)
+        self.assertEqual(out["partialMins"], 350 * 22)
+
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""
         proc = subprocess.run(
