@@ -420,6 +420,10 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertIn("dao.deleteShow(", dialogs)
         self.assertIn("dao.deleteMovie(", dialogs)
 
+        # 4. Friends library scroll-position preservation (never reset isComputing on myMovies/myShows updates & use stable item keys)
+        self.assertIn("key = { row -> row.stableKey }", main_screen)
+        self.assertNotIn("preparedLibrary = preparedLibrary.copy(isComputing = true)", main_screen)
+
         # 4. Friends library must be virtualized via LazyColumn itemsIndexed + off-UI-thread Dispatchers.Default indexing (no ANR!)
         self.assertNotIn("filteredFriendMovies.forEach", main_screen)
         self.assertNotIn("filteredFriendShows.forEach", main_screen)

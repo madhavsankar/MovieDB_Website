@@ -4578,20 +4578,22 @@ private fun CategoriesFullPageScreen(
 }
 
 private data class PreparedFriendMovieItem(
+    val stableKey: String,
     val movie: MovieEntity,
     val myMovie: MovieEntity?
 )
 
 private data class PreparedFriendShowItem(
+    val stableKey: String,
     val show: ShowEntity,
     val myShow: ShowEntity?,
-    val myEff: String,
     val friendEff: String,
     val watchedCount: Int,
     val totalCount: Int
 )
 
 private data class PreparedFriendLibraryState(
+    val friendUserId: String = "",
     val unwatchedMovies: List<PreparedFriendMovieItem> = emptyList(),
     val unwatchedShows: List<PreparedFriendShowItem> = emptyList(),
     val isComputing: Boolean = false
@@ -4626,7 +4628,12 @@ private fun FriendsFullPageScreen(
             preparedLibrary = PreparedFriendLibraryState(isComputing = false)
             return@LaunchedEffect
         }
-        preparedLibrary = preparedLibrary.copy(isComputing = true)
+        // Only show loading placeholder when switching to a different friend's library!
+        // Never set isComputing = true when myMovies/myShows updates, otherwise LazyColumn temporarily
+        // drops all rows for 1 frame and resets the user's scroll position back to the top!
+        if (!preparedLibrary.friendUserId.equals(lib.userId, ignoreCase = true)) {
+            preparedLibrary = PreparedFriendLibraryState(friendUserId = lib.userId, isComputing = true)
+        }
         val computed = withContext(Dispatchers.Default) {
             // Build O(1) indexes over myMovies & myShows off the UI thread to prevent ANR on 600+ item libraries
             val myMovByExt = HashMap<String, MovieEntity>(myMovies.size * 2 + 1)
@@ -4698,14 +4705,24 @@ private fun FriendsFullPageScreen(
             }
 
             // Exclude ALL movies & series already in the viewer's library (completed, in_progress, watchlist, or stopped)
+            // Use stable item-identity keys (without list index) so LazyColumn preserves scroll position when items are marked!
+            val seenMovieKeys = HashSet<String>(lib.movies.size * 2 + 1)
             val unwatchedMovies = ArrayList<PreparedFriendMovieItem>(lib.movies.size)
             for (fm in lib.movies) {
                 val mine = matchMyMovie(fm)
                 if (mine == null) {
-                    unwatchedMovies.add(PreparedFriendMovieItem(movie = fm, myMovie = null))
+                    val baseKey = "f_mov_${lib.userId}_${fm.externalId}_${fm.tmdbId}_${fm.title}_${fm.year}"
+                    var uniqueKey = baseKey
+                    var dupIdx = 1
+                    while (!seenMovieKeys.add(uniqueKey)) {
+                        uniqueKey = "${baseKey}_$dupIdx"
+                        dupIdx++
+                    }
+                    unwatchedMovies.add(PreparedFriendMovieItem(stableKey = uniqueKey, movie = fm, myMovie = null))
                 }
             }
 
+            val seenShowKeys = HashSet<String>(lib.shows.size * 2 + 1)
             val unwatchedShows = ArrayList<PreparedFriendShowItem>(lib.shows.size)
             for (fs in lib.shows) {
                 val mine = matchMyShow(fs)
@@ -4718,11 +4735,18 @@ private fun FriendsFullPageScreen(
                     fs.userStatus
                 )
                 val fsEff = TvTimeProgressCalculator.deriveEffectiveShowStatus(fsProg, fs.userStatus)
+                val baseKey = "f_sh_${lib.userId}_${fs.externalId}_${fs.tmdbId}_${fs.tvmazeId}_${fs.title}_${fs.year}"
+                var uniqueKey = baseKey
+                var dupIdx = 1
+                while (!seenShowKeys.add(uniqueKey)) {
+                    uniqueKey = "${baseKey}_$dupIdx"
+                    dupIdx++
+                }
                 unwatchedShows.add(
                     PreparedFriendShowItem(
+                        stableKey = uniqueKey,
                         show = fs,
-                        myShow = mine?.show,
-                        myEff = mine?.eff.orEmpty(),
+                        myShow = null,
                         friendEff = fsEff,
                         watchedCount = fsProg.watchedCount,
                         totalCount = fsProg.totalEpisodes.coerceAtLeast(1)
@@ -4731,6 +4755,7 @@ private fun FriendsFullPageScreen(
             }
 
             PreparedFriendLibraryState(
+                friendUserId = lib.userId,
                 unwatchedMovies = unwatchedMovies,
                 unwatchedShows = unwatchedShows,
                 isComputing = false
@@ -5325,10 +5350,10 @@ private fun FriendsFullPageScreen(
                             }
                         }
                     } else {
-                        itemsIndexed(
+                        items(
                             items = filteredFriendMovies,
-                            key = { idx, row -> "f_mov_${selectedFriendId}_${idx}_${row.movie.externalId}" }
-                        ) { _, row ->
+                            key = { row -> row.stableKey }
+                        ) { row ->
                             val m = row.movie
                             val myMovie = row.myMovie
                             Surface(
@@ -5458,13 +5483,12 @@ private fun FriendsFullPageScreen(
                             }
                         }
                     } else {
-                        itemsIndexed(
+                        items(
                             items = filteredFriendShows,
-                            key = { idx, row -> "f_sh_${selectedFriendId}_${idx}_${row.show.externalId}" }
-                        ) { _, row ->
+                            key = { row -> row.stableKey }
+                        ) { row ->
                             val s = row.show
                             val myShow = row.myShow
-                            val myEff = row.myEff
                             val sEff = row.friendEff
                             val watchedCount = row.watchedCount
                             val totalCount = row.totalCount
