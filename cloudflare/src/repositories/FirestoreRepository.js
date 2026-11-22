@@ -189,6 +189,10 @@ export class FirestoreRepository {
     if (s.lastWatchedAt) {
       base.lastWatchedAt = String(s.lastWatchedAt);
     }
+    const hasRealEpisodeGuide = eps.length > 0 && !FirestoreRepository.isSyntheticEpisodeList(eps);
+    if (!hasRealEpisodeGuide && (Boolean(s.countOnly) || String(s.id || "").startsWith("imdb_tv_"))) {
+      base.countOnly = true;
+    }
 
     const todayIso = new Date().toISOString().slice(0, 10);
     const isDatedFutureEp = (ep) =>

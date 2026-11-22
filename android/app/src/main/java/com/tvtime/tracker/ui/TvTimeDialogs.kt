@@ -73,6 +73,16 @@ fun ShowDetailBottomSheet(
     var totalEpisodesOverride by remember(show.id, show.episodesJson) {
         mutableIntStateOf(initialCompacted.totalEpisodes)
     }
+    var isCountOnlyMode by remember(show.id, show.episodesJson) {
+        mutableStateOf(initialCompacted.countOnly || show.externalId.startsWith("imdb_tv_"))
+    }
+    var isLoadingGuide by remember(show.id) {
+        mutableStateOf(
+            initialCompacted.episodes.isEmpty() &&
+                !initialCompacted.countOnly &&
+                !show.externalId.startsWith("imdb_tv_")
+        )
+    }
     var showOverview by remember(show.id, show.overview) {
         mutableStateOf(show.overview)
     }
@@ -137,15 +147,17 @@ fun ShowDetailBottomSheet(
         nextCompletedSeasons: Map<Int, Int> = completedSeasons,
         nextTotalOverride: Int = totalEpisodesOverride,
         nextOverview: String = showOverview,
-        nextRuntimeOverride: Int = 0
+        nextRuntimeOverride: Int = 0,
+        nextCountOnly: Boolean = isCountOnlyMode
     ) {
         val cleanStatus = if (nextStatus == "preview") "interested" else nextStatus
         val airedCount = TvTimeProgressCalculator.filterAiredEpisodes(nextEpisodes).size
-        val serializedEpisodes = if (nextCompletedSeasons.isNotEmpty() || (nextTotalOverride > 0 && nextEpisodes.isEmpty())) {
+        val serializedEpisodes = if (nextCompletedSeasons.isNotEmpty() || ((nextTotalOverride > 0 || nextCountOnly) && nextEpisodes.isEmpty())) {
             TvTimeProgressCalculator.serializeCompactedMeta(
                 totalEpisodes = maxOf(nextTotalOverride, airedCount),
                 completedSeasons = nextCompletedSeasons,
-                episodes = nextEpisodes
+                episodes = nextEpisodes,
+                countOnly = nextCountOnly && nextEpisodes.isEmpty()
             )
         } else {
             TvTimeProgressCalculator.serializeEpisodeList(nextEpisodes)
@@ -197,12 +209,14 @@ fun ShowDetailBottomSheet(
         if (guide.overviewOverride.isNotBlank() && showOverview.isBlank()) {
             showOverview = guide.overviewOverride
         }
-        if (fetchedEps.isEmpty() && guide.totalEpisodesOverride > 1 && guide.totalEpisodesOverride > episodes.size) {
+        if (guide.countOnly && fetchedEps.isEmpty() && guide.totalEpisodesOverride > 1) {
             val prevTotal = totalEpisodesOverride
             totalEpisodesOverride = maxOf(guide.totalEpisodesOverride, prevTotal)
             episodes = emptyList()
+            isCountOnlyMode = true
+            isLoadingGuide = false
             if (fetchedCast.isNotEmpty()) castCsv = fetchedCast.joinToString(", ")
-            if (persistedShowId != 0L && (guide.totalEpisodesOverride > prevTotal || episodes.isNotEmpty())) {
+            if (persistedShowId != 0L && (guide.totalEpisodesOverride > prevTotal || !initialCompacted.countOnly)) {
                 persistUpdatedShow(
                     nextEpisodes = emptyList(),
                     nextWatchedSet = if (userStatus == "completed") emptySet() else watchedSet,
@@ -211,13 +225,16 @@ fun ShowDetailBottomSheet(
                     nextCompletedSeasons = completedSeasons,
                     nextTotalOverride = totalEpisodesOverride,
                     nextOverview = showOverview,
-                    nextRuntimeOverride = guide.runtimeMinsOverride
+                    nextRuntimeOverride = guide.runtimeMinsOverride,
+                    nextCountOnly = true
                 )
             }
         }
         val hadSeasonOne = episodes.any { it.season == 1 }
         val fetchedHasSeasonOne = fetchedEps.any { it.season == 1 }
         if (fetchedEps.isNotEmpty() && (fetchedEps.size > episodes.size || completedSeasons.isNotEmpty() || (!hadSeasonOne && fetchedHasSeasonOne))) {
+            isCountOnlyMode = false
+            isLoadingGuide = false
             val sortedFetched = fetchedEps.sortedWith(compareBy({ it.season }, { it.number }))
             val mergedCast = if (fetchedCast.isNotEmpty()) fetchedCast.joinToString(", ") else castCsv
             val isOngoingShow = !show.status.equals("Ended", ignoreCase = true) &&
@@ -260,10 +277,12 @@ fun ShowDetailBottomSheet(
                     nextCastCsv = mergedCast,
                     nextCompletedSeasons = emptyMap(),
                     nextTotalOverride = airedFetchedCount,
-                    nextOverview = showOverview
+                    nextOverview = showOverview,
+                    nextCountOnly = false
                 )
             }
         }
+        isLoadingGuide = false
     }
 
     val prog = remember(episodes, watchedSet, userStatus, totalEpisodesOverride, completedSeasons) {
@@ -682,9 +701,21 @@ fun ShowDetailBottomSheet(
                     }
                 }
 
-                val isCountOnlySeries = episodes.isEmpty() ||
-                    (episodes.size == 1 && totalEpisodesOverride > 1 && episodes.first().title.equals("Pilot", ignoreCase = true))
-                if (isCountOnlySeries) {
+                val isCountOnlySeries = isCountOnlyMode && episodes.isEmpty()
+                if (isLoadingGuide && !isCountOnlySeries && episodes.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Loading seasons & episodes...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TvTimePalette.TextSecondary
+                        )
+                    }
+                } else if (isCountOnlySeries) {
                     val fixedTotal = prog.totalEpisodes.coerceAtLeast(1)
                     var watchedInputText by remember(prog.watchedCount) { mutableStateOf(prog.watchedCount.toString()) }
 

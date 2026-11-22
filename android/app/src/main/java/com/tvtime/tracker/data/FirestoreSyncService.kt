@@ -109,15 +109,18 @@ object FirestoreSyncService {
                 if (sNum > 0 && cnt > 0) compMap[sNum] = cnt
             }
         }
+        val extId = s.optString("id", "show_$fallbackIdx")
         val rawTotal = s.optInt("totalEpisodes", 0).coerceAtLeast(0)
+        val isCountOnly = parsedEps.isEmpty() && (s.optBoolean("countOnly", false) || extId.startsWith("imdb_tv_"))
         val episodesJson = TvTimeProgressCalculator.serializeCompactedMeta(
             totalEpisodes = rawTotal,
             completedSeasons = compMap,
-            episodes = parsedEps
+            episodes = parsedEps,
+            countOnly = isCountOnly
         )
         return ShowEntity(
             userId = userId,
-            externalId = s.optString("id", "show_$fallbackIdx"),
+            externalId = extId,
             tvmazeId = s.optInt("tvmazeId", 0),
             tmdbId = s.optInt("tmdbId", 0),
             title = s.optString("title", "Show"),
@@ -203,6 +206,9 @@ object FirestoreSyncService {
             put("posterUrl", s.posterUrl)
             put("userStatus", effStatus)
             if (s.lastWatchedAt.isNotBlank()) put("lastWatchedAt", s.lastWatchedAt)
+            if (meta.episodes.isEmpty() && (meta.countOnly || s.externalId.startsWith("imdb_tv_"))) {
+                put("countOnly", true)
+            }
         }
 
         val earliestFutureOverall = meta.episodes

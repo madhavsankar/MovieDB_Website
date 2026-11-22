@@ -107,7 +107,8 @@ data class SearchResultItem(
     val posterUrl: String = "",
     val overview: String = "",
     val imdbUrl: String = "",
-    val totalEpisodes: Int = 0
+    val totalEpisodes: Int = 0,
+    val countOnly: Boolean = false
 )
 
 data class SearchPageResult(
@@ -118,7 +119,8 @@ data class SearchPageResult(
 data class CompactedShowMeta(
     val totalEpisodes: Int = 0,
     val completedSeasons: Map<Int, Int> = emptyMap(),
-    val episodes: List<EpisodeModel> = emptyList()
+    val episodes: List<EpisodeModel> = emptyList(),
+    val countOnly: Boolean = false
 )
 
 object TvTimeProgressCalculator {
@@ -344,7 +346,8 @@ object TvTimeProgressCalculator {
                 CompactedShowMeta(
                     totalEpisodes = maxOf(total, compMap.values.sum() + eps.size),
                     completedSeasons = compMap,
-                    episodes = eps
+                    episodes = eps,
+                    countOnly = root.optBoolean("countOnly", false) && eps.isEmpty()
                 )
             } else {
                 val arr = JSONArray(trimmed)
@@ -353,7 +356,7 @@ object TvTimeProgressCalculator {
                     val obj = arr.optJSONObject(i) ?: continue
                     eps.add(EpisodeModel.fromJson(obj))
                 }
-                CompactedShowMeta(totalEpisodes = eps.size, completedSeasons = emptyMap(), episodes = eps)
+                CompactedShowMeta(totalEpisodes = eps.size, completedSeasons = emptyMap(), episodes = eps, countOnly = false)
             }
         } catch (_: Exception) {
             CompactedShowMeta()
@@ -363,17 +366,20 @@ object TvTimeProgressCalculator {
     fun serializeCompactedMeta(
         totalEpisodes: Int,
         completedSeasons: Map<Int, Int>,
-        episodes: List<EpisodeModel>
+        episodes: List<EpisodeModel>,
+        countOnly: Boolean = false
     ): String {
         val cleanComp = completedSeasons.filter { it.key > 0 && it.value > 0 }
         val cleanTotal = maxOf(totalEpisodes, cleanComp.values.sum() + episodes.size)
-        if (cleanComp.isEmpty() && (cleanTotal <= 0 || cleanTotal == episodes.size)) {
+        val effectiveCountOnly = countOnly && episodes.isEmpty()
+        if (!effectiveCountOnly && cleanComp.isEmpty() && (cleanTotal <= 0 || cleanTotal == episodes.size)) {
             return serializeEpisodeList(episodes)
         }
         val arr = JSONArray()
         episodes.forEach { arr.put(it.toJson()) }
         return JSONObject().apply {
             put("totalEpisodes", cleanTotal)
+            if (effectiveCountOnly) put("countOnly", true)
             if (cleanComp.isNotEmpty()) {
                 val csObj = JSONObject()
                 cleanComp.toSortedMap().forEach { (sNum, cnt) -> csObj.put(sNum.toString(), cnt) }

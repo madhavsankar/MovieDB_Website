@@ -708,11 +708,13 @@ fun TvTimeMainScreen(
                             val fallbackEps = listOf(
                                 EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
                             )
-                            val initialEpsJson = if (item.totalEpisodes > 1) {
+                            val isInitialCountOnly = item.countOnly || item.externalId.startsWith("imdb_tv_")
+                            val initialEpsJson = if (isInitialCountOnly && item.totalEpisodes > 1) {
                                 TvTimeProgressCalculator.serializeCompactedMeta(
                                     totalEpisodes = item.totalEpisodes,
                                     completedSeasons = emptyMap(),
-                                    episodes = emptyList()
+                                    episodes = emptyList(),
+                                    countOnly = true
                                 )
                             } else {
                                 TvTimeProgressCalculator.serializeEpisodeList(fallbackEps)
@@ -893,12 +895,13 @@ fun TvTimeMainScreen(
                             val fallbackEps = listOf(
                                 EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
                             )
-                            val isInitialCountOnly = item.totalEpisodes > 1
-                            val initialEpsJson = if (isInitialCountOnly) {
+                            val isInitialCountOnly = item.countOnly || item.externalId.startsWith("imdb_tv_")
+                            val initialEpsJson = if (isInitialCountOnly && item.totalEpisodes > 1) {
                                 TvTimeProgressCalculator.serializeCompactedMeta(
                                     totalEpisodes = item.totalEpisodes,
                                     completedSeasons = emptyMap(),
-                                    episodes = emptyList()
+                                    episodes = emptyList(),
+                                    countOnly = true
                                 )
                             } else {
                                 TvTimeProgressCalculator.serializeEpisodeList(fallbackEps)

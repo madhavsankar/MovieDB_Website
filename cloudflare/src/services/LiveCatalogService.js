@@ -1755,9 +1755,14 @@ export class LiveCatalogService {
   static isIndianSeriesMetadata(text) {
     const s = String(text || "");
     if (!s) return false;
-    return /\b(india|indian|malayalam|tamil|telugu|hindi|kannada|bengali|marathi|gujarati|punjabi|odia|assamese|urdu|kerala|chennai|mumbai|hyderabad|kolkata|bengaluru|asianet|surya\s*tv|mazhavil|flowers\s*tv|kairali|amrita\s*tv|jaihind|sun\s*tv|star\s*vijay|vijay\s*tv|zee\s*tamil|zee\s*keralam|zee\s*telugu|zee\s*kannada|zee\s*marathi|zee\s*bangla|zee\s*tv|zee5|kalaignar|star\s*maa|etv|gemini\s*tv|udaya\s*tv|star\s*plus|starplus|colors\s*tv|colors\s*kannada|colors\s*marathi|colors\s*tamil|colors\s*bangla|sony\s*sab|sony\s*entertainment|sonyliv|star\s*bharat|star\s*jalsha|star\s*pravah|doordarshan|dd\s*national|hotstar|jiohotstar)\b/i.test(
+    return /\b(india|indian|malayalam|tamil|telugu|hindi|kannada|bengali|marathi|gujarati|punjabi|odia|assamese|urdu)\b/i.test(
       s
     );
+  }
+
+  static hasIndianWikiCategories(categories) {
+    if (!Array.isArray(categories)) return false;
+    return categories.some((c) => LiveCatalogService.isIndianSeriesMetadata(c?.title || ""));
   }
 
   static parseWikiDateMs(raw) {
@@ -1899,12 +1904,20 @@ export class LiveCatalogService {
       if (mYr && !out.year) {
         out.year = parseInt(mYr[1], 10);
       }
-      const mNet = wt.match(/network\s*=\s*(?:\[\[([^\]|]+)(?:\|[^\]]+)?\]\]|([^\n|<{}]+))/i);
-      if (mNet && !out.network) {
-        const netStr = String(mNet[1] || mNet[2] || "").trim();
-        if (netStr && netStr.length <= 40) {
-          out.network = netStr;
-          if (LiveCatalogService.isIndianSeriesMetadata(netStr)) out.isIndian = true;
+      const mCountry = wt.match(/\|\s*country\s*=\s*([^\n|]+)/i);
+      if (mCountry && LiveCatalogService.isIndianSeriesMetadata(mCountry[1])) {
+        out.isIndian = true;
+      }
+      const mNetBlock = wt.match(/\|\s*network\s*=\s*([\s\S]{1,260}?)(?=\n\s*\||\n\}\})/i);
+      if (mNetBlock && !out.network) {
+        const block = mNetBlock[1];
+        const linkMatch = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/.exec(block);
+        const rawNetStr = linkMatch
+          ? String(linkMatch[2] || linkMatch[1] || "").trim()
+          : String(block.replace(/\{\{[^|}]*\|?/g, "").replace(/\}\}/g, "").split(/\n|\*/)[0] || "").trim();
+        const cleanNetStr = rawNetStr.replace(/\s*\(TV channel\)\s*/i, "").trim();
+        if (cleanNetStr && cleanNetStr.length <= 45) {
+          out.network = cleanNetStr;
         }
       }
       if (/last_aired\s*=\s*[^\n]*present/i.test(wt)) {
@@ -1914,7 +1927,7 @@ export class LiveCatalogService {
       }
     };
 
-    // 1. Direct Wikipedia Infobox lookup (e.g. "Parasparam (TV series)" -> 1524 eps, "Uppum Mulakum" -> 2400 eps, "Banoo Main Teri Dulhann" -> 700 eps)
+    // 1. Direct Wikipedia Infobox lookup
     let matchedInfoboxPageId = 0;
     let matchedInfoboxTitle = "";
     if (cleanTitle) {
@@ -1927,7 +1940,7 @@ export class LiveCatalogService {
         }
       }
       try {
-        const directUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(candidates.join("|"))}&prop=revisions|extracts|pageimages&exintro=1&explaintext=1&rvprop=content&rvsection=0&piprop=thumbnail&pithumbsize=500&format=json&redirects=1&origin=*`;
+        const directUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(candidates.join("|"))}&prop=revisions|extracts|pageimages|categories&cllimit=30&exintro=1&explaintext=1&rvprop=content&rvsection=0&piprop=thumbnail&pithumbsize=500&format=json&redirects=1&origin=*`;
         const resp = await fetchImpl(directUrl, { headers: wikiHeaders });
         if (resp && resp.ok) {
           const data = await resp.json();
@@ -1938,6 +1951,7 @@ export class LiveCatalogService {
             const wt = rev?.slots?.main?.["*"] || rev?.["*"] || "";
             if (!/infobox\s+television/i.test(wt) && !/num_episodes/i.test(wt)) continue;
             parseInfoboxWikitext(wt);
+            if (LiveCatalogService.hasIndianWikiCategories(page.categories)) out.isIndian = true;
             if (page.extract) {
               if (LiveCatalogService.isIndianSeriesMetadata(page.extract)) out.isIndian = true;
               if (!out.overview) out.overview = String(page.extract).trim().slice(0, 500);
@@ -1954,8 +1968,7 @@ export class LiveCatalogService {
       } catch (_) {}
     }
 
-    // 1b. If an Indian Infobox television page lacked `num_episodes` (e.g. "Idea Star Singer" -> "Star Singer"),
-    // parse its full Wikipedia Season Table (episode column or season date-range x telecast frequency)!
+    // 1b. If an Indian Infobox television page lacked `num_episodes`, parse its full Wikipedia Season Table generically
     if (out.totalEpisodes === 0 && out.isIndian && matchedInfoboxPageId > 0) {
       try {
         const fullUrl = `https://en.wikipedia.org/w/api.php?action=query&pageids=${matchedInfoboxPageId}&prop=revisions&rvprop=content&format=json&origin=*`;
@@ -1966,16 +1979,15 @@ export class LiveCatalogService {
           const fRev = fPage?.revisions?.[0];
           const fullWt = fRev?.slots?.main?.["*"] || fRev?.["*"] || "";
           const tableEps = LiveCatalogService.parseSeasonTableEpisodes(fullWt, cleanTitle, matchedInfoboxTitle);
-          if (tableEps >= 5) {
+          if (tableEps >= 15) {
             out.totalEpisodes = tableEps;
-            if (!out.network && /\basianet\b/i.test(fullWt.slice(0, 1500))) out.network = "Asianet";
             if (!out.status) out.status = "Ended";
           }
         }
       } catch (_) {}
     }
 
-    // 2. Wikipedia Broadcaster Program List / Search Fallback (e.g. "Chandanamazha" -> "List of programs broadcast by Asianet" -> 1173 eps)
+    // 2. Wikipedia Broadcaster Program List / Search Fallback
     if (out.totalEpisodes === 0 && cleanTitle) {
       try {
         const sQuery = `"${cleanTitle}" episodes`;
@@ -1988,7 +2000,7 @@ export class LiveCatalogService {
             .filter(Boolean)
             .sort((a, b) => (/^list of /i.test(b) ? 1 : 0) - (/^list of /i.test(a) ? 1 : 0));
           if (hits.length > 0) {
-            const pUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(hits.slice(0, 4).join("|"))}&prop=revisions&rvprop=content&format=json&redirects=1&origin=*`;
+            const pUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(hits.slice(0, 4).join("|"))}&prop=revisions|categories&cllimit=30&rvprop=content&format=json&redirects=1&origin=*`;
             const pResp = await fetchImpl(pUrl, { headers: wikiHeaders });
             if (pResp && pResp.ok) {
               const pData = await pResp.json();
@@ -1999,9 +2011,10 @@ export class LiveCatalogService {
                 const wt = rev?.slots?.main?.["*"] || rev?.["*"] || "";
                 if (!wt) continue;
                 const pageTitleStr = String(page?.title || "");
+                const pageHasIndianCat = LiveCatalogService.hasIndianWikiCategories(page?.categories);
                 parseInfoboxWikitext(wt);
                 if (out.totalEpisodes > 0) {
-                  if (LiveCatalogService.isIndianSeriesMetadata(pageTitleStr)) out.isIndian = true;
+                  if (pageHasIndianCat || LiveCatalogService.isIndianSeriesMetadata(pageTitleStr)) out.isIndian = true;
                   break;
                 }
                 const rows = wt.split(/\n\|-/);
@@ -2015,15 +2028,16 @@ export class LiveCatalogService {
                     const mNum = /^([0-9]{2,5})$/.exec(cells[ci].replace(/,/g, ""));
                     if (mNum) {
                       const val = parseInt(mNum[1], 10);
-                      if (val >= 5 && val <= 25000 && val !== Number(year)) {
+                      if (val >= 15 && val <= 25000 && val !== Number(year)) {
                         out.totalEpisodes = val;
                         out.status = out.status || "Ended";
                         const netMatch = /broadcast by\s+(.+)$/i.exec(pageTitleStr);
                         if (netMatch && !out.network) out.network = netMatch[1].trim();
                         if (
+                          pageHasIndianCat ||
                           LiveCatalogService.isIndianSeriesMetadata(pageTitleStr) ||
                           LiveCatalogService.isIndianSeriesMetadata(row) ||
-                          LiveCatalogService.isIndianSeriesMetadata(wt.slice(0, 1200))
+                          LiveCatalogService.isIndianSeriesMetadata(wt.slice(0, 1500))
                         ) {
                           out.isIndian = true;
                         }
@@ -2330,58 +2344,52 @@ export class LiveCatalogService {
             }
             episodes.sort((a, b) => (a.season - b.season) || (a.number - b.number));
 
-            // When TMDB has 0-3 stub episodes (including TMDB 'IO' country typos like Banoo Main Teri Dulhann & Idea Star Singer)
-            // OR an incomplete <= 40-episode stub on an Indian serial (e.g. Uppum Mulakum: 21 on TMDB vs 2,400+ on Wikipedia),
-            // check Wikipedia/Wikidata for the confirmed total episode count and switch to clean count-only mode!
+            // Count-only mode applies ONLY to Indian series that do NOT have detailed multi-season episode guides on TMDB
+            // (never multi-season OTT shows like The Family Man or Mirzapur).
             const indianLangSet = new Set(["hi", "ml", "ta", "te", "kn", "bn", "mr", "pa", "gu", "ur", "or", "as"]);
             const originCountries = Array.isArray(show.origin_country) ? show.origin_country.map((c) => String(c || "").toUpperCase()) : [];
             const origLang = String(show.original_language || "").trim().toLowerCase();
-            const hasEmptySeasons = (show.seasons || []).some((s) => Number(s?.season_number) >= 1 && Number(s?.episode_count || 0) === 0);
-            const tmdbIsIndian =
-              originCountries.includes("IN") ||
-              originCountries.includes("IO") ||
-              indianLangSet.has(origLang) ||
-              LiveCatalogService.isIndianSeriesMetadata(rawNet);
-            const shouldCheckWikiCountOnly =
-              episodes.length <= 3 || (tmdbIsIndian && (episodes.length <= 40 || hasEmptySeasons));
-            if (shouldCheckWikiCountOnly) {
-              const tmdbExplicitlyNonIndian =
-                episodes.length > 0 &&
-                !tmdbIsIndian &&
-                ((originCountries.length > 0 && !originCountries.includes("IN") && !originCountries.includes("IO")) ||
-                  (origLang.length > 0 && !indianLangSet.has(origLang)));
-              if (!tmdbExplicitlyNonIndian) {
-                const wikiMeta = await LiveCatalogService.lookupWikipediaShowMeta({
-                  title: show.name || cleanTitle,
-                  year: firstAir ? year : 0,
-                  fetchImpl,
-                });
-                const wikiConfirmedTotal = Number(wikiMeta.totalEpisodes) || 0;
-                const meetsCountThreshold =
-                  episodes.length <= 3
-                    ? wikiConfirmedTotal >= 5 && wikiConfirmedTotal > episodes.length
-                    : wikiConfirmedTotal >= Math.max(25, episodes.length * 3);
-                if ((tmdbIsIndian || wikiMeta.isIndian) && meetsCountThreshold) {
-                  const hasExplicitTmdbRt = Array.isArray(show.episode_run_time) && Number(show.episode_run_time[0]) > 0;
-                  return {
-                    id: `tmdb_tv_${show.id}`,
-                    tvmazeId: 0,
-                    tmdbId: show.id,
-                    title: show.name || "Untitled Show",
-                    year: firstAir ? year : wikiMeta.year || year,
-                    network: wikiMeta.network && network === "Streaming" ? wikiMeta.network : network,
-                    status: wikiMeta.status || show.status || "Running",
-                    runtimeMins: hasExplicitTmdbRt ? defaultRuntime : wikiMeta.runtimeMins || 22,
-                    genres: (show.genres || []).map((g) => g?.name).filter(Boolean),
-                    cast: castList,
-                    rating: show.vote_average ? Math.round(Number(show.vote_average) * 10) / 10 : 8.0,
-                    posterUrl: posterUrl || wikiMeta.posterUrl || "",
-                    overview: stripHtml(show.overview) || wikiMeta.overview || "",
-                    totalEpisodes: wikiConfirmedTotal,
-                    countOnly: true,
-                    episodes: [],
-                  };
-                }
+            const populatedSeasonCount = new Set(episodes.map((e) => Number(e.season) || 1)).size;
+            const hasDetailedSeasons = populatedSeasonCount >= 2;
+            const tmdbIsIndian = originCountries.includes("IN") || indianLangSet.has(origLang);
+            const tmdbExplicitlyNonIndian =
+              episodes.length > 0 &&
+              !tmdbIsIndian &&
+              ((originCountries.length > 0 && !originCountries.includes("IN") && !originCountries.includes("IO")) ||
+                (origLang.length > 0 && !indianLangSet.has(origLang)));
+            const lacksDetailedGuide =
+              !hasDetailedSeasons && (episodes.length <= 1 || (tmdbIsIndian && episodes.length <= 35));
+            if (lacksDetailedGuide && !tmdbExplicitlyNonIndian) {
+              const wikiMeta = await LiveCatalogService.lookupWikipediaShowMeta({
+                title: show.name || cleanTitle,
+                year: firstAir ? year : 0,
+                fetchImpl,
+              });
+              const wikiConfirmedTotal = Number(wikiMeta.totalEpisodes) || 0;
+              const meetsSerialThreshold =
+                episodes.length <= 1
+                  ? wikiConfirmedTotal >= 15
+                  : wikiConfirmedTotal >= 50 && wikiConfirmedTotal >= episodes.length * 4;
+              if ((tmdbIsIndian || wikiMeta.isIndian) && meetsSerialThreshold) {
+                const hasExplicitTmdbRt = Array.isArray(show.episode_run_time) && Number(show.episode_run_time[0]) > 0;
+                return {
+                  id: `tmdb_tv_${show.id}`,
+                  tvmazeId: 0,
+                  tmdbId: show.id,
+                  title: show.name || "Untitled Show",
+                  year: firstAir ? year : wikiMeta.year || year,
+                  network: wikiMeta.network && network === "Streaming" ? wikiMeta.network : network,
+                  status: wikiMeta.status || show.status || "Running",
+                  runtimeMins: hasExplicitTmdbRt ? defaultRuntime : wikiMeta.runtimeMins || 22,
+                  genres: (show.genres || []).map((g) => g?.name).filter(Boolean),
+                  cast: castList,
+                  rating: show.vote_average ? Math.round(Number(show.vote_average) * 10) / 10 : 8.0,
+                  posterUrl: posterUrl || wikiMeta.posterUrl || "",
+                  overview: stripHtml(show.overview) || wikiMeta.overview || "",
+                  totalEpisodes: wikiConfirmedTotal,
+                  countOnly: true,
+                  episodes: [],
+                };
               }
             }
 

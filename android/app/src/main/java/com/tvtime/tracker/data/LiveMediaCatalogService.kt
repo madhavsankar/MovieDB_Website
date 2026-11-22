@@ -1450,7 +1450,8 @@ object LiveMediaCatalogService {
                                     rating = 8.0,
                                     posterUrl = poster,
                                     overview = wiki.overviewOverride.ifBlank { if (stars.isNotBlank()) "TV Series · Starring $stars" else "TV Series" },
-                                    totalEpisodes = wiki.totalEpisodesOverride
+                                    totalEpisodes = wiki.totalEpisodesOverride,
+                                    countOnly = true
                                 )
                             )
                         } else if (tmdbMovieCount < 5 && (qid == "movie" || qid == "feature" || qid == "tvmovie")) {
@@ -1535,19 +1536,22 @@ object LiveMediaCatalogService {
         val posterOverride: String = "",
         val networkOverride: String = "",
         val statusOverride: String = "",
-        val isIndianShow: Boolean = false
+        val isIndianShow: Boolean = false,
+        val countOnly: Boolean = false
     )
 
     private val WIKI_NUM_EPS_REGEX = Regex("num_episodes\\s*=\\s*(?:\\{\\{[^}|]*\\|)?\\s*([0-9][0-9,]*)", RegexOption.IGNORE_CASE)
     private val WIKI_RUNTIME_REGEX = Regex("runtime\\s*=\\s*[^0-9\\n]{0,25}([0-9]{2,3})(?:\\s*[-\\u2013\\u2014]\\s*([0-9]{2,3}))?", RegexOption.IGNORE_CASE)
-    private val WIKI_NETWORK_REGEX = Regex("network\\s*=\\s*(?:\\[\\[([^\\]|]+)(?:\\|[^\\]]+)?\\]\\]|([^\\n|<{}]+))", RegexOption.IGNORE_CASE)
+    private val WIKI_COUNTRY_REGEX = Regex("\\|\\s*country\\s*=\\s*([^\\n|]+)", RegexOption.IGNORE_CASE)
+    private val WIKI_NETWORK_BLOCK_REGEX = Regex("\\|\\s*network\\s*=\\s*([\\s\\S]{1,260}?)(?=\\n\\s*\\||\\n\\}\\})", RegexOption.IGNORE_CASE)
+    private val WIKI_LINK_REGEX = Regex("\\[\\[([^\\]|]+)(?:\\|([^\\]]+))?\\]\\]")
     private val WIKI_REF_TAG_REGEX = Regex("<ref[\\s\\S]*?(?:</ref>|/>)", RegexOption.IGNORE_CASE)
     private val WIKI_TABLE_REGEX = Regex("\\{\\|[\\s\\S]*?\\|\\}")
     private val WIKI_DATE_DMY_REGEX = Regex("\\b([0-9]{1,2})\\s+([A-Za-z]+)\\s+([12][0-9]{3})\\b")
     private val WIKI_DATE_MDY_REGEX = Regex("\\b([A-Za-z]+)\\s+([0-9]{1,2}),?\\s+([12][0-9]{3})\\b")
     private val PURE_DIGITS_REGEX = Regex("^([0-9]{2,5})$")
     private val INDIAN_SERIES_META_REGEX = Regex(
-        "\\b(india|indian|malayalam|tamil|telugu|hindi|kannada|bengali|marathi|gujarati|punjabi|odia|assamese|urdu|kerala|chennai|mumbai|hyderabad|kolkata|bengaluru|asianet|surya\\s*tv|mazhavil|flowers\\s*tv|kairali|amrita\\s*tv|jaihind|sun\\s*tv|star\\s*vijay|vijay\\s*tv|zee\\s*tamil|zee\\s*keralam|zee\\s*telugu|zee\\s*kannada|zee\\s*marathi|zee\\s*bangla|zee\\s*tv|zee5|kalaignar|star\\s*maa|etv|gemini\\s*tv|udaya\\s*tv|star\\s*plus|starplus|colors\\s*tv|colors\\s*kannada|colors\\s*marathi|colors\\s*tamil|colors\\s*bangla|sony\\s*sab|sony\\s*entertainment|sonyliv|star\\s*bharat|star\\s*jalsha|star\\s*pravah|doordarshan|dd\\s*national|hotstar|jiohotstar)\\b",
+        "\\b(india|indian|malayalam|tamil|telugu|hindi|kannada|bengali|marathi|gujarati|punjabi|odia|assamese|urdu)\\b",
         RegexOption.IGNORE_CASE
     )
     private val INDIAN_LANG_SET = setOf("hi", "ml", "ta", "te", "kn", "bn", "mr", "pa", "gu", "ur", "or", "as")
@@ -1556,6 +1560,14 @@ object LiveMediaCatalogService {
 
     private fun isIndianSeriesMetadata(text: String): Boolean =
         text.isNotBlank() && INDIAN_SERIES_META_REGEX.containsMatchIn(text)
+
+    private fun hasIndianWikiCategories(cats: JSONArray?): Boolean {
+        if (cats == null) return false
+        for (i in 0 until cats.length()) {
+            if (isIndianSeriesMetadata(cats.optJSONObject(i)?.optString("title", "").orEmpty())) return true
+        }
+        return false
+    }
 
     private fun parseWikiDateEpochDays(raw: String): Long {
         val clean = raw.replace("[[", " ").replace("]]", " ").replace(Regex("<[^>]*>"), " ").trim()
@@ -1680,11 +1692,22 @@ object LiveMediaCatalogService {
                     runtime = if (r2 in r1..240) Math.round((r1 + r2) / 2.0).toInt() else r1
                 }
             }
-            WIKI_NETWORK_REGEX.find(wt)?.let { m ->
-                val netStr = (m.groupValues.getOrNull(1).orEmpty().ifBlank { m.groupValues.getOrNull(2).orEmpty() }).trim()
-                if (netStr.isNotEmpty() && netStr.length <= 40 && network.isEmpty()) {
-                    network = netStr
-                    if (isIndianSeriesMetadata(netStr)) isIndian = true
+            WIKI_COUNTRY_REGEX.find(wt)?.let { mc ->
+                if (isIndianSeriesMetadata(mc.groupValues.getOrNull(1).orEmpty())) isIndian = true
+            }
+            WIKI_NETWORK_BLOCK_REGEX.find(wt)?.let { mb ->
+                if (network.isEmpty()) {
+                    val block = mb.groupValues.getOrNull(1).orEmpty()
+                    val lm = WIKI_LINK_REGEX.find(block)
+                    val rawNetStr = if (lm != null) {
+                        lm.groupValues.getOrNull(2).orEmpty().ifBlank { lm.groupValues.getOrNull(1).orEmpty() }.trim()
+                    } else {
+                        block.replace(Regex("\\{\\{[^|}]*\\|?"), "").replace("}}", "").lineSequence().firstOrNull().orEmpty().trimStart('*', ' ').trim()
+                    }
+                    val cleanNetStr = rawNetStr.replace(Regex("\\s*\\(TV channel\\)\\s*", RegexOption.IGNORE_CASE), "").trim()
+                    if (cleanNetStr.isNotEmpty() && cleanNetStr.length <= 45) {
+                        network = cleanNetStr
+                    }
                 }
             }
             if (wt.contains("present", ignoreCase = true) && wt.contains("last_aired", ignoreCase = true)) {
@@ -1710,7 +1733,7 @@ object LiveMediaCatalogService {
                 }
                 val encTitles = URLEncoder.encode(cands.joinToString("|"), "UTF-8")
                 val root = openWiki(
-                    "https://en.wikipedia.org/w/api.php?action=query&titles=$encTitles&prop=revisions|extracts|pageimages&exintro=1&explaintext=1&rvprop=content&rvsection=0&piprop=thumbnail&pithumbsize=500&format=json&redirects=1&origin=*"
+                    "https://en.wikipedia.org/w/api.php?action=query&titles=$encTitles&prop=revisions|extracts|pageimages|categories&cllimit=30&exintro=1&explaintext=1&rvprop=content&rvsection=0&piprop=thumbnail&pithumbsize=500&format=json&redirects=1&origin=*"
                 )
                 val pagesObj = root?.optJSONObject("query")?.optJSONObject("pages")
                 if (pagesObj != null) {
@@ -1732,6 +1755,7 @@ object LiveMediaCatalogService {
                             continue
                         }
                         parseInfobox(wt)
+                        if (hasIndianWikiCategories(page.optJSONArray("categories"))) isIndian = true
                         val extStr = page.optString("extract", "").trim()
                         if (isIndianSeriesMetadata(extStr) || isIndianSeriesMetadata(page.optString("title", ""))) {
                             isIndian = true
@@ -1746,7 +1770,7 @@ object LiveMediaCatalogService {
             } catch (_: Exception) {}
         }
 
-        // 1b. Parse full Wikipedia Season Table when Indian Infobox lacked `num_episodes` (e.g. Idea Star Singer -> Star Singer)
+        // 1b. Parse full Wikipedia Season Table generically when Indian Infobox lacked `num_episodes`
         if (totalEps == 0 && isIndian && matchedInfoboxPageId > 0) {
             try {
                 val fRoot = openWiki("https://en.wikipedia.org/w/api.php?action=query&pageids=$matchedInfoboxPageId&prop=revisions&rvprop=content&format=json&origin=*")
@@ -1756,15 +1780,14 @@ object LiveMediaCatalogService {
                     ?: fRev?.optString("*", "")
                     ?: ""
                 val tableEps = parseSeasonTableEpisodes(fullWt, cleanTitle, matchedInfoboxTitle)
-                if (tableEps >= 5) {
+                if (tableEps >= 15) {
                     totalEps = tableEps
-                    if (network.isEmpty() && fullWt.take(1500).contains("asianet", ignoreCase = true)) network = "Asianet"
                     if (status.isEmpty()) status = "Ended"
                 }
             } catch (_: Exception) {}
         }
 
-        // 2. Wikipedia Broadcaster Program List / Search Fallback (e.g. Chandanamazha -> List of programs broadcast by Asianet -> 1173 eps)
+        // 2. Wikipedia Broadcaster Program List / Search Fallback
         if (totalEps == 0 && cleanTitle.isNotEmpty()) {
             try {
                 val sQuery = URLEncoder.encode("\"$cleanTitle\" episodes", "UTF-8")
@@ -1775,7 +1798,7 @@ object LiveMediaCatalogService {
                     .sortedByDescending { if (it.startsWith("List of ", ignoreCase = true)) 1 else 0 }
                 if (hitTitles.isNotEmpty()) {
                     val pRoot = openWiki(
-                        "https://en.wikipedia.org/w/api.php?action=query&titles=${URLEncoder.encode(hitTitles.take(4).joinToString("|"), "UTF-8")}&prop=revisions&rvprop=content&format=json&redirects=1&origin=*"
+                        "https://en.wikipedia.org/w/api.php?action=query&titles=${URLEncoder.encode(hitTitles.take(4).joinToString("|"), "UTF-8")}&prop=revisions|categories&cllimit=30&rvprop=content&format=json&redirects=1&origin=*"
                     )
                     val pagesObj = pRoot?.optJSONObject("query")?.optJSONObject("pages")
                     val titleRowRe = Regex("(?:'+'|\\[\\[(?:[^\\]|]*\\|)?)" + Regex.escape(cleanTitle) + "(?:'+'|\\]\\])", RegexOption.IGNORE_CASE)
@@ -1789,9 +1812,10 @@ object LiveMediaCatalogService {
                                 ?: ""
                             if (wt.isBlank()) continue
                             val pTitle = page.optString("title", "")
+                            val pageHasIndCat = hasIndianWikiCategories(page.optJSONArray("categories"))
                             parseInfobox(wt)
                             if (totalEps > 0) {
-                                if (isIndianSeriesMetadata(pTitle)) isIndian = true
+                                if (pageHasIndCat || isIndianSeriesMetadata(pTitle)) isIndian = true
                                 break
                             }
                             val rows = wt.split("\n|-")
@@ -1800,13 +1824,13 @@ object LiveMediaCatalogService {
                                 val cells = row.replace(WIKI_REF_TAG_REGEX, "").split("\n|").map { it.trim() }
                                 for (ci in cells.indices.reversed()) {
                                     val candNum = PURE_DIGITS_REGEX.find(cells[ci].replace(",", ""))?.groupValues?.getOrNull(1)?.toIntOrNull()
-                                    if (candNum != null && candNum in 5..25000 && candNum != year) {
+                                    if (candNum != null && candNum in 15..25000 && candNum != year) {
                                         totalEps = candNum
                                         if (status.isEmpty()) status = "Ended"
                                         if (pTitle.contains("broadcast by ", ignoreCase = true) && network.isEmpty()) {
                                             network = pTitle.substringAfter("broadcast by ", "").trim()
                                         }
-                                        if (isIndianSeriesMetadata(pTitle) || isIndianSeriesMetadata(row) || isIndianSeriesMetadata(wt.take(1200))) {
+                                        if (pageHasIndCat || isIndianSeriesMetadata(pTitle) || isIndianSeriesMetadata(row) || isIndianSeriesMetadata(wt.take(1500))) {
                                             isIndian = true
                                         }
                                         break
@@ -1868,28 +1892,32 @@ object LiveMediaCatalogService {
         } else {
             fetchFullShowEpisodesAndCast(tvmazeId = tvmazeId, tmdbId = tmdbId, title = title, externalId = externalId)
         }
+        val populatedSeasons = eps.map { it.season }.toSet().size
+        val hasDetailedSeasons = populatedSeasons >= 2
         val explicitlyNonIndian = eps.isNotEmpty() && resolvedTmdbId > 0 && knownNonIndianTmdbShows.contains(resolvedTmdbId)
         val explicitlyIndian = resolvedTmdbId > 0 && knownIndianTmdbShows.contains(resolvedTmdbId)
-        val shouldCheckWiki = !explicitlyNonIndian && (eps.size <= 3 || (explicitlyIndian && eps.size <= 40)) && (isImdbTv || title.isNotBlank())
-        if (shouldCheckWiki) {
+        val lacksDetailedGuide = !hasDetailedSeasons && (eps.size <= 1 || (explicitlyIndian && eps.size <= 35))
+        if (lacksDetailedGuide && !explicitlyNonIndian && (isImdbTv || title.isNotBlank())) {
             val wiki = lookupWikipediaShowMeta(title = title, year = year, imdbId = imdbId)
-            val meetsThreshold = if (eps.size <= 3) {
-                wiki.totalEpisodesOverride >= 5 && wiki.totalEpisodesOverride > eps.size
+            val meetsSerialThreshold = if (eps.size <= 1) {
+                wiki.totalEpisodesOverride >= 15
             } else {
-                wiki.totalEpisodesOverride >= maxOf(25, eps.size * 3)
+                wiki.totalEpisodesOverride >= 50 && wiki.totalEpisodesOverride >= eps.size * 4
             }
-            if ((explicitlyIndian || wiki.isIndianShow) && meetsThreshold) {
+            if ((explicitlyIndian || wiki.isIndianShow) && meetsSerialThreshold) {
                 return@withContext wiki.copy(
                     episodes = emptyList(),
                     cast = cast,
-                    runtimeMinsOverride = wiki.runtimeMinsOverride.takeIf { it > 0 } ?: 22
+                    runtimeMinsOverride = wiki.runtimeMinsOverride.takeIf { it > 0 } ?: 22,
+                    countOnly = true
                 )
             }
         }
         ShowGuideEnrichment(
             episodes = eps,
             cast = cast,
-            totalEpisodesOverride = eps.size
+            totalEpisodesOverride = eps.size,
+            countOnly = false
         )
     }
 
@@ -1947,11 +1975,11 @@ object LiveMediaCatalogService {
                     val originArr = tvJson.optJSONArray("origin_country") ?: JSONArray()
                     val originSet = (0 until originArr.length()).mapNotNull { originArr.optString(it, "").uppercase().takeIf(String::isNotEmpty) }.toSet()
                     val rawNetName = tvJson.optJSONArray("networks")?.optJSONObject(0)?.optString("name", "").orEmpty()
-                    val isIndianTmdb = originSet.contains("IN") || originSet.contains("IO") || INDIAN_LANG_SET.contains(origLang) || isIndianSeriesMetadata(rawNetName)
+                    val isIndianTmdb = originSet.contains("IN") || INDIAN_LANG_SET.contains(origLang)
                     if (isIndianTmdb) {
                         knownIndianTmdbShows.add(resolvedTmdbId)
-                    } else if (originSet.isNotEmpty() || origLang.isNotEmpty()) {
-                        knownNonIndianTmdbShows.add(resolvedTmdbId)
+                    } else if ((originSet.isNotEmpty() && !originSet.contains("IO")) || origLang.isNotEmpty()) {
+                        if (!originSet.contains("IO")) knownNonIndianTmdbShows.add(resolvedTmdbId)
                     }
                     val defaultRuntime = tvJson.optJSONArray("episode_run_time")?.optInt(0, 45)?.takeIf { it > 0 } ?: 45
                     val castNames = mutableListOf<String>()

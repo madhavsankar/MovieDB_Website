@@ -2251,7 +2251,7 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                             pageid: 703,
                             title: "Star Singer",
                             extract: "Star Singer is an Indian Malayalam music reality competition on Asianet.",
-                            revisions: [{ "*": "{{Infobox television | first_aired = 22 April 2006 | runtime = 60–90 minutes | num_seasons = 10 }}" }]
+                            revisions: [{ "*": "{{Infobox television | first_aired = 22 April 2006 | runtime = 60–90 minutes | network = {{plainlist|\\n* [[Asianet (TV channel)|Asianet]]\\n}} | num_seasons = 10 }}" }]
                           }
                         }
                       }
@@ -2273,6 +2273,27 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                       }
                     })
                   };
+                }
+                if (u.includes("api.themoviedb.org/3/tv/93352?append_to_response=credits")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      id: 93352,
+                      name: "The Family Man",
+                      origin_country: ["IN"],
+                      original_language: "hi",
+                      first_air_date: "2019-09-19",
+                      number_of_episodes: 19,
+                      episode_run_time: [49],
+                      seasons: [{ season_number: 1, episode_count: 10 }, { season_number: 2, episode_count: 9 }]
+                    })
+                  };
+                }
+                if (u.includes("api.themoviedb.org/3/tv/93352?append_to_response=season/1,season/2")) {
+                  const s1 = [], s2 = [];
+                  for (let i = 1; i <= 10; i++) s1.push({ episode_number: i, name: "S1 Ep " + i, air_date: "2019-09-19", runtime: 49 });
+                  for (let i = 1; i <= 9; i++) s2.push({ episode_number: i, name: "S2 Ep " + i, air_date: "2021-06-04", runtime: 49 });
+                  return { ok: true, json: async () => ({ "season/1": { episodes: s1 }, "season/2": { episodes: s2 } }) };
                 }
                 if (u.includes("api.themoviedb.org/3/tv/888888?append_to_response=credits")) {
                   return {
@@ -2405,6 +2426,37 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 fetchImpl: mockFetch,
                 env: { TMDB_API_KEY: "dummy" }
               });
+              const familyManDetails = await LiveCatalogService.fetchFullShowFromTvMaze("tmdb_tv_93352", {
+                title: "The Family Man",
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
+
+              // Verify compacted normal show never flashes "Watched Episode Count" while loading seasons
+              const mockBodyEl = { innerHTML: "" };
+              globalThis.document = {
+                getElementById: (id) => (id === "detail-body" ? mockBodyEl : null)
+              };
+              const compactedNormal = {
+                id: "tmdb_tv_93352",
+                tmdbId: 93352,
+                title: "The Family Man",
+                year: 2019,
+                runtimeMins: 49,
+                userStatus: "completed",
+                totalEpisodes: 19,
+                watchedEpisodes: [],
+                episodes: [],
+                _loadingGuide: true
+              };
+              app.state = { shows: [compactedNormal], movies: [] };
+              app.detailItem = compactedNormal;
+              app.detailType = "show";
+              app.detailTab = "episodes";
+              app.openSeasons = new Set();
+              app.renderDetailSheet();
+              const loadingHtml = mockBodyEl.innerHTML;
+              delete globalThis.document;
 
               app.state = { shows: [], movies: [] };
               app.persistState = async () => {};
@@ -2483,6 +2535,11 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 dulhanYear: dulhanDetails?.year,
                 ideaStarTotal: ideaStarDetails?.totalEpisodes,
                 ideaStarRt: ideaStarDetails?.runtimeMins,
+                ideaStarNet: ideaStarDetails?.network,
+                familyManEpsLen: familyManDetails?.episodes?.length,
+                familyManCountOnly: Boolean(familyManDetails?.countOnly),
+                flashedCountOnNormal: loadingHtml.includes("Watched Episode Count"),
+                showedLoadingSeasons: loadingHtml.includes("Loading seasons"),
                 partialStatus: compactedPartial.userStatus,
                 partialWatched: progPartial.watchedCount,
                 partialTotal: progPartial.total,
@@ -2519,6 +2576,11 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["dulhanYear"], 2006)
         self.assertEqual(out["ideaStarTotal"], 330)
         self.assertEqual(out["ideaStarRt"], 75)
+        self.assertEqual(out["ideaStarNet"], "Asianet")
+        self.assertEqual(out["familyManEpsLen"], 19)
+        self.assertFalse(out["familyManCountOnly"])
+        self.assertFalse(out["flashedCountOnNormal"])
+        self.assertTrue(out["showedLoadingSeasons"])
         self.assertEqual(out["partialStatus"], "stopped")
         self.assertEqual(out["partialWatched"], 350)
         self.assertEqual(out["partialTotal"], 1173)

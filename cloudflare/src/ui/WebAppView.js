@@ -1669,6 +1669,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (s.lastWatchedAt) {
           base.lastWatchedAt = String(s.lastWatchedAt);
         }
+        const hasRealEpisodeGuide = eps.length > 0 && !this.isSyntheticEpisodeList(eps);
+        if (!hasRealEpisodeGuide && (Boolean(s.countOnly) || String(s.id || "").startsWith("imdb_tv_"))) {
+          base.countOnly = true;
+        }
 
         const todayIso = new Date().toISOString().slice(0, 10);
         const unairedCodes = this.buildUnairedCodeSet(eps, todayIso, Object.keys(completedSeasons).length > 0);
@@ -4469,7 +4473,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           return;
         }
 
-        const isInitialCountOnly = Boolean(item.countOnly) || (Number(item.totalEpisodes) > 1 && (!Array.isArray(item.episodes) || item.episodes.length === 0));
+        const isInitialCountOnly = Boolean(item.countOnly) || String(item.id || "").startsWith("imdb_tv_") || (Number(item.totalEpisodes) > 1 && (!Array.isArray(item.episodes) || item.episodes.length === 0));
         const fallbackEpisodes = isInitialCountOnly
           ? []
           : Array.isArray(item.episodes) && item.episodes.length > 0
@@ -4487,6 +4491,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const newShow = {
           ...item,
           id: item.id,
+          countOnly: isInitialCountOnly || undefined,
           userStatus: isCompleted ? "completed" : "interested",
           totalEpisodes: isInitialCountOnly ? Math.max(Number(item.totalEpisodes) || 1, 1) : fallbackEpisodes.length,
           completedSeasons: {},
@@ -4580,28 +4585,18 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           return;
         }
 
-        const isPreviewCountOnly = Boolean(item.countOnly) || (Number(item.totalEpisodes) > 1 && (!Array.isArray(item.episodes) || item.episodes.length === 0));
+        const isPreviewCountOnly = Boolean(item.countOnly) || String(item.id || "").startsWith("imdb_tv_") || (Number(item.totalEpisodes) > 1 && (!Array.isArray(item.episodes) || item.episodes.length === 0));
+        const hasInitialRealEps = Array.isArray(item.episodes) && item.episodes.length > 0 && !this.isSyntheticEpisodeList(item.episodes);
         const previewShow = {
           ...item,
+          countOnly: isPreviewCountOnly || undefined,
           userStatus: "preview",
           totalEpisodes: isPreviewCountOnly ? Math.max(Number(item.totalEpisodes) || 1, 1) : undefined,
           watchedEpisodes: [],
           completedSeasons: {},
-          episodes: isPreviewCountOnly
-            ? []
-            : Array.isArray(item.episodes) && item.episodes.length > 0
-              ? item.episodes
-              : [
-                  {
-                    code: "S01E01",
-                    season: 1,
-                    number: 1,
-                    title: "Pilot",
-                    airDate: String(item.year || 2024) + "-01-01",
-                    runtimeMins: item.runtimeMins || 45,
-                  },
-                ],
+          episodes: hasInitialRealEps ? item.episodes : [],
           _isPreview: true,
+          _loadingGuide: !isPreviewCountOnly && !hasInitialRealEps,
         };
         this.detailItem = previewShow;
         this.detailType = "show";
@@ -4615,18 +4610,25 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           fetch(detailsUrl)
             .then((r) => (r.ok ? r.json() : null))
             .then((full) => {
-              if (!full) return;
+              previewShow._loadingGuide = false;
+              if (!full) {
+                if (this.detailItem && this.detailItem.id === previewShow.id) this.renderDetailSheet();
+                return;
+              }
               const liveShow = (this.state.shows || []).find((s) => this.doesShowMatchItem(s, previewShow));
               const target = liveShow || previewShow;
+              target._loadingGuide = false;
               if (Array.isArray(full.episodes) && full.episodes.length > 0) {
                 target.episodes = full.episodes
                   .map((e) => this.compactEpisode(e))
                   .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
                 target.totalEpisodes = target.episodes.length;
                 target.completedSeasons = {};
-              } else if (Number(full.totalEpisodes) > 0) {
+                delete target.countOnly;
+              } else if (full.countOnly && Number(full.totalEpisodes) > 0) {
                 target.episodes = [];
                 target.totalEpisodes = Math.max(Number(full.totalEpisodes) || 1, 1);
+                target.countOnly = true;
               }
               if (full.runtimeMins && Number(full.runtimeMins) > 0) target.runtimeMins = Number(full.runtimeMins);
               if (full.posterUrl && !target.posterUrl) target.posterUrl = full.posterUrl;
@@ -4711,10 +4713,20 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             const hadSeasonOne = prevEps.some((e) => Number(e.season) === 1);
             const wasSynthetic = this.isSyntheticEpisodeList(prevEps);
             const prevWatchedCount = (show.watchedEpisodes || []).length;
+            if (!show.countOnly && !String(show.id || "").startsWith("imdb_tv_") && (prevEps.length === 0 || wasSynthetic)) {
+              show._loadingGuide = true;
+            }
             fetch(detailsUrl)
               .then((r) => (r.ok ? r.json() : null))
               .then((full) => {
-                if (!full) return;
+                const wasLoadingGuide = Boolean(show._loadingGuide);
+                show._loadingGuide = false;
+                if (!full) {
+                  if (wasLoadingGuide && this.detailItem && this.detailItem.id === show.id) {
+                    this.renderDetailSheet();
+                  }
+                  return;
+                }
                 let changed = false;
                 const fullEps = Array.isArray(full.episodes) ? full.episodes : [];
                 const fullHasSeasonOne = fullEps.some((e) => Number(e.season) === 1);
@@ -4738,6 +4750,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   show.episodes = sortedFull;
                   show.totalEpisodes = Math.max(airedFull.length, 1);
                   show.completedSeasons = {};
+                  delete show.countOnly;
                   if (full.status) show.status = full.status;
                   if (wasCompleted) {
                     if (isOngoing && !wasSynthetic && prevStoredTotal > 1 && airedFull.length > prevStoredTotal) {
@@ -4762,8 +4775,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                     show.watchedEpisodes = Array.from(expandedWatched).sort();
                   }
                   changed = true;
-                } else if (fullEps.length === 0 && Number(full.totalEpisodes) > 1 && Number(full.totalEpisodes) > prevEps.length) {
+                } else if (full.countOnly && fullEps.length === 0 && Number(full.totalEpisodes) > 1 && (Number(full.totalEpisodes) > prevEps.length || !show.countOnly)) {
                   show.episodes = [];
+                  show.countOnly = true;
                   show.totalEpisodes = Math.max(Number(full.totalEpisodes) || 1, Number(show.totalEpisodes) || 1);
                   if (full.runtimeMins && Number(full.runtimeMins) > 0) show.runtimeMins = Number(full.runtimeMins);
                   if (full.year && Number(full.year) > 1950 && Number(show.year) >= 2024) show.year = Number(full.year);
@@ -4801,9 +4815,16 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   if (this.detailItem && this.detailItem.id === show.id) {
                     this.renderDetailSheet();
                   }
+                } else if (wasLoadingGuide && this.detailItem && this.detailItem.id === show.id) {
+                  this.renderDetailSheet();
                 }
               })
-              .catch(() => {});
+              .catch(() => {
+                show._loadingGuide = false;
+                if (this.detailItem && this.detailItem.id === show.id) {
+                  this.renderDetailSheet();
+                }
+              });
           }
           this.showDetailSheetModal();
           return;
@@ -5378,6 +5399,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const cleanTotal = Math.max(1, Math.floor(Number(show.totalEpisodes) || Number(progNow.total) || 1));
         const cleanWatched = Math.max(0, Math.min(cleanTotal, Math.floor(Number(watchedVal) || 0)));
         show.totalEpisodes = cleanTotal;
+        show.countOnly = true;
         show.episodes = [];
         show.watchedEpisodes = [];
         if (cleanWatched >= cleanTotal) {
@@ -5505,8 +5527,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         let html = statusHeader;
         const progForCount = this.computeShowProgress(item);
         const isCountOnlySeries =
-          episodes.length === 0 ||
-          (episodes.length <= 1 && progForCount.total > 1 && this.isSyntheticEpisodeList(episodes));
+          (Boolean(item.countOnly) || String(item.id || "").startsWith("imdb_tv_")) &&
+          (episodes.length === 0 || this.isSyntheticEpisodeList(episodes));
+        if (item._loadingGuide && !isCountOnlySeries && episodes.length === 0) {
+          bodyEl.innerHTML =
+            html +
+            '<p class="text-xs text-zinc-400 text-center py-8">Loading seasons &amp; episodes...</p>';
+          return;
+        }
         if (isCountOnlySeries) {
           const curW = progForCount.watchedCount;
           const curT = Math.max(progForCount.total, 1);
