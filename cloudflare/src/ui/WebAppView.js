@@ -7377,17 +7377,24 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                     ")",
                 },
                 {
-                  id: "interested",
-                  label:
-                    "Watchlist (" +
-                    friendShows.filter((s) => this.getEffectiveShowStatus(s) === "interested").length +
-                    ")",
-                },
-                {
                   id: "completed",
                   label:
                     "Completed (" +
                     friendShows.filter((s) => this.getEffectiveShowStatus(s) === "completed").length +
+                    ")",
+                },
+                {
+                  id: "stopped",
+                  label:
+                    "Stopped (" +
+                    friendShows.filter((s) => this.getEffectiveShowStatus(s) === "stopped").length +
+                    ")",
+                },
+                {
+                  id: "interested",
+                  label:
+                    "Watchlist (" +
+                    friendShows.filter((s) => this.getEffectiveShowStatus(s) === "interested").length +
                     ")",
                 },
               ];
@@ -7498,14 +7505,24 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 ? "✓ Completed (" + prog.total + " eps)"
                 : eff === "in_progress"
                 ? "Watching · " + prog.watchedCount + "/" + prog.total + " eps"
+                : eff === "stopped"
+                ? "Stopped · " + prog.watchedCount + "/" + prog.total + " eps"
                 : "Watchlist";
             const statusColor =
               eff === "completed"
                 ? "text-emerald-400"
                 : eff === "in_progress"
                 ? "tv-yellow-text"
+                : eff === "stopped"
+                ? "text-rose-400"
                 : "text-zinc-400";
             const myShow = findMyShowFast(s);
+            const copyBtnHtml =
+              eff !== "interested"
+                ? '<button title="Copy friend status, seasons &amp; watched episodes" onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;show&quot;, &quot;' +
+                  escapeHtml(s.id) +
+                  '&quot;, &quot;copy&quot;)" class="px-2.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500 hover:text-white text-[11px] font-extrabold shrink-0 transition">📋 Copy</button>'
+                : "";
             let addBtn = "";
             if (!myShow) {
               addBtn =
@@ -7513,17 +7530,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;show&quot;, &quot;' +
                 escapeHtml(s.id) +
                 '&quot;, &quot;interested&quot;)" class="px-2.5 py-1.5 rounded-full tv-pill-bar border border-yellow-400/60 tv-yellow-text hover:bg-yellow-400 hover:text-black text-[11px] font-extrabold shrink-0 transition">+ Watchlist</button>' +
-                '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;show&quot;, &quot;' +
-                escapeHtml(s.id) +
-                '&quot;, &quot;completed&quot;)" class="px-2.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500 hover:text-white text-[11px] font-extrabold shrink-0 transition">✓ Completed</button>' +
+                copyBtnHtml +
                 "</div>";
             } else {
               addBtn =
                 '<div class="flex items-center gap-1.5 shrink-0">' +
                 '<span class="px-2 py-1 rounded-full bg-zinc-800 text-zinc-400 text-[10px] font-bold">In Watchlist</span>' +
-                '<button onclick="event.stopPropagation(); app.addFromFriendLibrary(&quot;show&quot;, &quot;' +
-                escapeHtml(s.id) +
-                '&quot;, &quot;completed&quot;)" class="px-2.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500 hover:text-white text-[11px] font-extrabold shrink-0 transition">✓ Completed</button>' +
+                copyBtnHtml +
                 "</div>";
             }
             return (
@@ -7558,12 +7571,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const lib = this.selectedFriendLibrary;
         if (!lib) return;
         const markCompleted = targetStatus === "completed";
+        const copyFriendState = targetStatus === "copy";
         if (mediaType === "movie") {
           const found = (lib.movies || []).find((m) => m.id === itemId);
           if (!found) return;
+          const shouldMarkWatched = markCompleted || (copyFriendState && Boolean(found.watched));
           const existing = (this.state.movies || []).find((m) => this.doesRecMatchMovie(m, found));
           if (existing) {
-            if (markCompleted) {
+            if (shouldMarkWatched) {
               existing.watched = true;
               existing.watchedAt = new Date().toISOString().slice(0, 10);
             }
@@ -7572,8 +7587,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               {
                 ...found,
                 tmdbId: this.cleanMovieTmdbId(found.id, found.tmdbId),
-                watched: markCompleted,
-                watchedAt: markCompleted ? new Date().toISOString().slice(0, 10) : "",
+                watched: shouldMarkWatched,
+                watchedAt: shouldMarkWatched ? new Date().toISOString().slice(0, 10) : "",
               },
               ...(this.state.movies || []),
             ];
@@ -7582,24 +7597,34 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           const found = (lib.shows || []).find((s) => s.id === itemId);
           if (!found) return;
           const friendProg = this.computeShowProgress(found);
+          const friendEff = this.getEffectiveShowStatus(found);
           const eps =
             Array.isArray(found.episodes) && found.episodes.length > 0
-              ? found.episodes.map((e) => this.compactEpisode(e))
+              ? found.episodes.map((e) => this.compactEpisode(e)).filter(Boolean)
               : [];
           const knownTotal = Math.max(Number(found.totalEpisodes) || 0, friendProg.total || 0, eps.length, 1);
+          const todayIso = new Date().toISOString().slice(0, 10);
+          const resolvedStatus = copyFriendState ? friendEff : markCompleted ? "completed" : "interested";
+          const clonedCompletedSeasons =
+            copyFriendState && resolvedStatus !== "completed" && resolvedStatus !== "interested" && found.completedSeasons && typeof found.completedSeasons === "object"
+              ? { ...found.completedSeasons }
+              : {};
+          const clonedWatchedEpisodes =
+            copyFriendState && resolvedStatus !== "completed" && resolvedStatus !== "interested" && Array.isArray(found.watchedEpisodes)
+              ? [...found.watchedEpisodes]
+              : [];
+          const clonedEpisodes =
+            resolvedStatus === "completed"
+              ? eps.filter((ep) => this.isEpisodeFuture(ep, todayIso))
+              : eps;
           const existing = (this.state.shows || []).find((s) => this.doesRecMatchShow(s, found));
           if (existing) {
-            if (markCompleted) {
+            if (copyFriendState || markCompleted) {
               existing.totalEpisodes = Math.max(Number(existing.totalEpisodes) || 0, knownTotal);
-              existing.completedSeasons = {};
-              const airedExisting = this.getAiredEpisodes(existing.episodes || []);
-              if (airedExisting.length >= existing.totalEpisodes) {
-                existing.watchedEpisodes = airedExisting.map((e) => e.code).sort();
-              } else {
-                existing.episodes = [];
-                existing.watchedEpisodes = [];
-              }
-              existing.userStatus = "completed";
+              existing.completedSeasons = clonedCompletedSeasons;
+              existing.watchedEpisodes = clonedWatchedEpisodes;
+              existing.episodes = clonedEpisodes;
+              existing.userStatus = resolvedStatus;
               existing.lastWatchedAt = new Date().toISOString();
             }
           } else {
@@ -7607,10 +7632,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               {
                 ...found,
                 totalEpisodes: knownTotal,
-                completedSeasons: {},
-                episodes: markCompleted ? [] : eps,
-                userStatus: markCompleted ? "completed" : "interested",
-                watchedEpisodes: [],
+                completedSeasons: clonedCompletedSeasons,
+                episodes: clonedEpisodes,
+                userStatus: resolvedStatus,
+                watchedEpisodes: clonedWatchedEpisodes,
                 lastWatchedAt: new Date().toISOString(),
               },
               ...(this.state.shows || []),

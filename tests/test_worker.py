@@ -1531,33 +1531,58 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                  { id: "tmdb_tv_999", tmdbId: 999, title: "Already Watching Show", year: 2023, userStatus: "interested", totalEpisodes: 10, episodes: [], watchedEpisodes: [] },
                  { id: "tmdb_tv_777", tmdbId: 777, title: "My Watchlist Show", year: 2025, userStatus: "completed", totalEpisodes: 8, episodes: [], watchedEpisodes: [] },
                  { id: "tmdb_tv_444", tmdbId: 444, title: "My Stopped Show", year: 2022, userStatus: "completed", totalEpisodes: 20, episodes: [], watchedEpisodes: [] },
-                 { id: "tmdb_tv_333", tmdbId: 333, title: "Unwatched Friend Show", year: 2024, userStatus: "interested", totalEpisodes: 12, episodes: [], watchedEpisodes: [] }
+                 { id: "tmdb_tv_333", tmdbId: 333, title: "Unwatched Friend Show", year: 2024, userStatus: "interested", totalEpisodes: 12, episodes: [], watchedEpisodes: [] },
+                 { id: "tmdb_tv_222", tmdbId: 222, title: "Friend In Progress Show", year: 2025, userStatus: "in_progress", totalEpisodes: 20, completedSeasons: { "1": 10 }, watchedEpisodes: ["S02E01", "S02E02"], episodes: [{ code: "S02E01", season: 2, number: 1, airDate: "2025-01-01" }, { code: "S02E02", season: 2, number: 2, airDate: "2025-01-08" }, { code: "S02E03", season: 2, number: 3, airDate: "2025-01-15" }] },
+                 { id: "tmdb_tv_111", tmdbId: 111, title: "Friend Stopped Show", year: 2021, userStatus: "stopped", totalEpisodes: 30, completedSeasons: { "1": 8 }, watchedEpisodes: ["S02E01"], episodes: [{ code: "S02E01", season: 2, number: 1, airDate: "2021-05-01" }] }
                ]
              };
 
-             app.friendLibrarySegment = "shows";
-             app.friendLibraryFilter = "all";
-             app.renderFriendLibrary();
-             const showsHtml = domMap["friend-library-items"].innerHTML;
-             const subtitle = domMap["friend-library-subtitle"].textContent;
+             (async () => {
+               app.persistState = async () => {};
+               app.friendLibrarySegment = "shows";
+               app.friendLibraryFilter = "all";
+               app.renderFriendLibrary();
+               const showsHtml = domMap["friend-library-items"].innerHTML;
+               const filterHtml = domMap["friend-lib-filter-bar"].innerHTML;
+               const subtitle = domMap["friend-library-subtitle"].textContent;
 
-             app.friendLibrarySegment = "movies";
-             app.friendLibraryFilter = "all";
-             app.renderFriendLibrary();
-             const moviesHtml = domMap["friend-library-items"].innerHTML;
+               await app.addFromFriendLibrary("show", "tmdb_tv_222", "copy");
+               await app.addFromFriendLibrary("show", "tmdb_tv_111", "copy");
+               const copiedInProg = app.state.shows.find((s) => s.id === "tmdb_tv_222");
+               const copiedStopped = app.state.shows.find((s) => s.id === "tmdb_tv_111");
 
-             const out = JSON.stringify({ subtitle, showsHtml, moviesHtml });
-             if (typeof console !== "undefined" && console.log) console.log(out);
-             else if (typeof print !== "undefined") print(out);
+               app.friendLibrarySegment = "movies";
+               app.friendLibraryFilter = "all";
+               app.renderFriendLibrary();
+               const moviesHtml = domMap["friend-library-items"].innerHTML;
+
+               const out = JSON.stringify({
+                 subtitle,
+                 showsHtml,
+                 filterHtml,
+                 moviesHtml,
+                 copiedInProg: copiedInProg ? { status: copiedInProg.userStatus, completedSeasons: copiedInProg.completedSeasons, watchedEpisodes: copiedInProg.watchedEpisodes } : null,
+                 copiedStopped: copiedStopped ? { status: copiedStopped.userStatus, completedSeasons: copiedStopped.completedSeasons, watchedEpisodes: copiedStopped.watchedEpisodes } : null
+               });
+               if (typeof console !== "undefined" && console.log) console.log(out);
+               else if (typeof print !== "undefined") print(out);
+             })();
             """
         )
         out = self._run_js(harness)
-        self.assertEqual(out["subtitle"], "1 unwatched series · 1 unwatched movies")
+        self.assertEqual(out["subtitle"], "3 unwatched series · 1 unwatched movies")
         self.assertNotIn("Death Note", out["showsHtml"])
         self.assertNotIn("Already Watching Show", out["showsHtml"])
         self.assertNotIn("My Watchlist Show", out["showsHtml"])
         self.assertNotIn("My Stopped Show", out["showsHtml"])
         self.assertIn("Unwatched Friend Show", out["showsHtml"])
+        self.assertIn("Friend In Progress Show", out["showsHtml"])
+        self.assertIn("Friend Stopped Show", out["showsHtml"])
+        self.assertIn("Stopped (1)", out["filterHtml"])
+        self.assertIn("📋 Copy", out["showsHtml"])
+        self.assertNotIn("✓ Completed</button>", out["showsHtml"])
+        self.assertEqual(out["copiedInProg"], {"status": "in_progress", "completedSeasons": {"1": 10}, "watchedEpisodes": ["S02E01", "S02E02"]})
+        self.assertEqual(out["copiedStopped"], {"status": "stopped", "completedSeasons": {"1": 8}, "watchedEpisodes": ["S02E01"]})
         self.assertNotIn("Fellowship of the Ring", out["moviesHtml"])
         self.assertNotIn("Shared Watchlist Movie", out["moviesHtml"])
         self.assertIn("Brand New Friend Movie", out["moviesHtml"])

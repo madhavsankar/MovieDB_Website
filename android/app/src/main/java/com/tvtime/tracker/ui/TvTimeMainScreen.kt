@@ -5276,8 +5276,9 @@ private fun FriendsFullPageScreen(
                                 listOf(
                                     "all" to "All (${unwatchedShows.size})",
                                     "in_progress" to "In Progress (${unwatchedShows.count { it.friendEff == "in_progress" }})",
-                                    "interested" to "Watchlist (${unwatchedShows.count { it.friendEff == "interested" }})",
-                                    "completed" to "Completed (${unwatchedShows.count { it.friendEff == "completed" }})"
+                                    "completed" to "Completed (${unwatchedShows.count { it.friendEff == "completed" }})",
+                                    "stopped" to "Stopped (${unwatchedShows.count { it.friendEff == "stopped" }})",
+                                    "interested" to "Watchlist (${unwatchedShows.count { it.friendEff == "interested" }})"
                                 )
                             }
 
@@ -5500,14 +5501,32 @@ private fun FriendsFullPageScreen(
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
+                                            val friendStatusLabel = when (sEff) {
+                                                "completed" -> "✓ Completed ($totalCount eps)"
+                                                "in_progress" -> "Watching · $watchedCount/$totalCount eps"
+                                                "stopped" -> "Stopped · $watchedCount/$totalCount eps"
+                                                else -> "Watchlist"
+                                            }
+                                            val friendStatusColor = when (sEff) {
+                                                "completed" -> Color(0xFF4ADE80)
+                                                "in_progress" -> TvTimePalette.Yellow
+                                                "stopped" -> Color(0xFFFB7185)
+                                                else -> TvTimePalette.TextSecondary
+                                            }
                                             Text(
-                                                text = "${s.year} · $watchedCount/$totalCount eps ($sEff)",
+                                                text = "${s.year} · $friendStatusLabel",
                                                 style = MaterialTheme.typography.bodySmall,
-                                                color = if (sEff == "completed") Color(0xFF4ADE80) else TvTimePalette.Yellow
+                                                color = friendStatusColor
                                             )
                                         }
                                     }
                                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        val copyStatusSummary = when (sEff) {
+                                            "completed" -> "Completed"
+                                            "in_progress" -> "In Progress · $watchedCount/$totalCount eps"
+                                            "stopped" -> "Stopped · $watchedCount/$totalCount eps"
+                                            else -> "Watchlist"
+                                        }
                                         if (myShow == null) {
                                             TextButton(
                                                 onClick = {
@@ -5536,85 +5555,44 @@ private fun FriendsFullPageScreen(
                                             ) {
                                                 Text("+ Watchlist", color = TvTimePalette.Yellow, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                             }
-                                            TextButton(
-                                                onClick = {
-                                                    scope.launch {
-                                                        val sEps = withContext(Dispatchers.Default) {
-                                                            TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
-                                                        }
-                                                        val airedEps = TvTimeProgressCalculator.filterAiredEpisodes(sEps)
-                                                        val futureEps = sEps.filter { TvTimeProgressCalculator.isFutureEpisode(it) }
-                                                        val compJson = TvTimeProgressCalculator.serializeCompactedMeta(
-                                                            totalEpisodes = totalCount,
-                                                            completedSeasons = emptyMap(),
-                                                            episodes = if (airedEps.size >= totalCount) sEps else futureEps
-                                                        )
-                                                        val watchedCsv = if (airedEps.size >= totalCount) {
-                                                            TvTimeProgressCalculator.serializeWatchedSet(airedEps.map { it.code })
-                                                        } else ""
-                                                        dao.insertShow(
-                                                            s.copy(
-                                                                id = 0,
-                                                                userId = currentUserId,
-                                                                userStatus = "completed",
-                                                                watchedCodesCsv = watchedCsv,
-                                                                episodesJson = compJson
-                                                            )
-                                                        )
-                                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                                        Toast.makeText(context, "Added ${s.title} to Completed!", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                }
-                                            ) {
-                                                Text("✓ Completed", color = Color(0xFF4ADE80), fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                                            }
-                                        } else if (myEff != "completed") {
-                                            TextButton(
-                                                onClick = {
-                                                    scope.launch {
-                                                        val (compJson, watchedCsv) = withContext(Dispatchers.Default) {
-                                                            val sEps = TvTimeProgressCalculator.parseEpisodeList(s.episodesJson)
-                                                            val myMeta = TvTimeProgressCalculator.parseCompactedMeta(myShow.episodesJson)
-                                                            val mergedTotal = maxOf(myMeta.totalEpisodes, totalCount, 1)
-                                                            val myAired = TvTimeProgressCalculator.filterAiredEpisodes(myMeta.episodes)
-                                                            val jsonStr = if (myAired.size >= mergedTotal) {
-                                                                myShow.episodesJson
-                                                            } else {
-                                                                val futureOnly = (myMeta.episodes + sEps)
-                                                                    .filter { TvTimeProgressCalculator.isFutureEpisode(it) }
-                                                                    .distinctBy { it.code }
-                                                                TvTimeProgressCalculator.serializeCompactedMeta(
-                                                                    totalEpisodes = mergedTotal,
-                                                                    completedSeasons = emptyMap(),
-                                                                    episodes = futureOnly
+                                            if (sEff != "interested") {
+                                                TextButton(
+                                                    onClick = {
+                                                        scope.launch {
+                                                            dao.insertShow(
+                                                                s.copy(
+                                                                    id = 0,
+                                                                    userId = currentUserId,
+                                                                    userStatus = sEff
                                                                 )
-                                                            }
-                                                            val csvStr = if (myAired.size >= mergedTotal) {
-                                                                TvTimeProgressCalculator.serializeWatchedSet(myAired.map { it.code })
-                                                            } else ""
-                                                            jsonStr to csvStr
+                                                            )
+                                                            FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                                            Toast.makeText(context, "Copied ${s.title} ($copyStatusSummary)!", Toast.LENGTH_SHORT).show()
                                                         }
+                                                    }
+                                                ) {
+                                                    Text("📋 Copy", color = Color(0xFF4ADE80), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                                }
+                                            }
+                                        } else if (sEff != "interested") {
+                                            TextButton(
+                                                onClick = {
+                                                    scope.launch {
                                                         dao.updateShow(
                                                             myShow.copy(
-                                                                userStatus = "completed",
-                                                                watchedCodesCsv = watchedCsv,
-                                                                episodesJson = compJson
+                                                                userStatus = sEff,
+                                                                watchedCodesCsv = s.watchedCodesCsv,
+                                                                episodesJson = s.episodesJson,
+                                                                runtimeMins = s.runtimeMins
                                                             )
                                                         )
                                                         FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
-                                                        Toast.makeText(context, "Marked ${s.title} Completed!", Toast.LENGTH_SHORT).show()
+                                                        Toast.makeText(context, "Copied ${s.title} ($copyStatusSummary)!", Toast.LENGTH_SHORT).show()
                                                     }
                                                 }
                                             ) {
-                                                Text("✓ Completed", color = Color(0xFF4ADE80), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                                Text("📋 Copy", color = Color(0xFF4ADE80), fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                             }
-                                        } else {
-                                            Text(
-                                                text = "✓ Completed",
-                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                                color = Color(0xFF4ADE80),
-                                                modifier = Modifier.padding(horizontal = 8.dp)
-                                            )
                                         }
                                     }
                                 }
