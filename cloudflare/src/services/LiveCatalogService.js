@@ -1782,14 +1782,17 @@ export class LiveCatalogService {
     // 2. Wikipedia Broadcaster Program List / Search Fallback (e.g. "Chandanamazha" -> "List of programs broadcast by Asianet" -> 1173 eps)
     if (out.totalEpisodes === 0 && cleanTitle) {
       try {
-        const sQuery = `"${cleanTitle}" serial OR "television series"`;
-        const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(sQuery)}&srlimit=3&format=json&origin=*`;
+        const sQuery = `"${cleanTitle}" episodes`;
+        const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(sQuery)}&srlimit=6&format=json&origin=*`;
         const sResp = await fetchImpl(searchUrl, { headers: wikiHeaders });
         if (sResp && sResp.ok) {
           const sData = await sResp.json();
-          const hits = (sData?.query?.search || []).map((h) => h?.title).filter(Boolean);
+          const hits = (sData?.query?.search || [])
+            .map((h) => h?.title)
+            .filter(Boolean)
+            .sort((a, b) => (/^list of /i.test(b) ? 1 : 0) - (/^list of /i.test(a) ? 1 : 0));
           if (hits.length > 0) {
-            const pUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(hits.slice(0, 2).join("|"))}&prop=revisions&rvprop=content&format=json&redirects=1&origin=*`;
+            const pUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(hits.slice(0, 4).join("|"))}&prop=revisions&rvprop=content&format=json&redirects=1&origin=*`;
             const pResp = await fetchImpl(pUrl, { headers: wikiHeaders });
             if (pResp && pResp.ok) {
               const pData = await pResp.json();

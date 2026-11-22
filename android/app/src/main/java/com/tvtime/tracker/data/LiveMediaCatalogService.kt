@@ -1624,14 +1624,15 @@ object LiveMediaCatalogService {
         // 2. Wikipedia Broadcaster Program List / Search Fallback (e.g. Chandanamazha -> List of programs broadcast by Asianet -> 1173 eps)
         if (totalEps == 0 && cleanTitle.isNotEmpty()) {
             try {
-                val sQuery = URLEncoder.encode("\"$cleanTitle\" serial OR \"television series\"", "UTF-8")
-                val sRoot = openWiki("https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=$sQuery&srlimit=3&format=json&origin=*")
+                val sQuery = URLEncoder.encode("\"$cleanTitle\" episodes", "UTF-8")
+                val sRoot = openWiki("https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=$sQuery&srlimit=6&format=json&origin=*")
                 val sArr = sRoot?.optJSONObject("query")?.optJSONArray("search") ?: JSONArray()
-                val hitTitles = (0 until minOf(2, sArr.length()))
+                val hitTitles = (0 until minOf(6, sArr.length()))
                     .mapNotNull { sArr.optJSONObject(it)?.optString("title", "")?.takeIf(String::isNotBlank) }
+                    .sortedByDescending { if (it.startsWith("List of ", ignoreCase = true)) 1 else 0 }
                 if (hitTitles.isNotEmpty()) {
                     val pRoot = openWiki(
-                        "https://en.wikipedia.org/w/api.php?action=query&titles=${URLEncoder.encode(hitTitles.joinToString("|"), "UTF-8")}&prop=revisions&rvprop=content&format=json&redirects=1&origin=*"
+                        "https://en.wikipedia.org/w/api.php?action=query&titles=${URLEncoder.encode(hitTitles.take(4).joinToString("|"), "UTF-8")}&prop=revisions&rvprop=content&format=json&redirects=1&origin=*"
                     )
                     val pagesObj = pRoot?.optJSONObject("query")?.optJSONObject("pages")
                     val titleRowRe = Regex("(?:'+'|\\[\\[(?:[^\\]|]*\\|)?)" + Regex.escape(cleanTitle) + "(?:'+'|\\]\\])", RegexOption.IGNORE_CASE)
