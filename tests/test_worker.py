@@ -1844,6 +1844,100 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["untrackedShowTitles"], ["Dexter"])
         self.assertTrue(out["hasDrawerCategoriesBtn"])
 
+    def test_stick_future_episodes_unmarkable_and_never_shown_watched_when_caught_up(self):
+        """Verifies marking Nov 17 S02E04 in Stick never marks future S02E05..S02E10 as watched, and future episodes are locked ('Upcoming') and unmarkable."""
+        import re as _re
+
+        def load_cf_module(rel_path):
+            with open(os.path.join(ROOT_DIR, "cloudflare", "src", *rel_path), "r", encoding="utf-8") as f:
+                src = f.read()
+            src = _re.sub(r"^import\s+.*?;\s*$", "", src, flags=_re.MULTILINE)
+            return src.replace("export class ", "class ").replace("export function ", "function ").replace("export const ", "const ")
+
+        view_src = load_cf_module(("ui", "WebAppView.js"))
+        harness = (
+            view_src
+            + """
+            (async () => {
+              const els = {};
+              globalThis.document = {
+                getElementById: (id) => {
+                  if (!els[id]) {
+                    els[id] = { innerHTML: "", textContent: "", className: "", classList: { add: () => {}, remove: () => {}, toggle: () => {} } };
+                  }
+                  return els[id];
+                }
+              };
+              const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+              const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+              const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+              (new Function(clientJs))();
+              const app = Object.create(globalThis.TvTimeClientClass.prototype);
+              app.persistState = async () => {};
+
+              const stickShow = {
+                id: "tmdb_tv_248830",
+                tmdbId: 248830,
+                title: "Stick",
+                year: 2025,
+                status: "Returning Series",
+                userStatus: "in_progress",
+                totalEpisodes: 14,
+                completedSeasons: { "1": 10 },
+                watchedEpisodes: ["S02E01", "S02E02", "S02E03"],
+                episodes: [
+                  { code: "S02E01", season: 2, number: 1, title: "Sirens in Soft Spikes", airDate: "2026-11-03", runtimeMins: 30 },
+                  { code: "S02E02", season: 2, number: 2, title: "Don't Be Summer Mayonnaise", airDate: "2026-11-03", runtimeMins: 36 },
+                  { code: "S02E03", season: 2, number: 3, title: "Chip Off the Old Butch", airDate: "2026-11-10", runtimeMins: 38 },
+                  { code: "S02E04", season: 2, number: 4, title: "The Boog", airDate: "2026-11-17", runtimeMins: 26 },
+                  { code: "S02E05", season: 2, number: 5, title: "Go Time!", airDate: "2099-11-24", runtimeMins: 37 },
+                  { code: "S02E06", season: 2, number: 6, title: "Jung and the Restless", airDate: "2099-12-01", runtimeMins: 41 },
+                  { code: "S02E07", season: 2, number: 7, title: "Bogey Nights", airDate: "2099-12-08", runtimeMins: 35 }
+                ]
+              };
+              app.state = { shows: [stickShow], movies: [] };
+              app.detailItem = stickShow;
+              app.detailType = "show";
+              app.detailTab = "episodes";
+              app.openSeasons = new Set([2]);
+
+              // 1. Attempt to mark future S02E05 directly -> must be ignored!
+              await app.toggleEpisodeCode("tmdb_tv_248830", "S02E05");
+              const afterFutureClickWatched = [...stickShow.watchedEpisodes];
+
+              // 2. Mark aired Nov 17 episode S02E04 -> catches up to all 14 aired episodes (status = completed),
+              //    while S02E05..S02E07 remain Upcoming (NOT checked, NOT clickable)!
+              await app.toggleEpisodeCode("tmdb_tv_248830", "S02E04");
+              app.renderDetailSheet();
+              const htmlAfterS02E04 = els["detail-body"].innerHTML;
+
+              // 3. Uncheck S02E04 -> returns cleanly to 3/4 aired watched (in_progress)
+              await app.toggleEpisodeCode("tmdb_tv_248830", "S02E04");
+
+              // 4. Mark entire Season 2 via toggleSeasonWatched -> marks ONLY aired S02E01..S02E04, never S02E05..S02E07!
+              await app.toggleSeasonWatched("tmdb_tv_248830", 2);
+
+              const out = JSON.stringify({
+                afterFutureClickWatched,
+                hasFourOfFourAiredLabel: htmlAfterS02E04.includes("4/4 aired · 3 upcoming"),
+                hasFutureToggleS02E05: htmlAfterS02E04.includes("S02E05&quot;)"),
+                upcomingBadgeCount: htmlAfterS02E04.split(">Upcoming<").length - 1,
+                afterSeasonToggleWatched: stickShow.watchedEpisodes,
+                finalStatus: stickShow.userStatus
+              });
+              if (typeof console !== "undefined" && console.log) console.log(out);
+              else if (typeof print !== "undefined") print(out);
+            })();
+            """
+        )
+        out = self._run_js(harness)
+        self.assertEqual(out["afterFutureClickWatched"], ["S02E01", "S02E02", "S02E03"])
+        self.assertTrue(out["hasFourOfFourAiredLabel"])
+        self.assertFalse(out["hasFutureToggleS02E05"])
+        self.assertEqual(out["upcomingBadgeCount"], 3)
+        self.assertEqual(out["afterSeasonToggleWatched"], ["S02E01", "S02E02", "S02E03", "S02E04"])
+        self.assertEqual(out["finalStatus"], "completed")
+
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""
         proc = subprocess.run(

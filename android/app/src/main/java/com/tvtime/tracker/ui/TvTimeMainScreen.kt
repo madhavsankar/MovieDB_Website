@@ -779,7 +779,8 @@ fun TvTimeMainScreen(
                                     EpisodeModel("S01E01", 1, 1, "Pilot", "${existing.year}-01-01", existing.runtimeMins)
                                 )
                                 val baseEps = if (eps.isNotEmpty()) eps else fallbackEps
-                                val allCodes = baseEps.map { it.code }.toSet()
+                                val airedBase = TvTimeProgressCalculator.filterAiredEpisodes(baseEps).ifEmpty { baseEps.take(1) }
+                                val allCodes = airedBase.map { it.code }.toSet()
                                 dao.updateShow(
                                     existing.copy(
                                         userStatus = "completed",
@@ -797,11 +798,12 @@ fun TvTimeMainScreen(
                                     )
                                     val latestRow = dao.getShowsForUser(currentUserId).firstOrNull { it.id == existing.id }
                                     if (latestRow != null && fetchedEps.isNotEmpty()) {
+                                        val airedFetched = TvTimeProgressCalculator.filterAiredEpisodes(fetchedEps).ifEmpty { fetchedEps.take(1) }
                                         dao.updateShow(
                                             latestRow.copy(
                                                 castCsv = fetchedCast.joinToString(", ").ifBlank { latestRow.castCsv },
                                                 watchedCodesCsv = if (latestRow.userStatus.equals("completed", ignoreCase = true)) {
-                                                    TvTimeProgressCalculator.serializeWatchedSet(fetchedEps.map { it.code }.toSet())
+                                                    TvTimeProgressCalculator.serializeWatchedSet(airedFetched.map { it.code }.toSet())
                                                 } else {
                                                     latestRow.watchedCodesCsv
                                                 },
@@ -845,12 +847,13 @@ fun TvTimeMainScreen(
                             val latestRow = dao.getShowsForUser(currentUserId).firstOrNull { it.id == insertedId }
                             if (latestRow != null && (fetchedEps.isNotEmpty() || fetchedCast.isNotEmpty())) {
                                 val finalEps = if (fetchedEps.isNotEmpty()) fetchedEps else fallbackEps
+                                val airedFinal = TvTimeProgressCalculator.filterAiredEpisodes(finalEps).ifEmpty { finalEps.take(1) }
                                 val isStillComp = latestRow.userStatus.equals("completed", ignoreCase = true)
                                 dao.updateShow(
                                     latestRow.copy(
                                         castCsv = fetchedCast.joinToString(", ").ifBlank { latestRow.castCsv },
                                         watchedCodesCsv = if (isStillComp) {
-                                            TvTimeProgressCalculator.serializeWatchedSet(finalEps.map { it.code }.toSet())
+                                            TvTimeProgressCalculator.serializeWatchedSet(airedFinal.map { it.code }.toSet())
                                         } else {
                                             latestRow.watchedCodesCsv
                                         },
@@ -914,7 +917,8 @@ fun TvTimeMainScreen(
                                             castCsv = fetchedCast.joinToString(", ")
                                         }
                                     }
-                                    val allCodes = eps.map { it.code.uppercase() }.toSet()
+                                    val airedEps = TvTimeProgressCalculator.filterAiredEpisodes(eps).ifEmpty { eps.take(1) }
+                                    val allCodes = airedEps.map { it.code.uppercase() }.toSet()
                                     val updatedShow = show.copy(
                                         watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(allCodes),
                                         userStatus = "completed",
@@ -1047,8 +1051,9 @@ fun TvTimeMainScreen(
                                                 EpisodeModel("S01E01", 1, 1, "Pilot", "${item.year}-01-01", item.runtimeMins)
                                             )
                                             val watchedCsv = if (isCompleted) {
+                                                val airedFinal = TvTimeProgressCalculator.filterAiredEpisodes(finalEps).ifEmpty { finalEps.take(1) }
                                                 TvTimeProgressCalculator.serializeWatchedSet(
-                                                    finalEps.map { it.code.uppercase() }.toSet()
+                                                    airedFinal.map { it.code.uppercase() }.toSet()
                                                 )
                                             } else ""
                                             dao.insertShow(

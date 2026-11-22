@@ -165,13 +165,22 @@ object FirestoreSyncService {
 
     fun compactShowEntityToFirestoreJson(s: ShowEntity): JSONObject {
         val meta = TvTimeProgressCalculator.parseCompactedMeta(s.episodesJson)
+        val todayIso = java.time.LocalDate.now().toString()
+        val preUnaired = if (isSyntheticEpisodeList(meta.episodes)) {
+            emptySet()
+        } else {
+            TvTimeProgressCalculator.buildUnairedCodeSet(meta.episodes, todayIso, meta.completedSeasons.isNotEmpty())
+        }
         val rawWatched = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv)
+            .filter { !preUnaired.contains(it) }
+            .toSet()
         val prog = TvTimeProgressCalculator.computeShowProgress(
             episodes = meta.episodes,
             watchedCodes = rawWatched,
             rawUserStatus = s.userStatus,
             totalEpisodesOverride = meta.totalEpisodes,
-            completedSeasons = meta.completedSeasons
+            completedSeasons = meta.completedSeasons,
+            todayIso = todayIso
         )
         val effStatus = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, s.userStatus)
         val defaultRt = s.runtimeMins.coerceAtLeast(15)
@@ -191,7 +200,6 @@ object FirestoreSyncService {
             if (s.lastWatchedAt.isNotBlank()) put("lastWatchedAt", s.lastWatchedAt)
         }
 
-        val todayIso = java.time.LocalDate.now().toString()
         val earliestFutureOverall = meta.episodes
             .filter { TvTimeProgressCalculator.isFutureEpisode(it, todayIso) }
             .minWithOrNull(compareBy<EpisodeModel> { it.airDate.take(10) }.thenBy { it.season }.thenBy { it.number })

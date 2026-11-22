@@ -20,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -614,13 +615,20 @@ fun ShowDetailBottomSheet(
                     )
                 }
             } else {
-                // Episodes Tab: Grouped by Season with Accordions + Season & Episode Watch Toggles
+                // Episodes Tab: Grouped by Season with Accordions + Season & Episode Watch Toggles (Unaired locked)
                 val groupedBySeason = remember(episodes) {
                     episodes
                         .sortedWith(compareBy({ it.season }, { it.number }))
                         .groupBy { it.season }
                         .toSortedMap()
                 }
+                val unairedCodes = remember(episodes, completedSeasons) {
+                    TvTimeProgressCalculator.buildUnairedCodeSet(
+                        episodes = episodes,
+                        hasPriorCompletedSeasons = completedSeasons.isNotEmpty()
+                    )
+                }
+                val itemIsCompleted = effectiveStatus == "completed"
                 val listState = rememberLazyListState()
 
                 LaunchedEffect(show.id, episodes.size) {
@@ -644,8 +652,16 @@ fun ShowDetailBottomSheet(
                 ) {
                     groupedBySeason.forEach { (seasonNum, seasonEps) ->
                         val isSeasonOpen = openSeasons.contains(seasonNum)
-                        val watchedInSeason = seasonEps.count { watchedSet.contains(it.code.uppercase()) }
-                        val allSeasonWatched = seasonEps.isNotEmpty() && watchedInSeason == seasonEps.size
+                        val airedSeasonEps = seasonEps.filter { !unairedCodes.contains(it.code.trim().uppercase()) }
+                        val upcomingInSeason = seasonEps.size - airedSeasonEps.size
+                        val isCompactedSeason = (completedSeasons[seasonNum] ?: 0) > 0
+                        val watchedInSeason = if (itemIsCompleted || isCompactedSeason) {
+                            airedSeasonEps.size
+                        } else {
+                            airedSeasonEps.count { watchedSet.contains(it.code.trim().uppercase()) }
+                        }
+                        val allSeasonWatched = (airedSeasonEps.isNotEmpty() && watchedInSeason == airedSeasonEps.size) ||
+                            (airedSeasonEps.isEmpty() && isCompactedSeason)
 
                         item(key = "season_header_$seasonNum") {
                             Surface(
@@ -668,64 +684,85 @@ fun ShowDetailBottomSheet(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
-                                        // Season-wide check button: turns green when all episodes in this season are watched
-                                        Box(
-                                            modifier = Modifier
-                                                .size(36.dp)
-                                                .clip(CircleShape)
-                                                .background(
-                                                    if (allSeasonWatched) TvTimePalette.GreenProgress else Color(0xFF232329)
-                                                )
-                                                .clickable {
-                                                    val validCodes = episodes.map { it.code.trim().uppercase() }.toSet()
-                                                    val nextSet = watchedSet
-                                                        .map { it.trim().uppercase() }
-                                                        .filter { validCodes.isEmpty() || validCodes.contains(it) }
-                                                        .toMutableSet()
-                                                    if (allSeasonWatched) {
-                                                        val nextComp = completedSeasons.toMutableMap().apply { remove(seasonNum) }
-                                                        seasonEps.forEach { nextSet.remove(it.code.trim().uppercase()) }
-                                                        val baseStatus = if (userStatus == "completed") "in_progress" else userStatus
-                                                        if (nextSet.isEmpty() && nextComp.isEmpty() && baseStatus != "stopped") {
-                                                            val toDeleteId = persistedShowId
-                                                            persistedShowId = 0L
-                                                            watchedSet = emptySet()
-                                                            completedSeasons = emptyMap()
-                                                            userStatus = "preview"
-                                                            if (toDeleteId != 0L) {
-                                                                scope.launch {
-                                                                    dao.deleteShow(toDeleteId)
-                                                                    FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                        if (airedSeasonEps.isNotEmpty() || isCompactedSeason) {
+                                            // Season-wide check button: toggles ONLY aired episodes in this season
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(36.dp)
+                                                    .clip(CircleShape)
+                                                    .background(
+                                                        if (allSeasonWatched) TvTimePalette.GreenProgress else Color(0xFF232329)
+                                                    )
+                                                    .clickable {
+                                                        val validCodes = episodes.map { it.code.trim().uppercase() }.toSet()
+                                                        val nextSet = watchedSet
+                                                            .map { it.trim().uppercase() }
+                                                            .filter { !unairedCodes.contains(it) && (validCodes.isEmpty() || validCodes.contains(it)) }
+                                                            .toMutableSet()
+                                                        if (userStatus == "completed" && nextSet.isEmpty()) {
+                                                            episodes.forEach { epItem ->
+                                                                val c = epItem.code.trim().uppercase()
+                                                                if (c.isNotEmpty() && !unairedCodes.contains(c)) nextSet.add(c)
+                                                            }
+                                                        }
+                                                        if (allSeasonWatched) {
+                                                            val nextComp = completedSeasons.toMutableMap().apply { remove(seasonNum) }
+                                                            seasonEps.forEach { nextSet.remove(it.code.trim().uppercase()) }
+                                                            val baseStatus = if (userStatus == "completed") "in_progress" else userStatus
+                                                            if (nextSet.isEmpty() && nextComp.isEmpty() && baseStatus != "stopped") {
+                                                                val toDeleteId = persistedShowId
+                                                                persistedShowId = 0L
+                                                                watchedSet = emptySet()
+                                                                completedSeasons = emptyMap()
+                                                                userStatus = "preview"
+                                                                if (toDeleteId != 0L) {
+                                                                    scope.launch {
+                                                                        dao.deleteShow(toDeleteId)
+                                                                        FirestoreSyncService.pushLocalStateToFirestore(dao, currentUserId)
+                                                                    }
                                                                 }
+                                                            } else {
+                                                                completedSeasons = nextComp
+                                                                val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
+                                                                watchedSet = nextSet
+                                                                userStatus = nextStat
+                                                                persistUpdatedShow(
+                                                                    nextWatchedSet = nextSet,
+                                                                    nextStatus = nextStat,
+                                                                    nextCompletedSeasons = nextComp
+                                                                )
                                                             }
                                                         } else {
-                                                            completedSeasons = nextComp
+                                                            val baseStatus = if (userStatus == "stopped") "in_progress" else userStatus
+                                                            airedSeasonEps.forEach { nextSet.add(it.code.trim().uppercase()) }
                                                             val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
                                                             watchedSet = nextSet
                                                             userStatus = nextStat
-                                                            persistUpdatedShow(
-                                                                nextWatchedSet = nextSet,
-                                                                nextStatus = nextStat,
-                                                                nextCompletedSeasons = nextComp
-                                                            )
+                                                            persistUpdatedShow(nextWatchedSet = nextSet, nextStatus = nextStat)
                                                         }
-                                                    } else {
-                                                        val baseStatus = if (userStatus == "stopped") "in_progress" else userStatus
-                                                        seasonEps.forEach { nextSet.add(it.code.trim().uppercase()) }
-                                                        val nextStat = deriveStatusFromWatched(episodes, nextSet, baseStatus)
-                                                        watchedSet = nextSet
-                                                        userStatus = nextStat
-                                                        persistUpdatedShow(nextWatchedSet = nextSet, nextStatus = nextStat)
-                                                    }
-                                                },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Check,
-                                                contentDescription = if (allSeasonWatched) "Season Watched" else "Mark Season Watched",
-                                                tint = if (allSeasonWatched) Color.White else TvTimePalette.TextSecondary,
-                                                modifier = Modifier.size(18.dp)
-                                            )
+                                                    },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = if (allSeasonWatched) "Season Watched" else "Mark Season Watched",
+                                                    tint = if (allSeasonWatched) Color.White else TvTimePalette.TextSecondary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        } else {
+                                            Surface(
+                                                shape = RoundedCornerShape(50),
+                                                color = Color(0xFF232329),
+                                                border = BorderStroke(1.dp, TvTimePalette.Border)
+                                            ) {
+                                                Text(
+                                                    text = "Upcoming",
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                    color = TvTimePalette.TextSecondary,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                )
+                                            }
                                         }
 
                                         Text(
@@ -737,8 +774,13 @@ fun ShowDetailBottomSheet(
                                         )
                                     }
 
+                                    val seasonCountText = when {
+                                        airedSeasonEps.isEmpty() && !isCompactedSeason -> "$upcomingInSeason upcoming"
+                                        upcomingInSeason > 0 -> "$watchedInSeason/${airedSeasonEps.size} aired · $upcomingInSeason upcoming"
+                                        else -> "$watchedInSeason/${seasonEps.size} watched"
+                                    }
                                     Text(
-                                        text = "$watchedInSeason/${seasonEps.size} watched  ${if (isSeasonOpen) "∧" else "∨"}",
+                                        text = "$seasonCountText  ${if (isSeasonOpen) "∧" else "∨"}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = if (allSeasonWatched) TvTimePalette.GreenProgress else TvTimePalette.TextSecondary,
                                         maxLines = 1
@@ -750,18 +792,26 @@ fun ShowDetailBottomSheet(
                         if (isSeasonOpen) {
                             items(seasonEps, key = { "ep_${it.code}" }) { ep ->
                                 val epCodeUpper = ep.code.trim().uppercase()
-                                val isWatched = watchedSet.contains(epCodeUpper)
+                                val isUnaired = unairedCodes.contains(epCodeUpper)
+                                val isWatched = !isUnaired && (itemIsCompleted || isCompactedSeason || watchedSet.contains(epCodeUpper))
 
-                                val toggleSingleEpisode = {
+                                val toggleSingleEpisode = toggleEp@{
+                                    if (isUnaired) return@toggleEp
                                     val validCodes = episodes.map { it.code.trim().uppercase() }.toSet()
                                     val nextSet = watchedSet
                                         .map { it.trim().uppercase() }
-                                        .filter { validCodes.isEmpty() || validCodes.contains(it) }
+                                        .filter { !unairedCodes.contains(it) && (validCodes.isEmpty() || validCodes.contains(it)) }
                                         .toMutableSet()
+                                    if (userStatus == "completed" && nextSet.isEmpty()) {
+                                        episodes.forEach { epItem ->
+                                            val c = epItem.code.trim().uppercase()
+                                            if (c.isNotEmpty() && !unairedCodes.contains(c)) nextSet.add(c)
+                                        }
+                                    }
                                     if (isWatched) {
                                         val nextComp = completedSeasons.toMutableMap()
                                         if (nextComp.containsKey(ep.season)) {
-                                            seasonEps.forEach { nextSet.add(it.code.trim().uppercase()) }
+                                            airedSeasonEps.forEach { nextSet.add(it.code.trim().uppercase()) }
                                             nextComp.remove(ep.season)
                                         }
                                         nextSet.remove(epCodeUpper)
@@ -802,7 +852,10 @@ fun ShowDetailBottomSheet(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable { toggleSingleEpisode() }
+                                        .alpha(if (isUnaired) 0.6f else 1f)
+                                        .then(
+                                            if (isUnaired) Modifier else Modifier.clickable { toggleSingleEpisode() }
+                                        )
                                         .padding(vertical = 6.dp, horizontal = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -819,33 +872,48 @@ fun ShowDetailBottomSheet(
                                         Text(
                                             text = "${ep.formattedDotCode} · ${ep.title}",
                                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                            color = Color.White,
+                                            color = if (isUnaired) Color(0xFFD4D4D8) else Color.White,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = "${ep.airDate.ifBlank { "Aired" }} · ${ep.runtimeMins}m",
+                                            text = "${ep.airDate.ifBlank { if (isUnaired) "TBA" else "Aired" }} · ${ep.runtimeMins}m",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = TvTimePalette.TextSecondary
                                         )
                                     }
 
-                                    Box(
-                                        modifier = Modifier
-                                            .size(40.dp)
-                                            .clip(CircleShape)
-                                            .background(
-                                                if (isWatched) TvTimePalette.GreenProgress else Color(0xFF232329)
+                                    if (isUnaired) {
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = Color(0xFF232329),
+                                            border = BorderStroke(1.dp, TvTimePalette.Border)
+                                        ) {
+                                            Text(
+                                                text = "Upcoming",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = TvTimePalette.TextSecondary,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                             )
-                                            .clickable { toggleSingleEpisode() },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = if (isWatched) "Watched" else "Mark Watched",
-                                            tint = if (isWatched) Color.White else TvTimePalette.TextSecondary,
-                                            modifier = Modifier.size(20.dp)
-                                        )
+                                        }
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    if (isWatched) TvTimePalette.GreenProgress else Color(0xFF232329)
+                                                )
+                                                .clickable { toggleSingleEpisode() },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = if (isWatched) "Watched" else "Mark Watched",
+                                                tint = if (isWatched) Color.White else TvTimePalette.TextSecondary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }

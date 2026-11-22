@@ -195,6 +195,11 @@ export class FirestoreRepository {
       todayIso,
       Object.keys(completedSeasons).length > 0
     );
+    if (!FirestoreRepository.isSyntheticEpisodeList(eps)) {
+      for (const uCode of unairedCodes) {
+        watchedSet.delete(uCode);
+      }
+    }
     const isUnairedEp = (ep) => unairedCodes.has(String((ep && ep.code) || "").trim().toUpperCase());
 
     let nextUpcomingEp = null;
