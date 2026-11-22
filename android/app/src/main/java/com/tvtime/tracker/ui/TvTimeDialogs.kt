@@ -136,7 +136,8 @@ fun ShowDetailBottomSheet(
         nextCastCsv: String = castCsv,
         nextCompletedSeasons: Map<Int, Int> = completedSeasons,
         nextTotalOverride: Int = totalEpisodesOverride,
-        nextOverview: String = showOverview
+        nextOverview: String = showOverview,
+        nextRuntimeOverride: Int = 0
     ) {
         val cleanStatus = if (nextStatus == "preview") "interested" else nextStatus
         val airedCount = TvTimeProgressCalculator.filterAiredEpisodes(nextEpisodes).size
@@ -152,6 +153,7 @@ fun ShowDetailBottomSheet(
         val updated = show.copy(
             id = persistedShowId,
             overview = nextOverview,
+            runtimeMins = nextRuntimeOverride.takeIf { it > 0 } ?: show.runtimeMins,
             episodesJson = serializedEpisodes,
             watchedCodesCsv = TvTimeProgressCalculator.serializeWatchedSet(nextWatchedSet),
             userStatus = cleanStatus,
@@ -195,12 +197,12 @@ fun ShowDetailBottomSheet(
         if (guide.overviewOverride.isNotBlank() && showOverview.isBlank()) {
             showOverview = guide.overviewOverride
         }
-        if (fetchedEps.isEmpty() && guide.totalEpisodesOverride > 1 && episodes.size <= 1) {
+        if (fetchedEps.isEmpty() && guide.totalEpisodesOverride > 1 && guide.totalEpisodesOverride > episodes.size) {
             val prevTotal = totalEpisodesOverride
             totalEpisodesOverride = maxOf(guide.totalEpisodesOverride, prevTotal)
             episodes = emptyList()
             if (fetchedCast.isNotEmpty()) castCsv = fetchedCast.joinToString(", ")
-            if (persistedShowId != 0L && guide.totalEpisodesOverride > prevTotal) {
+            if (persistedShowId != 0L && (guide.totalEpisodesOverride > prevTotal || episodes.isNotEmpty())) {
                 persistUpdatedShow(
                     nextEpisodes = emptyList(),
                     nextWatchedSet = if (userStatus == "completed") emptySet() else watchedSet,
@@ -208,7 +210,8 @@ fun ShowDetailBottomSheet(
                     nextCastCsv = castCsv,
                     nextCompletedSeasons = completedSeasons,
                     nextTotalOverride = totalEpisodesOverride,
-                    nextOverview = showOverview
+                    nextOverview = showOverview,
+                    nextRuntimeOverride = guide.runtimeMinsOverride
                 )
             }
         }

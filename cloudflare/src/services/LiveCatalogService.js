@@ -1760,14 +1760,122 @@ export class LiveCatalogService {
     );
   }
 
+  static parseWikiDateMs(raw) {
+    const clean = String(raw || "")
+      .replace(/\[\[|\]\]/g, " ")
+      .replace(/\{\{[^}]*\}\}/g, " ")
+      .replace(/<[^>]*>/g, " ")
+      .trim();
+    const months = {
+      january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+      july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+    };
+    const m1 = /\b([0-9]{1,2})\s+([A-Za-z]+)\s+([12][0-9]{3})\b/.exec(clean);
+    if (m1 && months[m1[2].toLowerCase()] !== undefined) {
+      return Date.UTC(parseInt(m1[3], 10), months[m1[2].toLowerCase()], parseInt(m1[1], 10));
+    }
+    const m2 = /\b([A-Za-z]+)\s+([0-9]{1,2}),?\s+([12][0-9]{3})\b/.exec(clean);
+    if (m2 && months[m2[1].toLowerCase()] !== undefined) {
+      return Date.UTC(parseInt(m2[3], 10), months[m2[1].toLowerCase()], parseInt(m2[2], 10));
+    }
+    return 0;
+  }
+
+  static parseSeasonTableEpisodes(wt, queryTitle = "", pageTitle = "") {
+    if (!wt) return 0;
+    const cleanQueryWords = String(queryTitle || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter((w) => w.length >= 3);
+    const pageWords = new Set(
+      String(pageTitle || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim()
+        .split(/\s+/)
+    );
+    const sponsorTokens = cleanQueryWords.filter((w) => !pageWords.has(w) && w !== "series" && w !== "the");
+
+    const tables = String(wt).match(/\{\|[\s\S]*?\|\}/g) || [];
+    const nowMs = Date.now();
+    for (const tb of tables) {
+      const cleanTb = tb.replace(/<ref[\s\S]*?(?:<\/ref>|\/>)/gi, "");
+      const rows = cleanTb.split(/\n\|-/);
+      const header = rows[0] || "";
+      if (!/season/i.test(header)) continue;
+      const hasEpisodesCol = /\bepisodes?\b/i.test(header);
+      const hasAiredCols = /aired|first\s+aired|original\s+release/i.test(header);
+      if (!hasEpisodesCol && !hasAiredCols) continue;
+
+      let totalAll = 0;
+      let totalSponsor = 0;
+      let headerEpIdx = -1;
+      if (hasEpisodesCol) {
+        const hCells = header
+          .split(/!!|\n!/)
+          .map((c) => c.replace(/^[\s!|]+/, "").trim())
+          .filter(Boolean);
+        headerEpIdx = hCells.findIndex((c) => /\bepisodes?\b/i.test(c));
+      }
+
+      for (let ri = 1; ri < rows.length; ri++) {
+        const row = rows[ri];
+        const cells = row
+          .split(/\|\||\n\|/)
+          .map((c) => c.trim())
+          .filter(Boolean);
+        if (cells.length < 2) continue;
+        let rowEps = 0;
+        if (headerEpIdx >= 0 && cells[headerEpIdx]) {
+          const mEp = /^([0-9]{1,4})$/.exec(cells[headerEpIdx].replace(/,/g, "").trim());
+          if (mEp) rowEps = parseInt(mEp[1], 10);
+        }
+        if (rowEps === 0 && hasAiredCols) {
+          const dateValues = [];
+          for (const cell of cells) {
+            const dMs = LiveCatalogService.parseWikiDateMs(cell);
+            if (dMs > 0) dateValues.push(dMs);
+          }
+          if (dateValues.length >= 2 && dateValues[1] > dateValues[0]) {
+            const startMs = dateValues[0];
+            const endMs = Math.min(dateValues[1], nowMs);
+            if (endMs > startMs) {
+              const rowLower = row.toLowerCase();
+              const perWeek =
+                /mon[^a-z0-9]{1,5}sat/.test(rowLower)
+                  ? 6
+                  : /mon[^a-z0-9]{1,5}fri/.test(rowLower)
+                    ? 5
+                    : /\bdaily\b/.test(rowLower)
+                      ? 7
+                      : 2;
+              rowEps = Math.max(1, Math.round(((endMs - startMs) / (7 * 86400000)) * perWeek));
+            }
+          }
+        }
+        if (rowEps > 0) {
+          totalAll += rowEps;
+          if (sponsorTokens.length > 0 && sponsorTokens.every((tk) => row.toLowerCase().includes(tk))) {
+            totalSponsor += rowEps;
+          }
+        }
+      }
+      if (totalSponsor >= 5) return totalSponsor;
+      if (totalAll >= 5) return totalAll;
+    }
+    return 0;
+  }
+
   /**
    * Resolves episode count, runtime, network, overview, and poster via Wikipedia Infoboxes,
-   * Wikipedia Broadcaster Program Tables (e.g. Chandanamazha -> 1,173 eps on Asianet), and Wikidata P1113.
+   * Wikipedia Season Tables, Broadcaster Program Tables (e.g. Chandanamazha -> 1,173 eps on Asianet), and Wikidata P1113.
    */
   static async lookupWikipediaShowMeta({ title = "", year = 0, imdbId = "", fetchImpl = fetch } = {}) {
     const cleanTitle = String(title || "").trim();
     const cleanImdb = /^tt\d+$/i.test(String(imdbId || "").trim()) ? String(imdbId).trim().toLowerCase() : "";
-    const out = { totalEpisodes: 0, runtimeMins: 0, network: "", overview: "", posterUrl: "", status: "", isIndian: false };
+    const out = { totalEpisodes: 0, runtimeMins: 0, year: 0, network: "", overview: "", posterUrl: "", status: "", isIndian: false };
     if (!cleanTitle && !cleanImdb) return out;
     const wikiHeaders = { "User-Agent": "MovieDBTracker/1.0 (https://moviedb-website.madhavsankar.workers.dev)" };
 
@@ -1779,10 +1887,17 @@ export class LiveCatalogService {
         const n = parseInt(mEps[1].replace(/,/g, ""), 10);
         if (n >= 2 && n <= 25000) out.totalEpisodes = n;
       }
-      const mRt = wt.match(/runtime\s*=\s*[^0-9\n]{0,25}([0-9]{2,3})/i);
+      const mRt = wt.match(/runtime\s*=\s*[^0-9\n]{0,25}([0-9]{2,3})(?:\s*[-\u2013\u2014]\s*([0-9]{2,3}))?/i);
       if (mRt) {
-        const r = parseInt(mRt[1], 10);
-        if (r >= 10 && r <= 180) out.runtimeMins = r;
+        const r1 = parseInt(mRt[1], 10);
+        const r2 = mRt[2] ? parseInt(mRt[2], 10) : 0;
+        if (r1 >= 10 && r1 <= 180) {
+          out.runtimeMins = r2 >= r1 && r2 <= 240 ? Math.round((r1 + r2) / 2) : r1;
+        }
+      }
+      const mYr = wt.match(/first_aired\s*=\s*[^\n]*?\b(19[5-9][0-9]|20[0-3][0-9])\b/i);
+      if (mYr && !out.year) {
+        out.year = parseInt(mYr[1], 10);
       }
       const mNet = wt.match(/network\s*=\s*(?:\[\[([^\]|]+)(?:\|[^\]]+)?\]\]|([^\n|<{}]+))/i);
       if (mNet && !out.network) {
@@ -1799,17 +1914,24 @@ export class LiveCatalogService {
       }
     };
 
-    // 1. Direct Wikipedia Infobox lookup (e.g. "Parasparam (TV series)" -> 1524 eps, "Vanambadi (TV series)" -> 1013 eps, "Karuthamuthu" -> 1450 eps)
+    // 1. Direct Wikipedia Infobox lookup (e.g. "Parasparam (TV series)" -> 1524 eps, "Uppum Mulakum" -> 2400 eps, "Banoo Main Teri Dulhann" -> 700 eps)
+    let matchedInfoboxPageId = 0;
+    let matchedInfoboxTitle = "";
     if (cleanTitle) {
       const candidates = [cleanTitle, `${cleanTitle} (TV series)`];
       if (Number(year) > 1950) candidates.push(`${cleanTitle} (${year} TV series)`);
+      if (cleanTitle.includes(":")) {
+        const afterColon = cleanTitle.split(":").slice(1).join(":").trim();
+        if (afterColon.length >= 4) {
+          candidates.push(afterColon, `${afterColon} (TV series)`);
+        }
+      }
       try {
         const directUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(candidates.join("|"))}&prop=revisions|extracts|pageimages&exintro=1&explaintext=1&rvprop=content&rvsection=0&piprop=thumbnail&pithumbsize=500&format=json&redirects=1&origin=*`;
         const resp = await fetchImpl(directUrl, { headers: wikiHeaders });
         if (resp && resp.ok) {
           const data = await resp.json();
           const pages = Object.values(data?.query?.pages || {}).filter((p) => p && Number(p.pageid) > 0);
-          // Prefer "(TV series)" page if multiple match
           pages.sort((a, b) => (/tv series/i.test(b.title || "") ? 1 : 0) - (/tv series/i.test(a.title || "") ? 1 : 0));
           for (const page of pages) {
             const rev = page.revisions?.[0];
@@ -1824,7 +1946,30 @@ export class LiveCatalogService {
             if (page.thumbnail?.source && !out.posterUrl) {
               out.posterUrl = String(page.thumbnail.source);
             }
+            matchedInfoboxPageId = Number(page.pageid) || 0;
+            matchedInfoboxTitle = String(page.title || "");
             if (out.totalEpisodes > 0) break;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 1b. If an Indian Infobox television page lacked `num_episodes` (e.g. "Idea Star Singer" -> "Star Singer"),
+    // parse its full Wikipedia Season Table (episode column or season date-range x telecast frequency)!
+    if (out.totalEpisodes === 0 && out.isIndian && matchedInfoboxPageId > 0) {
+      try {
+        const fullUrl = `https://en.wikipedia.org/w/api.php?action=query&pageids=${matchedInfoboxPageId}&prop=revisions&rvprop=content&format=json&origin=*`;
+        const fResp = await fetchImpl(fullUrl, { headers: wikiHeaders });
+        if (fResp && fResp.ok) {
+          const fData = await fResp.json();
+          const fPage = fData?.query?.pages?.[String(matchedInfoboxPageId)];
+          const fRev = fPage?.revisions?.[0];
+          const fullWt = fRev?.slots?.main?.["*"] || fRev?.["*"] || "";
+          const tableEps = LiveCatalogService.parseSeasonTableEpisodes(fullWt, cleanTitle, matchedInfoboxTitle);
+          if (tableEps >= 5) {
+            out.totalEpisodes = tableEps;
+            if (!out.network && /\basianet\b/i.test(fullWt.slice(0, 1500))) out.network = "Asianet";
+            if (!out.status) out.status = "Ended";
           }
         }
       } catch (_) {}
@@ -2185,35 +2330,45 @@ export class LiveCatalogService {
             }
             episodes.sort((a, b) => (a.season - b.season) || (a.number - b.number));
 
-            // When TMDB only has 1-3 stub episodes for an Indian serial (e.g. Parasparam, Vanambadi, Kudumbavilakku),
+            // When TMDB has 0-3 stub episodes (including TMDB 'IO' country typos like Banoo Main Teri Dulhann & Idea Star Singer)
+            // OR an incomplete <= 40-episode stub on an Indian serial (e.g. Uppum Mulakum: 21 on TMDB vs 2,400+ on Wikipedia),
             // check Wikipedia/Wikidata for the confirmed total episode count and switch to clean count-only mode!
-            if (episodes.length <= 3) {
-              const indianLangSet = new Set(["hi", "ml", "ta", "te", "kn", "bn", "mr", "pa", "gu", "ur", "or", "as"]);
-              const originCountries = Array.isArray(show.origin_country) ? show.origin_country.map((c) => String(c || "").toUpperCase()) : [];
-              const origLang = String(show.original_language || "").trim().toLowerCase();
-              const tmdbIsIndian =
-                originCountries.includes("IN") ||
-                indianLangSet.has(origLang) ||
-                LiveCatalogService.isIndianSeriesMetadata(rawNet);
+            const indianLangSet = new Set(["hi", "ml", "ta", "te", "kn", "bn", "mr", "pa", "gu", "ur", "or", "as"]);
+            const originCountries = Array.isArray(show.origin_country) ? show.origin_country.map((c) => String(c || "").toUpperCase()) : [];
+            const origLang = String(show.original_language || "").trim().toLowerCase();
+            const hasEmptySeasons = (show.seasons || []).some((s) => Number(s?.season_number) >= 1 && Number(s?.episode_count || 0) === 0);
+            const tmdbIsIndian =
+              originCountries.includes("IN") ||
+              originCountries.includes("IO") ||
+              indianLangSet.has(origLang) ||
+              LiveCatalogService.isIndianSeriesMetadata(rawNet);
+            const shouldCheckWikiCountOnly =
+              episodes.length <= 3 || (tmdbIsIndian && (episodes.length <= 40 || hasEmptySeasons));
+            if (shouldCheckWikiCountOnly) {
               const tmdbExplicitlyNonIndian =
+                episodes.length > 0 &&
                 !tmdbIsIndian &&
-                ((originCountries.length > 0 && !originCountries.includes("IN")) ||
+                ((originCountries.length > 0 && !originCountries.includes("IN") && !originCountries.includes("IO")) ||
                   (origLang.length > 0 && !indianLangSet.has(origLang)));
               if (!tmdbExplicitlyNonIndian) {
                 const wikiMeta = await LiveCatalogService.lookupWikipediaShowMeta({
                   title: show.name || cleanTitle,
-                  year,
+                  year: firstAir ? year : 0,
                   fetchImpl,
                 });
                 const wikiConfirmedTotal = Number(wikiMeta.totalEpisodes) || 0;
-                if ((tmdbIsIndian || wikiMeta.isIndian) && wikiConfirmedTotal > episodes.length && wikiConfirmedTotal >= 5) {
+                const meetsCountThreshold =
+                  episodes.length <= 3
+                    ? wikiConfirmedTotal >= 5 && wikiConfirmedTotal > episodes.length
+                    : wikiConfirmedTotal >= Math.max(25, episodes.length * 3);
+                if ((tmdbIsIndian || wikiMeta.isIndian) && meetsCountThreshold) {
                   const hasExplicitTmdbRt = Array.isArray(show.episode_run_time) && Number(show.episode_run_time[0]) > 0;
                   return {
                     id: `tmdb_tv_${show.id}`,
                     tvmazeId: 0,
                     tmdbId: show.id,
                     title: show.name || "Untitled Show",
-                    year,
+                    year: firstAir ? year : wikiMeta.year || year,
                     network: wikiMeta.network && network === "Streaming" ? wikiMeta.network : network,
                     status: wikiMeta.status || show.status || "Running",
                     runtimeMins: hasExplicitTmdbRt ? defaultRuntime : wikiMeta.runtimeMins || 22,

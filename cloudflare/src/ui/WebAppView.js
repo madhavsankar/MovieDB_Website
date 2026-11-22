@@ -4762,10 +4762,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                     show.watchedEpisodes = Array.from(expandedWatched).sort();
                   }
                   changed = true;
-                } else if (fullEps.length === 0 && Number(full.totalEpisodes) > 1 && prevEps.length <= 1) {
+                } else if (fullEps.length === 0 && Number(full.totalEpisodes) > 1 && Number(full.totalEpisodes) > prevEps.length) {
                   show.episodes = [];
                   show.totalEpisodes = Math.max(Number(full.totalEpisodes) || 1, Number(show.totalEpisodes) || 1);
                   if (full.runtimeMins && Number(full.runtimeMins) > 0) show.runtimeMins = Number(full.runtimeMins);
+                  if (full.year && Number(full.year) > 1950 && Number(show.year) >= 2024) show.year = Number(full.year);
                   if (full.posterUrl && !show.posterUrl) show.posterUrl = full.posterUrl;
                   if (String(show.userStatus || "").toLowerCase() === "completed") {
                     show.watchedEpisodes = [];

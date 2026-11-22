@@ -2157,6 +2157,123 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                     })
                   };
                 }
+                if (u.includes("api.themoviedb.org/3/tv/73704?append_to_response=credits")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      id: 73704,
+                      name: "Uppum Mulakum",
+                      origin_country: ["IN"],
+                      original_language: "ml",
+                      first_air_date: "2015-12-14",
+                      number_of_episodes: 21,
+                      episode_run_time: [],
+                      seasons: [{ season_number: 1, episode_count: 21 }, { season_number: 2, episode_count: 0 }]
+                    })
+                  };
+                }
+                if (u.includes("api.themoviedb.org/3/tv/73704?append_to_response=season/1")) {
+                  const stub21 = [];
+                  for (let i = 1; i <= 21; i++) stub21.push({ episode_number: i, name: "Episode " + i, air_date: "2015-12-14" });
+                  return { ok: true, json: async () => ({ "season/1": { episodes: stub21 }, "season/2": { episodes: [] } }) };
+                }
+                if (u.includes("en.wikipedia.org") && u.includes("Uppum%20Mulakum")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      query: {
+                        pages: {
+                          "701": {
+                            pageid: 701,
+                            title: "Uppum Mulakum",
+                            extract: "Uppum Mulakum is an Indian Malayalam sitcom.",
+                            revisions: [{ "*": "{{Infobox television | num_episodes = 2400+ | runtime = 30 minutes | network = [[Flowers TV]] }}" }]
+                          }
+                        }
+                      }
+                    })
+                  };
+                }
+                if (u.includes("api.themoviedb.org/3/tv/2638?append_to_response=credits")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      id: 2638,
+                      name: "Banoo Main Teri Dulhann",
+                      origin_country: ["IO"],
+                      original_language: "en",
+                      first_air_date: "",
+                      number_of_episodes: 0,
+                      episode_run_time: [],
+                      seasons: []
+                    })
+                  };
+                }
+                if (u.includes("en.wikipedia.org") && u.includes("Banoo%20Main%20Teri%20Dulhann")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      query: {
+                        pages: {
+                          "702": {
+                            pageid: 702,
+                            title: "Banoo Main Teri Dulhann",
+                            extract: "Banoo Main Teri Dulhann is an Indian soap opera.",
+                            revisions: [{ "*": "{{Infobox television | first_aired = 14 August 2006 | num_episodes = 700 | runtime = 22 minutes | network = [[ZEE TV]] }}" }]
+                          }
+                        }
+                      }
+                    })
+                  };
+                }
+                if (u.includes("api.themoviedb.org/3/tv/6812?append_to_response=credits")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      id: 6812,
+                      name: "Idea Star Singer",
+                      origin_country: ["IO"],
+                      original_language: "en",
+                      first_air_date: "",
+                      number_of_episodes: 0,
+                      episode_run_time: [],
+                      seasons: [{ season_number: 6, episode_count: 0 }]
+                    })
+                  };
+                }
+                if (u.includes("en.wikipedia.org") && u.includes("Idea%20Star%20Singer")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      query: {
+                        pages: {
+                          "703": {
+                            pageid: 703,
+                            title: "Star Singer",
+                            extract: "Star Singer is an Indian Malayalam music reality competition on Asianet.",
+                            revisions: [{ "*": "{{Infobox television | first_aired = 22 April 2006 | runtime = 60–90 minutes | num_seasons = 10 }}" }]
+                          }
+                        }
+                      }
+                    })
+                  };
+                }
+                if (u.includes("en.wikipedia.org") && u.includes("pageids=703")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      query: {
+                        pages: {
+                          "703": {
+                            pageid: 703,
+                            title: "Star Singer",
+                            revisions: [{ "*": "{| class=\\"wikitable\\"\\n! Season !! Aired from !! Aired till !! Sponsors !! Telecast Frequency\\n|-\\n| 1 || 22 April 2006 || 18 February 2007 || [[Idea Cellular]] || Weekends only\\n|-\\n| 2 || 21 May 2007 || 26 April 2008 || Idea Cellular || Mon – Fri\\n|-\\n| 7 || 31 March 2014 || 21 September 2014 || Sunfeast || Mon – Fri\\n|}" }]
+                          }
+                        }
+                      }
+                    })
+                  };
+                }
                 if (u.includes("api.themoviedb.org/3/tv/888888?append_to_response=credits")) {
                   return {
                     ok: true,
@@ -2273,6 +2390,21 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 fetchImpl: mockFetch,
                 env: { TMDB_API_KEY: "dummy" }
               });
+              const uppumDetails = await LiveCatalogService.fetchFullShowFromTvMaze("tmdb_tv_73704", {
+                title: "Uppum Mulakum",
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
+              const dulhanDetails = await LiveCatalogService.fetchFullShowFromTvMaze("tmdb_tv_2638", {
+                title: "Banoo Main Teri Dulhann",
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
+              const ideaStarDetails = await LiveCatalogService.fetchFullShowFromTvMaze("tmdb_tv_6812", {
+                title: "Idea Star Singer",
+                fetchImpl: mockFetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
 
               app.state = { shows: [], movies: [] };
               app.persistState = async () => {};
@@ -2345,6 +2477,12 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 parasparamEpsLen: parasparamDetails?.episodes?.length,
                 britishEpsLen: britishDetails?.episodes?.length,
                 britishCountOnly: Boolean(britishDetails?.countOnly),
+                uppumTotal: uppumDetails?.totalEpisodes,
+                uppumRt: uppumDetails?.runtimeMins,
+                dulhanTotal: dulhanDetails?.totalEpisodes,
+                dulhanYear: dulhanDetails?.year,
+                ideaStarTotal: ideaStarDetails?.totalEpisodes,
+                ideaStarRt: ideaStarDetails?.runtimeMins,
                 partialStatus: compactedPartial.userStatus,
                 partialWatched: progPartial.watchedCount,
                 partialTotal: progPartial.total,
@@ -2375,6 +2513,12 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["parasparamEpsLen"], 0)
         self.assertEqual(out["britishEpsLen"], 2)
         self.assertFalse(out["britishCountOnly"])
+        self.assertEqual(out["uppumTotal"], 2400)
+        self.assertEqual(out["uppumRt"], 30)
+        self.assertEqual(out["dulhanTotal"], 700)
+        self.assertEqual(out["dulhanYear"], 2006)
+        self.assertEqual(out["ideaStarTotal"], 330)
+        self.assertEqual(out["ideaStarRt"], 75)
         self.assertEqual(out["partialStatus"], "stopped")
         self.assertEqual(out["partialWatched"], 350)
         self.assertEqual(out["partialTotal"], 1173)
