@@ -319,6 +319,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Movies</div>
         </div>
       </div>
+
+      <!-- Direct Friend Comparison Card -->
+      <div id="stats-friend-compare-section" class="tv-card rounded-3xl p-5 space-y-4 border border-zinc-800/80"></div>
     </section>
 
     <!-- ========================================================= -->
@@ -1103,6 +1106,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this.isLoadingFriendLibrary = false;
         this.friendLibrarySegment = "shows"; // "shows" | "movies"
         this.friendLibraryFilter = "all"; // "all" | "in_progress" | "interested" | "completed"
+        this.statsCompareFriendId = "";
+        this.statsCompareCache = new Map();
+        this.isLoadingStatsCompare = false;
+        this.statsCompareError = "";
         this.categorySegment = "movies"; // "movies" | "shows"
         this.categoryMovieLang = "ta";
         this.categoryMovieYear = 0; // 0 = All Years
@@ -5386,6 +5393,342 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         return { watchedCount: w, minutes: explicitMins };
       }
 
+      computeLibraryWatchSummary(showsList, moviesList) {
+        const shows = Array.isArray(showsList) ? showsList : [];
+        const movies = Array.isArray(moviesList) ? moviesList : [];
+        let epCount = 0;
+        let showMins = 0;
+        const completedShows = [];
+        const activeOrCompletedShows = [];
+        for (const s of shows) {
+          const wt = this.computeShowWatchTime(s);
+          epCount += wt.watchedCount;
+          showMins += wt.minutes;
+          const st = this.getEffectiveShowStatus(s);
+          const prog = this.computeShowProgress(s);
+          if (st === "completed") completedShows.push(s);
+          if (st === "in_progress" || st === "completed" || (st === "stopped" && prog.watchedCount > 0)) {
+            activeOrCompletedShows.push(s);
+          }
+        }
+        const watchedMovies = [];
+        let movMins = 0;
+        for (const m of movies) {
+          if (m && m.watched) {
+            watchedMovies.push(m);
+            movMins += Math.max(1, Number(m.runtimeMins) || 120);
+          }
+        }
+        return {
+          totalMins: showMins + movMins,
+          showMins,
+          movMins,
+          seriesCount: activeOrCompletedShows.length,
+          epCount,
+          moviesCount: watchedMovies.length,
+          completedShows,
+          activeOrCompletedShows,
+          watchedMovies,
+        };
+      }
+
+      async selectStatsCompareFriend(friendUserId, forceRefresh = false) {
+        const clean = String(friendUserId || "").trim().toLowerCase();
+        if (!clean || (clean === this.statsCompareFriendId && !forceRefresh)) {
+          this.statsCompareFriendId = "";
+          this.statsCompareError = "";
+          this.isLoadingStatsCompare = false;
+          this.renderProfile();
+          return;
+        }
+        this.statsCompareFriendId = clean;
+        this.statsCompareError = "";
+        if (!forceRefresh && this.statsCompareCache && this.statsCompareCache.has(clean)) {
+          this.isLoadingStatsCompare = false;
+          this.renderProfile();
+          return;
+        }
+        if (
+          !forceRefresh &&
+          this.selectedFriendId === clean &&
+          this.selectedFriendLibrary &&
+          Array.isArray(this.selectedFriendLibrary.shows)
+        ) {
+          if (!this.statsCompareCache) this.statsCompareCache = new Map();
+          this.statsCompareCache.set(clean, this.selectedFriendLibrary);
+          this.isLoadingStatsCompare = false;
+          this.renderProfile();
+          return;
+        }
+        this.isLoadingStatsCompare = true;
+        this.renderProfile();
+        try {
+          const res = await fetch(
+            "/api/friends/library?friendId=" + encodeURIComponent(clean),
+            { headers: this.getHeaders() }
+          );
+          const data = await res.json().catch(() => ({}));
+          const libObj = data && typeof data.library === "object" && data.library ? data.library : data;
+          if (res.ok && libObj && (Array.isArray(libObj.shows) || Array.isArray(libObj.movies))) {
+            const entry = {
+              userId: libObj.userId || clean,
+              email: libObj.email || clean,
+              shows: Array.isArray(libObj.shows) ? libObj.shows : [],
+              movies: Array.isArray(libObj.movies) ? libObj.movies : [],
+            };
+            if (!this.statsCompareCache) this.statsCompareCache = new Map();
+            this.statsCompareCache.set(clean, entry);
+            this.statsCompareError = "";
+          } else {
+            this.statsCompareError =
+              data.error || "Could not load @" + clean + "'s stats right now.";
+          }
+        } catch (_) {
+          this.statsCompareError = "Network error loading @" + clean + "'s stats.";
+        }
+        this.isLoadingStatsCompare = false;
+        this.renderProfile();
+      }
+
+      renderStatsComparison(myStats, fmtHours, fmtDaysHours) {
+        const box = document.getElementById("stats-friend-compare-section");
+        if (!box) return;
+        const friends = Array.isArray(this.state.friends) ? this.state.friends : [];
+        if (friends.length === 0) {
+          box.innerHTML =
+            '<div class="flex items-center justify-between gap-3">' +
+            "<div>" +
+            '<div class="text-sm font-extrabold text-white">⚔️ Compare with a Friend</div>' +
+            '<p class="text-xs text-zinc-400 mt-0.5">Add a friend to compare watch hours, series, episodes &amp; movies side by side.</p>' +
+            "</div>" +
+            '<button onclick="app.switchTab(&quot;friends&quot;)" class="px-3.5 py-2 rounded-full tv-yellow-bg text-xs font-extrabold shrink-0">👥 Friends</button>' +
+            "</div>";
+          return;
+        }
+
+        const activeFriend = this.statsCompareFriendId && friends.includes(this.statsCompareFriendId)
+          ? this.statsCompareFriendId
+          : "";
+        const pillsHtml = friends
+          .map((uid) => {
+            const clean = String(uid || "").toLowerCase();
+            const isSel = clean === activeFriend;
+            return (
+              '<button onclick="app.selectStatsCompareFriend(&quot;' +
+              escapeHtml(clean) +
+              '&quot;, false)" class="px-3.5 py-1.5 rounded-full text-xs font-extrabold border transition shrink-0 ' +
+              (isSel
+                ? "tv-yellow-bg border-yellow-400"
+                : "tv-pill-bar text-zinc-300 border-zinc-800 hover:text-white") +
+              '">@' +
+              escapeHtml(clean) +
+              "</button>"
+            );
+          })
+          .join("");
+
+        const actionBtnsHtml = activeFriend
+          ? '<div class="flex items-center gap-1.5 shrink-0">' +
+            '<button title="Refresh friend stats" onclick="app.selectStatsCompareFriend(&quot;' +
+            escapeHtml(activeFriend) +
+            '&quot;, true)" class="px-2.5 py-1 rounded-full tv-pill-bar border border-zinc-800 text-[11px] font-bold tv-yellow-text hover:text-white">↻</button>' +
+            '<button title="Close comparison" onclick="app.selectStatsCompareFriend(&quot;&quot;, false)" class="px-2.5 py-1 rounded-full tv-pill-bar border border-zinc-800 text-[11px] font-bold text-zinc-400 hover:text-white">✕</button>' +
+            "</div>"
+          : "";
+
+        let bodyHtml = "";
+        if (!activeFriend) {
+          bodyHtml =
+            '<p class="text-xs text-zinc-400 pt-1">Select a friend above for a direct side-by-side watch stats comparison.</p>';
+        } else if (this.isLoadingStatsCompare) {
+          bodyHtml =
+            '<p class="text-xs text-zinc-400 py-4 text-center">Loading @' +
+            escapeHtml(activeFriend) +
+            "&apos;s statistics...</p>";
+        } else if (this.statsCompareError) {
+          bodyHtml =
+            '<div class="py-3 text-center space-y-2">' +
+            '<p class="text-xs text-rose-400 font-semibold">' +
+            escapeHtml(this.statsCompareError) +
+            "</p>" +
+            '<button onclick="app.selectStatsCompareFriend(&quot;' +
+            escapeHtml(activeFriend) +
+            '&quot;, true)" class="px-3.5 py-1.5 rounded-full tv-yellow-bg text-xs font-extrabold">Retry</button>' +
+            "</div>";
+        } else {
+          const fLib = this.statsCompareCache ? this.statsCompareCache.get(activeFriend) : null;
+          if (fLib) {
+            const fStats = this.computeLibraryWatchSummary(fLib.shows, fLib.movies);
+            // Compute shared watched movies & series in common
+            const myWatchedMovs = myStats.watchedMovies || [];
+            const myMovByTmdb = new Set();
+            const myMovByTitle = new Set();
+            for (const mm of myWatchedMovs) {
+              const t = this.cleanMovieTmdbId(mm.id, mm.tmdbId);
+              if (t > 0) myMovByTmdb.add(t);
+              const nt = this.normalizeRecTitle(mm.title);
+              if (nt) myMovByTitle.add(nt);
+            }
+            let sharedMovies = 0;
+            for (const fm of fStats.watchedMovies || []) {
+              const ft = this.cleanMovieTmdbId(fm.id, fm.tmdbId);
+              const fnt = this.normalizeRecTitle(fm.title);
+              if ((ft > 0 && myMovByTmdb.has(ft)) || (ft <= 0 && fnt && myMovByTitle.has(fnt))) {
+                sharedMovies++;
+              }
+            }
+
+            const myWatchedShows = myStats.activeOrCompletedShows || [];
+            const myShowByTmdb = new Set();
+            const myShowByMaze = new Set();
+            const myShowByTitle = new Set();
+            for (const ms of myWatchedShows) {
+              if (Number(ms.tmdbId) > 0) myShowByTmdb.add(Number(ms.tmdbId));
+              if (Number(ms.tvmazeId) > 0) myShowByMaze.add(Number(ms.tvmazeId));
+              const nt = this.normalizeRecTitle(ms.title);
+              if (nt) myShowByTitle.add(nt);
+            }
+            let sharedSeries = 0;
+            for (const fs of fStats.activeOrCompletedShows || []) {
+              const ft = Number(fs.tmdbId) || 0;
+              const fmz = Number(fs.tvmazeId) || 0;
+              const fnt = this.normalizeRecTitle(fs.title);
+              if (
+                (ft > 0 && myShowByTmdb.has(ft)) ||
+                (fmz > 0 && myShowByMaze.has(fmz)) ||
+                (ft <= 0 && fmz <= 0 && fnt && myShowByTitle.has(fnt))
+              ) {
+                sharedSeries++;
+              }
+            }
+
+            const renderRow = (label, myNum, frNum, myFormatted, frFormatted, mySub, frSub) => {
+              const sum = Math.max(1, myNum + frNum);
+              const myPct = myNum === 0 && frNum === 0 ? 50 : Math.max(6, Math.min(94, Math.round((myNum / sum) * 100)));
+              const frPct = 100 - myPct;
+              const myLeads = myNum > frNum;
+              const frLeads = frNum > myNum;
+              return (
+                '<div class="tv-pill-bar rounded-2xl p-3.5 space-y-2 border border-zinc-800/70">' +
+                '<div class="grid grid-cols-3 items-baseline gap-2">' +
+                '<div class="text-left">' +
+                '<div class="text-sm font-black ' +
+                (myLeads ? "tv-yellow-text" : "text-zinc-200") +
+                '">' +
+                escapeHtml(myFormatted) +
+                "</div>" +
+                (mySub ? '<div class="text-[10px] text-zinc-500">' + escapeHtml(mySub) + "</div>" : "") +
+                "</div>" +
+                '<div class="text-center text-[10px] font-extrabold uppercase tracking-wider text-zinc-400">' +
+                escapeHtml(label) +
+                "</div>" +
+                '<div class="text-right">' +
+                '<div class="text-sm font-black ' +
+                (frLeads ? "text-emerald-400" : "text-zinc-200") +
+                '">' +
+                escapeHtml(frFormatted) +
+                "</div>" +
+                (frSub ? '<div class="text-[10px] text-zinc-500">' + escapeHtml(frSub) + "</div>" : "") +
+                "</div>" +
+                "</div>" +
+                '<div class="w-full h-2 rounded-full bg-zinc-900 overflow-hidden flex gap-0.5">' +
+                '<div class="h-full rounded-l-full" style="width:' +
+                myPct +
+                '%;background:#facc15;"></div>' +
+                '<div class="h-full rounded-r-full" style="width:' +
+                frPct +
+                '%;background:#34d399;"></div>' +
+                "</div>" +
+                "</div>"
+              );
+            };
+
+            const myHandle = "@" + String(this.userId || "you");
+            bodyHtml =
+              '<div class="space-y-3 pt-1">' +
+              '<div class="flex items-center justify-between px-1 text-xs font-extrabold">' +
+              '<span class="tv-yellow-text">You (' +
+              escapeHtml(myHandle) +
+              ")</span>" +
+              '<span class="px-2.5 py-0.5 rounded-full bg-zinc-800/90 text-[10px] font-bold text-zinc-300">🤝 ' +
+              sharedSeries +
+              " series · " +
+              sharedMovies +
+              " movies in common</span>" +
+              '<span class="text-emerald-400">@' +
+              escapeHtml(activeFriend) +
+              "</span>" +
+              "</div>" +
+              renderRow(
+                "Total Watch Time",
+                myStats.totalMins,
+                fStats.totalMins,
+                fmtHours(myStats.totalMins),
+                fmtHours(fStats.totalMins),
+                fmtDaysHours(myStats.totalMins),
+                fmtDaysHours(fStats.totalMins)
+              ) +
+              renderRow(
+                "Series Hours",
+                myStats.showMins,
+                fStats.showMins,
+                fmtHours(myStats.showMins),
+                fmtHours(fStats.showMins),
+                "",
+                ""
+              ) +
+              renderRow(
+                "Movie Hours",
+                myStats.movMins,
+                fStats.movMins,
+                fmtHours(myStats.movMins),
+                fmtHours(fStats.movMins),
+                "",
+                ""
+              ) +
+              renderRow(
+                "Series Watched",
+                myStats.seriesCount,
+                fStats.seriesCount,
+                String(myStats.seriesCount),
+                String(fStats.seriesCount),
+                "",
+                ""
+              ) +
+              renderRow(
+                "Episodes Watched",
+                myStats.epCount,
+                fStats.epCount,
+                String(myStats.epCount),
+                String(fStats.epCount),
+                "",
+                ""
+              ) +
+              renderRow(
+                "Movies Watched",
+                myStats.moviesCount,
+                fStats.moviesCount,
+                String(myStats.moviesCount),
+                String(fStats.moviesCount),
+                "",
+                ""
+              ) +
+              "</div>";
+          }
+        }
+
+        box.innerHTML =
+          '<div class="flex items-center justify-between gap-2">' +
+          '<div><h3 class="text-sm font-extrabold text-white">⚔️ Compare with Friend</h3>' +
+          '<p class="text-[11px] text-zinc-400">Head-to-head watch time &amp; library comparison</p></div>' +
+          actionBtnsHtml +
+          "</div>" +
+          '<div class="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">' +
+          pillsHtml +
+          "</div>" +
+          bodyHtml;
+      }
+
       renderProfile() {
         const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
         const movies = Array.isArray(this.state.movies) ? this.state.movies : [];
@@ -5403,22 +5746,11 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (drawerEmailEl) drawerEmailEl.textContent = emailLabel;
         if (settingsEmailEl) settingsEmailEl.textContent = emailLabel;
 
-        let epCount = 0;
-        let showMins = 0;
-        for (const s of shows) {
-          const wt = this.computeShowWatchTime(s);
-          epCount += wt.watchedCount;
-          showMins += wt.minutes;
-        }
-        let movCount = 0;
-        let movMins = 0;
-        for (const m of movies) {
-          if (m.watched) {
-            movCount += 1;
-            movMins += Math.max(1, Number(m.runtimeMins) || 120);
-          }
-        }
-        const totalMins = showMins + movMins;
+        const mySummary = this.computeLibraryWatchSummary(shows, movies);
+        const totalMins = mySummary.totalMins;
+        const showMins = mySummary.showMins;
+        const movMins = mySummary.movMins;
+        const epCount = mySummary.epCount;
         const fmtHours = (mins) => (Math.round((mins / 60) * 10) / 10).toFixed(1) + " hrs";
         const fmtDaysHours = (mins) => {
           const d = Math.floor(mins / 1440);
@@ -5426,13 +5758,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           return d + "d " + h + "h";
         };
 
-        const completedShows = shows.filter((s) => this.getEffectiveShowStatus(s) === "completed");
-        const activeOrCompletedShows = shows.filter((s) => {
-          const st = this.getEffectiveShowStatus(s);
-          const prog = this.computeShowProgress(s);
-          return st === "in_progress" || st === "completed" || (st === "stopped" && prog.watchedCount > 0);
-        });
-        const watchedMovies = movies.filter((m) => m.watched);
+        const completedShows = mySummary.completedShows;
+        const activeOrCompletedShows = mySummary.activeOrCompletedShows;
+        const watchedMovies = mySummary.watchedMovies;
 
         const totalEl = document.getElementById("stat-total-time");
         const totalSubEl = document.getElementById("stat-total-sub");
@@ -5449,6 +5777,8 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         if (sCountEl) sCountEl.textContent = String(activeOrCompletedShows.length);
         if (epCountEl) epCountEl.textContent = String(epCount);
         if (mCountEl) mCountEl.textContent = String(watchedMovies.length);
+
+        this.renderStatsComparison(mySummary, fmtHours, fmtDaysHours);
 
         const recSeriesCountEl = document.getElementById("label-recent-series-count");
         const recMoviesCountEl = document.getElementById("label-recent-movies-count");

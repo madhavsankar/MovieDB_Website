@@ -1954,6 +1954,85 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["afterSeasonToggleWatched"], ["S02E01", "S02E02", "S02E03", "S02E04"])
         self.assertEqual(out["finalStatus"], "completed")
 
+    def test_statistics_friend_direct_comparison(self):
+        """Verifies Statistics friend picker computes side-by-side watch hours, series, episodes, movies, and shared titles in common."""
+        import re as _re
+
+        with open(os.path.join(ROOT_DIR, "cloudflare", "src", "ui", "WebAppView.js"), "r", encoding="utf-8") as f:
+            view_src = _re.sub(r"^import\s+.*?;\s*$", "", f.read(), flags=_re.MULTILINE).replace("export const ", "const ")
+
+        harness = (
+            view_src
+            + """
+            (async () => {
+              const els = {};
+              globalThis.document = {
+                getElementById: (id) => {
+                  if (!els[id]) {
+                    els[id] = { innerHTML: "", textContent: "", className: "", classList: { add: () => {}, remove: () => {}, toggle: () => {} } };
+                  }
+                  return els[id];
+                }
+              };
+              const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+              const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+              const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+              (new Function(clientJs))();
+              const app = Object.create(globalThis.TvTimeClientClass.prototype);
+              app.userId = "madhavsankar";
+              app.userEmail = "madhavsankar@gmail.com";
+              app.statsCompareFriendId = "anu.deoghare28";
+              app.isLoadingStatsCompare = false;
+              app.statsCompareError = "";
+              app.state = {
+                friends: ["anu.deoghare28"],
+                shows: [
+                  { id: "tmdb_tv_1396", tmdbId: 1396, title: "Breaking Bad", year: 2008, runtimeMins: 48, userStatus: "completed", totalEpisodes: 62, episodes: [], watchedEpisodes: [] },
+                  { id: "tmdb_tv_248830", tmdbId: 248830, title: "Stick", year: 2025, runtimeMins: 30, userStatus: "in_progress", totalEpisodes: 14, completedSeasons: { "1": 10 }, watchedEpisodes: ["S02E01", "S02E02"], episodes: [] }
+                ],
+                movies: [
+                  { id: "movie_50001", tmdbId: 50001, title: "Ghilli", year: 2004, runtimeMins: 160, watched: true },
+                  { id: "movie_50002", tmdbId: 50002, title: "Watchlist Only", year: 2025, runtimeMins: 120, watched: false }
+                ]
+              };
+              app.statsCompareCache = new Map([
+                [
+                  "anu.deoghare28",
+                  {
+                    userId: "anu.deoghare28",
+                    shows: [
+                      { id: "tmdb_tv_1396", tmdbId: 1396, title: "Breaking Bad", year: 2008, runtimeMins: 48, userStatus: "completed", totalEpisodes: 62, episodes: [], watchedEpisodes: [] },
+                      { id: "tmdb_tv_74682", tmdbId: 74682, title: "I Am Not a Robot", year: 2017, runtimeMins: 35, userStatus: "completed", totalEpisodes: 32, episodes: [], watchedEpisodes: [] },
+                      { id: "tmdb_tv_100", tmdbId: 100, title: "Friend Watchlist Show", year: 2025, runtimeMins: 45, userStatus: "interested", totalEpisodes: 10, episodes: [], watchedEpisodes: [] }
+                    ],
+                    movies: [
+                      { id: "movie_50001", tmdbId: 50001, title: "Ghilli", year: 2004, runtimeMins: 160, watched: true },
+                      { id: "movie_671", tmdbId: 671, title: "Harry Potter and the Philosopher's Stone", year: 2001, runtimeMins: 152, watched: true }
+                    ]
+                  }
+                ]
+              ]);
+              app.renderProfile();
+              const cmpHtml = els["stats-friend-compare-section"].innerHTML;
+              const out = JSON.stringify({
+                hasCompareSectionInHtml: WEB_APP_HTML.includes('id="stats-friend-compare-section"'),
+                hasFriendHandle: cmpHtml.includes("@anu.deoghare28"),
+                hasInCommonBadge: cmpHtml.includes("1 series · 1 movies in common"),
+                hasEpisodesRow: cmpHtml.includes("Episodes Watched") && cmpHtml.includes(">74<") && cmpHtml.includes(">94<"),
+                hasMoviesRow: cmpHtml.includes("Movies Watched")
+              });
+              if (typeof console !== "undefined" && console.log) console.log(out);
+              else if (typeof print !== "undefined") print(out);
+            })();
+            """
+        )
+        out = self._run_js(harness)
+        self.assertTrue(out["hasCompareSectionInHtml"])
+        self.assertTrue(out["hasFriendHandle"])
+        self.assertTrue(out["hasInCommonBadge"])
+        self.assertTrue(out["hasEpisodesRow"])
+        self.assertTrue(out["hasMoviesRow"])
+
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""
         proc = subprocess.run(

@@ -1106,8 +1106,10 @@ fun TvTimeMainScreen(
 
                 "stats" -> {
                     StatisticsFullPageScreen(
+                        currentUserId = currentUserId,
                         shows = shows,
                         movies = movies,
+                        onOpenFriends = { switchTab("friends") },
                         onBack = navigateBack
                     )
                 }
@@ -3062,12 +3064,266 @@ private fun SwipeRecommendationsTabScreen(
     }
 }
 
+private data class FriendStatsComparisonSummary(
+    val friendStats: WatchStatsSummary,
+    val friendWatchedShowsCount: Int,
+    val friendWatchedMoviesCount: Int,
+    val sharedSeriesCount: Int,
+    val sharedMoviesCount: Int
+)
+
+@Composable
+private fun StatHeadToHeadRow(
+    label: String,
+    myValueNum: Long,
+    friendValueNum: Long,
+    myFormatted: String,
+    friendFormatted: String,
+    mySub: String = "",
+    friendSub: String = ""
+) {
+    val total = (myValueNum + friendValueNum).coerceAtLeast(1L)
+    val myFraction = if (myValueNum == 0L && friendValueNum == 0L) {
+        0.5f
+    } else {
+        (myValueNum.toFloat() / total.toFloat()).coerceIn(0.06f, 0.94f)
+    }
+    val myLeads = myValueNum > friendValueNum
+    val friendLeads = friendValueNum > myValueNum
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = TvTimePalette.SurfacePill,
+        border = BorderStroke(1.dp, TvTimePalette.Border),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                    Text(
+                        text = myFormatted,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Black),
+                        color = if (myLeads) TvTimePalette.Yellow else Color(0xFFE4E4E7),
+                        maxLines = 1
+                    )
+                    if (mySub.isNotEmpty()) {
+                        Text(
+                            text = mySub,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TvTimePalette.TextSecondary,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+                Text(
+                    text = label.uppercase(),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                    color = TvTimePalette.TextSecondary,
+                    textAlign = TextAlign.Center,
+                    fontSize = 10.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = friendFormatted,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Black),
+                        color = if (friendLeads) Color(0xFF34D399) else Color(0xFFE4E4E7),
+                        maxLines = 1
+                    )
+                    if (friendSub.isNotEmpty()) {
+                        Text(
+                            text = friendSub,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TvTimePalette.TextSecondary,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(7.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Color(0xFF09090B)),
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(myFraction)
+                        .fillMaxHeight()
+                        .background(TvTimePalette.Yellow)
+                )
+                Box(
+                    modifier = Modifier
+                        .weight((1f - myFraction).coerceAtLeast(0.06f))
+                        .fillMaxHeight()
+                        .background(Color(0xFF34D399))
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun StatisticsFullPageScreen(
+    currentUserId: String,
     shows: List<ShowEntity>,
     movies: List<MovieEntity>,
+    onOpenFriends: () -> Unit,
     onBack: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+    var socialState by remember { mutableStateOf(FirestoreSyncService.getCachedSocialState(currentUserId)) }
+    var selectedFriendId by rememberSaveable { mutableStateOf("") }
+    var friendLibCache by remember { mutableStateOf<Map<String, FriendLibraryData>>(emptyMap()) }
+    var isLoadingFriend by remember { mutableStateOf(false) }
+    var friendError by remember { mutableStateOf("") }
+    var comparisonSummary by remember { mutableStateOf<FriendStatsComparisonSummary?>(null) }
+
+    LaunchedEffect(currentUserId) {
+        if (FirestoreSyncService.isUserAllowed(currentUserId)) {
+            socialState = FirestoreSyncService.fetchSocialFriendsState(currentUserId)
+        }
+    }
+
+    val loadCompareFriend: (String, Boolean) -> Unit = { targetFriend, forceRefresh ->
+        val clean = targetFriend.trim().lowercase()
+        if (clean.isEmpty() || (clean == selectedFriendId && !forceRefresh)) {
+            selectedFriendId = ""
+            friendError = ""
+            comparisonSummary = null
+        } else {
+            selectedFriendId = clean
+            friendError = ""
+            if (!forceRefresh && friendLibCache.containsKey(clean)) {
+                isLoadingFriend = false
+            } else {
+                isLoadingFriend = true
+                scope.launch {
+                    val res = FirestoreSyncService.fetchFriendLibrary(currentUserId, clean)
+                    val lib = res.getOrNull()
+                    if (res.isSuccess && lib != null) {
+                        friendLibCache = friendLibCache + (clean to lib)
+                        friendError = ""
+                    } else {
+                        friendError = res.exceptionOrNull()?.message ?: "Could not load @$clean's stats."
+                    }
+                    isLoadingFriend = false
+                }
+            }
+        }
+    }
+
+    val activeFriendLib = friendLibCache[selectedFriendId]
+    LaunchedEffect(selectedFriendId, activeFriendLib, shows, movies) {
+        if (selectedFriendId.isEmpty() || activeFriendLib == null) {
+            comparisonSummary = null
+            return@LaunchedEffect
+        }
+        comparisonSummary = withContext(Dispatchers.Default) {
+            var fEpCount = 0
+            var fShowMins = 0
+            val fActiveShows = ArrayList<ShowEntity>(activeFriendLib.shows.size)
+            for (fs in activeFriendLib.shows) {
+                val (wCnt, wMins) = TvTimeProgressCalculator.computeShowWatchMinutesFromJson(
+                    episodesJson = fs.episodesJson,
+                    watchedCodesCsv = fs.watchedCodesCsv,
+                    rawUserStatus = fs.userStatus,
+                    defaultRuntimeMins = fs.runtimeMins
+                )
+                fEpCount += wCnt
+                fShowMins += wMins
+                val prog = TvTimeProgressCalculator.computeShowProgressFromJson(
+                    fs.episodesJson,
+                    fs.watchedCodesCsv,
+                    fs.userStatus
+                )
+                val eff = TvTimeProgressCalculator.deriveEffectiveShowStatus(prog, fs.userStatus)
+                if (eff == "completed" || eff == "in_progress" || (eff == "stopped" && prog.watchedCount > 0)) {
+                    fActiveShows.add(fs)
+                }
+            }
+            var fMovCount = 0
+            var fMovMins = 0
+            val fWatchedMovies = ArrayList<MovieEntity>(activeFriendLib.movies.size)
+            for (fm in activeFriendLib.movies) {
+                if (fm.watched) {
+                    fMovCount++
+                    fMovMins += fm.runtimeMins.coerceAtLeast(1)
+                    fWatchedMovies.add(fm)
+                }
+            }
+
+            // Shared watched series & movies
+            val myMovTmdbs = HashSet<Int>(movies.size * 2 + 1)
+            val myMovTitles = HashSet<String>(movies.size * 2 + 1)
+            for (mm in movies) {
+                if (!mm.watched) continue
+                val t = TvTimeProgressCalculator.cleanMovieTmdbId(mm.externalId, mm.tmdbId)
+                if (t > 0) myMovTmdbs.add(t)
+                val nt = TvTimeProgressCalculator.normalizeRecTitle(mm.title)
+                if (nt.isNotEmpty()) myMovTitles.add(nt)
+            }
+            var sharedMovies = 0
+            for (fm in fWatchedMovies) {
+                val ft = TvTimeProgressCalculator.cleanMovieTmdbId(fm.externalId, fm.tmdbId)
+                val fnt = TvTimeProgressCalculator.normalizeRecTitle(fm.title)
+                if ((ft > 0 && myMovTmdbs.contains(ft)) || (ft <= 0 && fnt.isNotEmpty() && myMovTitles.contains(fnt))) {
+                    sharedMovies++
+                }
+            }
+
+            val myShowTmdbs = HashSet<Int>(shows.size * 2 + 1)
+            val myShowMazes = HashSet<Int>(shows.size * 2 + 1)
+            val myShowTitles = HashSet<String>(shows.size * 2 + 1)
+            for (ms in shows) {
+                val p = TvTimeProgressCalculator.computeShowProgressFromJson(ms.episodesJson, ms.watchedCodesCsv, ms.userStatus)
+                val eff = TvTimeProgressCalculator.deriveEffectiveShowStatus(p, ms.userStatus)
+                if (!(eff == "completed" || eff == "in_progress" || (eff == "stopped" && p.watchedCount > 0))) continue
+                if (ms.tmdbId > 0) myShowTmdbs.add(ms.tmdbId)
+                if (ms.tvmazeId > 0) myShowMazes.add(ms.tvmazeId)
+                val nt = TvTimeProgressCalculator.normalizeRecTitle(ms.title)
+                if (nt.isNotEmpty()) myShowTitles.add(nt)
+            }
+            var sharedSeries = 0
+            for (fs in fActiveShows) {
+                val ft = fs.tmdbId
+                val fmz = fs.tvmazeId
+                val fnt = TvTimeProgressCalculator.normalizeRecTitle(fs.title)
+                if ((ft > 0 && myShowTmdbs.contains(ft)) ||
+                    (fmz > 0 && myShowMazes.contains(fmz)) ||
+                    (ft <= 0 && fmz <= 0 && fnt.isNotEmpty() && myShowTitles.contains(fnt))
+                ) {
+                    sharedSeries++
+                }
+            }
+
+            FriendStatsComparisonSummary(
+                friendStats = WatchStatsSummary(
+                    totalMinutes = fShowMins + fMovMins,
+                    showMinutes = fShowMins,
+                    movieMinutes = fMovMins,
+                    totalEpisodesWatched = fEpCount,
+                    totalMoviesWatched = fMovCount,
+                    totalSeriesCount = activeFriendLib.shows.size,
+                    totalMoviesCount = activeFriendLib.movies.size
+                ),
+                friendWatchedShowsCount = fActiveShows.size,
+                friendWatchedMoviesCount = fMovCount,
+                sharedSeriesCount = sharedSeries,
+                sharedMoviesCount = sharedMovies
+            )
+        }
+    }
+
     val stats = remember(shows, movies) {
         var epCount = 0
         var showMins = 0
@@ -3268,6 +3524,232 @@ private fun StatisticsFullPageScreen(
                     valueColor = Color.White,
                     modifier = Modifier.weight(1f)
                 )
+            }
+        }
+
+        // 4. Direct Head-to-Head Friend Comparison Card
+        item(key = "friend_stats_comparison_card") {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = TvTimePalette.SurfaceCard,
+                border = BorderStroke(1.dp, TvTimePalette.Border),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "⚔️ Compare with Friend",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Head-to-head watch time & library comparison",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TvTimePalette.TextSecondary
+                            )
+                        }
+                        if (selectedFriendId.isNotEmpty()) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Surface(
+                                    onClick = { loadCompareFriend(selectedFriendId, true) },
+                                    shape = RoundedCornerShape(50),
+                                    color = TvTimePalette.SurfacePill,
+                                    border = BorderStroke(1.dp, TvTimePalette.Border)
+                                ) {
+                                    Text(
+                                        text = "↻",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = TvTimePalette.Yellow,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                                Surface(
+                                    onClick = { loadCompareFriend("", false) },
+                                    shape = RoundedCornerShape(50),
+                                    color = TvTimePalette.SurfacePill,
+                                    border = BorderStroke(1.dp, TvTimePalette.Border)
+                                ) {
+                                    Text(
+                                        text = "✕",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = TvTimePalette.TextSecondary,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        } else if (socialState.friends.isEmpty()) {
+                            Button(
+                                onClick = onOpenFriends,
+                                shape = RoundedCornerShape(50),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = TvTimePalette.Yellow,
+                                    contentColor = TvTimePalette.OnYellow
+                                )
+                            ) {
+                                Text("👥 Friends", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                            }
+                        }
+                    }
+
+                    if (socialState.friends.isEmpty()) {
+                        Text(
+                            text = "Add a friend to compare watch hours, series, episodes & movies side by side.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TvTimePalette.TextSecondary
+                        )
+                    } else {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(socialState.friends, key = { "cmp_$it" }) { friendUid ->
+                                val isSel = friendUid.equals(selectedFriendId, ignoreCase = true)
+                                Surface(
+                                    onClick = { loadCompareFriend(friendUid, false) },
+                                    shape = RoundedCornerShape(50),
+                                    color = if (isSel) TvTimePalette.Yellow else TvTimePalette.SurfacePill,
+                                    border = BorderStroke(1.dp, if (isSel) TvTimePalette.Yellow else TvTimePalette.Border)
+                                ) {
+                                    Text(
+                                        text = "@$friendUid",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                        color = if (isSel) TvTimePalette.OnYellow else Color.White,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        val cmp = comparisonSummary
+                        when {
+                            selectedFriendId.isEmpty() -> {
+                                Text(
+                                    text = "Select a friend above for a direct side-by-side watch stats comparison.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TvTimePalette.TextSecondary
+                                )
+                            }
+                            isLoadingFriend -> {
+                                Text(
+                                    text = "Loading @$selectedFriendId's statistics...",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TvTimePalette.TextSecondary,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 12.dp)
+                                )
+                            }
+                            friendError.isNotEmpty() -> {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = friendError,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TvTimePalette.Error,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Button(
+                                        onClick = { loadCompareFriend(selectedFriendId, true) },
+                                        shape = RoundedCornerShape(50),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = TvTimePalette.Yellow,
+                                            contentColor = TvTimePalette.OnYellow
+                                        )
+                                    ) {
+                                        Text("↻ Retry", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                                    }
+                                }
+                            }
+                            cmp != null -> {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "You (@$currentUserId)",
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                            color = TvTimePalette.Yellow
+                                        )
+                                        Text(
+                                            text = "@$selectedFriendId",
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                            color = Color(0xFF34D399)
+                                        )
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = Color(0xFF232329),
+                                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                                    ) {
+                                        Text(
+                                            text = "🤝 ${cmp.sharedSeriesCount} series · ${cmp.sharedMoviesCount} movies in common",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = Color(0xFFD4D4D8),
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                        )
+                                    }
+
+                                    StatHeadToHeadRow(
+                                        label = "Total Watch Time",
+                                        myValueNum = stats.totalMinutes.toLong(),
+                                        friendValueNum = cmp.friendStats.totalMinutes.toLong(),
+                                        myFormatted = stats.formattedTotalHours,
+                                        friendFormatted = cmp.friendStats.formattedTotalHours,
+                                        mySub = stats.formattedTotal,
+                                        friendSub = cmp.friendStats.formattedTotal
+                                    )
+                                    StatHeadToHeadRow(
+                                        label = "Series Hours",
+                                        myValueNum = stats.showMinutes.toLong(),
+                                        friendValueNum = cmp.friendStats.showMinutes.toLong(),
+                                        myFormatted = stats.formattedSeriesHours,
+                                        friendFormatted = cmp.friendStats.formattedSeriesHours
+                                    )
+                                    StatHeadToHeadRow(
+                                        label = "Movie Hours",
+                                        myValueNum = stats.movieMinutes.toLong(),
+                                        friendValueNum = cmp.friendStats.movieMinutes.toLong(),
+                                        myFormatted = stats.formattedMoviesHours,
+                                        friendFormatted = cmp.friendStats.formattedMoviesHours
+                                    )
+                                    StatHeadToHeadRow(
+                                        label = "Series Watched",
+                                        myValueNum = watchedShowsCount.toLong(),
+                                        friendValueNum = cmp.friendWatchedShowsCount.toLong(),
+                                        myFormatted = watchedShowsCount.toString(),
+                                        friendFormatted = cmp.friendWatchedShowsCount.toString()
+                                    )
+                                    StatHeadToHeadRow(
+                                        label = "Episodes Watched",
+                                        myValueNum = stats.totalEpisodesWatched.toLong(),
+                                        friendValueNum = cmp.friendStats.totalEpisodesWatched.toLong(),
+                                        myFormatted = stats.totalEpisodesWatched.toString(),
+                                        friendFormatted = cmp.friendStats.totalEpisodesWatched.toString()
+                                    )
+                                    StatHeadToHeadRow(
+                                        label = "Movies Watched",
+                                        myValueNum = watchedMoviesCount.toLong(),
+                                        friendValueNum = cmp.friendWatchedMoviesCount.toLong(),
+                                        myFormatted = watchedMoviesCount.toString(),
+                                        friendFormatted = cmp.friendWatchedMoviesCount.toString()
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
