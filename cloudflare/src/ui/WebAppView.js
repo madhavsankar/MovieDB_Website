@@ -5645,17 +5645,20 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
 
             const myHandle = "@" + String(this.userId || "you");
             bodyHtml =
-              '<div class="space-y-3 pt-1">' +
-              '<div class="flex items-center justify-between px-1 text-xs font-extrabold">' +
-              '<span class="tv-yellow-text">You (' +
-              escapeHtml(myHandle) +
-              ")</span>" +
-              '<span class="px-2.5 py-0.5 rounded-full bg-zinc-800/90 text-[10px] font-bold text-zinc-300">🤝 ' +
+              '<div class="space-y-2.5 pt-1">' +
+              '<div class="tv-pill-bar rounded-2xl px-3.5 py-2.5 border border-zinc-800/80 flex items-center justify-between gap-2">' +
+              '<span class="text-[11px] font-extrabold uppercase tracking-wider text-zinc-400">🤝 In Common</span>' +
+              '<span class="text-xs font-extrabold text-white">' +
               sharedSeries +
               " series · " +
               sharedMovies +
-              " movies in common</span>" +
-              '<span class="text-emerald-400">@' +
+              " movies</span>" +
+              "</div>" +
+              '<div class="flex items-center justify-between px-1 pt-1 text-xs font-extrabold">' +
+              '<span class="tv-yellow-text truncate">You (' +
+              escapeHtml(myHandle) +
+              ")</span>" +
+              '<span class="text-emerald-400 truncate">@' +
               escapeHtml(activeFriend) +
               "</span>" +
               "</div>" +
@@ -5668,24 +5671,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 fmtDaysHours(myStats.totalMins),
                 fmtDaysHours(fStats.totalMins)
               ) +
-              renderRow(
-                "Series Hours",
-                myStats.showMins,
-                fStats.showMins,
-                fmtHours(myStats.showMins),
-                fmtHours(fStats.showMins),
-                "",
-                ""
-              ) +
-              renderRow(
-                "Movie Hours",
-                myStats.movMins,
-                fStats.movMins,
-                fmtHours(myStats.movMins),
-                fmtHours(fStats.movMins),
-                "",
-                ""
-              ) +
+              '<div class="px-1 pt-1.5 text-[10px] font-extrabold uppercase tracking-widest text-zinc-400">📺 Series</div>' +
               renderRow(
                 "Series Watched",
                 myStats.seriesCount,
@@ -5705,11 +5691,30 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 ""
               ) +
               renderRow(
+                "Series Hours",
+                myStats.showMins,
+                fStats.showMins,
+                fmtHours(myStats.showMins),
+                fmtHours(fStats.showMins),
+                "",
+                ""
+              ) +
+              '<div class="px-1 pt-1.5 text-[10px] font-extrabold uppercase tracking-widest text-zinc-400">🎬 Movies</div>' +
+              renderRow(
                 "Movies Watched",
                 myStats.moviesCount,
                 fStats.moviesCount,
                 String(myStats.moviesCount),
                 String(fStats.moviesCount),
+                "",
+                ""
+              ) +
+              renderRow(
+                "Movie Hours",
+                myStats.movMins,
+                fStats.movMins,
+                fmtHours(myStats.movMins),
+                fmtHours(fStats.movMins),
                 "",
                 ""
               ) +

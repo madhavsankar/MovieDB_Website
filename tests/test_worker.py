@@ -2014,10 +2014,27 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
               ]);
               app.renderProfile();
               const cmpHtml = els["stats-friend-compare-section"].innerHTML;
+              const idxCommon = cmpHtml.indexOf("In Common");
+              const idxNames = cmpHtml.indexOf("You (@madhavsankar)");
+              const idxTotal = cmpHtml.indexOf("Total Watch Time");
+              const idxSeriesCount = cmpHtml.indexOf("Series Watched");
+              const idxEpisodes = cmpHtml.indexOf("Episodes Watched");
+              const idxSeriesHours = cmpHtml.indexOf("Series Hours");
+              const idxMoviesCount = cmpHtml.indexOf("Movies Watched");
+              const idxMovieHours = cmpHtml.indexOf("Movie Hours");
               const out = JSON.stringify({
                 hasCompareSectionInHtml: WEB_APP_HTML.includes('id="stats-friend-compare-section"'),
                 hasFriendHandle: cmpHtml.includes("@anu.deoghare28"),
-                hasInCommonBadge: cmpHtml.includes("1 series · 1 movies in common"),
+                hasInCommonTopBanner: cmpHtml.includes("In Common") && cmpHtml.includes("1 series · 1 movies"),
+                hasOrderedSections:
+                  idxCommon > -1 &&
+                  idxCommon < idxNames &&
+                  idxNames < idxTotal &&
+                  idxTotal < idxSeriesCount &&
+                  idxSeriesCount < idxEpisodes &&
+                  idxEpisodes < idxSeriesHours &&
+                  idxSeriesHours < idxMoviesCount &&
+                  idxMoviesCount < idxMovieHours,
                 hasEpisodesRow: cmpHtml.includes("Episodes Watched") && cmpHtml.includes(">74<") && cmpHtml.includes(">94<"),
                 hasMoviesRow: cmpHtml.includes("Movies Watched")
               });
@@ -2029,7 +2046,8 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         out = self._run_js(harness)
         self.assertTrue(out["hasCompareSectionInHtml"])
         self.assertTrue(out["hasFriendHandle"])
-        self.assertTrue(out["hasInCommonBadge"])
+        self.assertTrue(out["hasInCommonTopBanner"])
+        self.assertTrue(out["hasOrderedSections"])
         self.assertTrue(out["hasEpisodesRow"])
         self.assertTrue(out["hasMoviesRow"])
 

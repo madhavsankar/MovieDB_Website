@@ -3671,8 +3671,36 @@ private fun StatisticsFullPageScreen(
                             }
                             cmp != null -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Surface(
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = TvTimePalette.SurfacePill,
+                                        border = BorderStroke(1.dp, TvTimePalette.Border.copy(alpha = 0.7f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "🤝 IN COMMON",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                                color = TvTimePalette.TextSecondary
+                                            )
+                                            Text(
+                                                text = "${cmp.sharedSeriesCount} series · ${cmp.sharedMoviesCount} movies",
+                                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                                color = Color.White
+                                            )
+                                        }
+                                    }
+
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 4.dp, vertical = 2.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -3688,19 +3716,6 @@ private fun StatisticsFullPageScreen(
                                         )
                                     }
 
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = Color(0xFF232329),
-                                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                                    ) {
-                                        Text(
-                                            text = "🤝 ${cmp.sharedSeriesCount} series · ${cmp.sharedMoviesCount} movies in common",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                            color = Color(0xFFD4D4D8),
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                                        )
-                                    }
-
                                     StatHeadToHeadRow(
                                         label = "Total Watch Time",
                                         myValueNum = stats.totalMinutes.toLong(),
@@ -3710,19 +3725,12 @@ private fun StatisticsFullPageScreen(
                                         mySub = stats.formattedTotal,
                                         friendSub = cmp.friendStats.formattedTotal
                                     )
-                                    StatHeadToHeadRow(
-                                        label = "Series Hours",
-                                        myValueNum = stats.showMinutes.toLong(),
-                                        friendValueNum = cmp.friendStats.showMinutes.toLong(),
-                                        myFormatted = stats.formattedSeriesHours,
-                                        friendFormatted = cmp.friendStats.formattedSeriesHours
-                                    )
-                                    StatHeadToHeadRow(
-                                        label = "Movie Hours",
-                                        myValueNum = stats.movieMinutes.toLong(),
-                                        friendValueNum = cmp.friendStats.movieMinutes.toLong(),
-                                        myFormatted = stats.formattedMoviesHours,
-                                        friendFormatted = cmp.friendStats.formattedMoviesHours
+
+                                    Text(
+                                        text = "📺 SERIES",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                        color = TvTimePalette.TextSecondary,
+                                        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
                                     )
                                     StatHeadToHeadRow(
                                         label = "Series Watched",
@@ -3739,11 +3747,32 @@ private fun StatisticsFullPageScreen(
                                         friendFormatted = cmp.friendStats.totalEpisodesWatched.toString()
                                     )
                                     StatHeadToHeadRow(
+                                        label = "Series Hours",
+                                        myValueNum = stats.showMinutes.toLong(),
+                                        friendValueNum = cmp.friendStats.showMinutes.toLong(),
+                                        myFormatted = stats.formattedSeriesHours,
+                                        friendFormatted = cmp.friendStats.formattedSeriesHours
+                                    )
+
+                                    Text(
+                                        text = "🎬 MOVIES",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                        color = TvTimePalette.TextSecondary,
+                                        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                                    )
+                                    StatHeadToHeadRow(
                                         label = "Movies Watched",
                                         myValueNum = watchedMoviesCount.toLong(),
                                         friendValueNum = cmp.friendWatchedMoviesCount.toLong(),
                                         myFormatted = watchedMoviesCount.toString(),
                                         friendFormatted = cmp.friendWatchedMoviesCount.toString()
+                                    )
+                                    StatHeadToHeadRow(
+                                        label = "Movie Hours",
+                                        myValueNum = stats.movieMinutes.toLong(),
+                                        friendValueNum = cmp.friendStats.movieMinutes.toLong(),
+                                        myFormatted = stats.formattedMoviesHours,
+                                        friendFormatted = cmp.friendStats.formattedMoviesHours
                                     )
                                 }
                             }
