@@ -73,6 +73,7 @@ import com.tvtime.tracker.domain.TvTimeProgressCalculator
 import com.tvtime.tracker.domain.WatchStatsSummary
 import com.tvtime.tracker.ui.theme.TvTimePalette
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -241,70 +242,98 @@ fun TvTimeMainScreen(
         }
     }
 
-    // Refresh episode lists for running/ongoing series ONLY when newly aired episodes arrive or upcoming schedule changes
-    LaunchedEffect(homeTopSegment, refreshTrigger, currentUserId) {
-        val candidates = shows.filter {
-            it.userStatus != "stopped" &&
-                !it.status.equals("Ended", ignoreCase = true) &&
-                !it.status.equals("Canceled", ignoreCase = true)
+    // Refresh episode lists & newly announced release dates for non-completed (in_progress / watchlist) and ongoing series
+    var initialUpcomingSyncDoneUser by remember { mutableStateOf("") }
+    LaunchedEffect(shows.isNotEmpty(), homeTopSegment, refreshTrigger, currentUserId) {
+        if (shows.isEmpty()) return@LaunchedEffect
+        val shouldRunInitial = initialUpcomingSyncDoneUser != currentUserId
+        if (!shouldRunInitial && homeTopSegment != "upcoming" && refreshTrigger <= 0) {
+            return@LaunchedEffect
         }
-        if (candidates.isNotEmpty() && (homeTopSegment == "upcoming" || refreshTrigger > 0)) {
+        initialUpcomingSyncDoneUser = currentUserId
+
+        val candidates = shows.filter { s ->
+            if (s.userStatus.equals("stopped", ignoreCase = true)) return@filter false
+            if (s.externalId.startsWith("imdb_tv_")) return@filter false
+            val meta = TvTimeProgressCalculator.parseCompactedMeta(s.episodesJson)
+            if (meta.countOnly) return@filter false
+            val isCompleted = s.userStatus.equals("completed", ignoreCase = true)
+            val isMarkedEnded = s.status.equals("Ended", ignoreCase = true) ||
+                s.status.equals("Canceled", ignoreCase = true) ||
+                s.status.equals("Cancelled", ignoreCase = true)
+            val isLegacyImport = s.externalId.startsWith("csv_") || (s.externalId.startsWith("tvmaze_") && s.tmdbId == 0)
+            // Always refresh non-completed shows (in_progress & watchlist) AND any non-ended (or legacy CSV/TVMaze) show!
+            !isCompleted || !isMarkedEnded || isLegacyImport
+        }
+        if (candidates.isNotEmpty()) {
             val pendingUpdates = mutableListOf<ShowEntity>()
-            for (s in candidates) {
-                val compMeta = TvTimeProgressCalculator.parseCompactedMeta(s.episodesJson)
-                val currentEps = compMeta.episodes
-                val curUpcoming = TvTimeProgressCalculator.findNextUpcomingEpisode(currentEps)?.first
-                val isCompactedCompleted = s.userStatus.equals("completed", ignoreCase = true) && compMeta.totalEpisodes > 1
-                if (curUpcoming == null || currentEps.size <= 1) {
-                    val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
-                        tvmazeId = s.tvmazeId,
-                        tmdbId = s.tmdbId,
-                        title = s.title,
-                        externalId = s.externalId
-                    )
-                    if (fetchedEps.isEmpty()) continue
-                    val fetchedAired = TvTimeProgressCalculator.filterAiredEpisodes(fetchedEps)
-                    val fetchedUpcoming = TvTimeProgressCalculator.findNextUpcomingEpisode(fetchedEps)?.first
-                    if (isCompactedCompleted && fetchedAired.size <= compMeta.totalEpisodes) {
-                        // Still caught up: keep compacted so Statistics watch hours never jump mid-screen!
-                        val nextChanged = (curUpcoming?.code != fetchedUpcoming?.code) ||
-                            (curUpcoming?.airDate != fetchedUpcoming?.airDate)
-                        if (nextChanged) {
-                            val updatedCompJson = TvTimeProgressCalculator.serializeCompactedMeta(
-                                totalEpisodes = compMeta.totalEpisodes,
-                                completedSeasons = emptyMap(),
-                                episodes = if (fetchedUpcoming != null) listOf(fetchedUpcoming) else emptyList()
+            for (batch in candidates.chunked(8)) {
+                val batchUpdates = kotlinx.coroutines.coroutineScope {
+                    batch.map { s ->
+                        async(Dispatchers.IO) {
+                            val compMeta = TvTimeProgressCalculator.parseCompactedMeta(s.episodesJson)
+                            val currentEps = compMeta.episodes
+                            val curUpcoming = TvTimeProgressCalculator.findNextUpcomingEpisode(currentEps)?.first
+                            val isCompactedCompleted = s.userStatus.equals("completed", ignoreCase = true) && compMeta.totalEpisodes > 1
+                            val (fetchedEps, fetchedCast) = LiveMediaCatalogService.fetchFullShowEpisodesAndCast(
+                                tvmazeId = s.tvmazeId,
+                                tmdbId = s.tmdbId,
+                                title = s.title,
+                                externalId = s.externalId
                             )
-                            pendingUpdates.add(s.copy(episodesJson = updatedCompJson))
+                            if (fetchedEps.isEmpty()) return@async null
+                            val fetchedAired = TvTimeProgressCalculator.filterAiredEpisodes(fetchedEps)
+                            val fetchedUpcoming = TvTimeProgressCalculator.findNextUpcomingEpisode(fetchedEps)?.first
+                            val nextChanged = (curUpcoming?.code != fetchedUpcoming?.code) ||
+                                (curUpcoming?.airDate != fetchedUpcoming?.airDate)
+                            val nextStatusBadge = if (fetchedUpcoming != null && (s.status.equals("Ended", ignoreCase = true) || s.status.equals("Canceled", ignoreCase = true))) {
+                                "Returning Series"
+                            } else s.status
+
+                            if (isCompactedCompleted && fetchedAired.size <= compMeta.totalEpisodes) {
+                                if (nextChanged || nextStatusBadge != s.status) {
+                                    val updatedCompJson = TvTimeProgressCalculator.serializeCompactedMeta(
+                                        totalEpisodes = compMeta.totalEpisodes,
+                                        completedSeasons = emptyMap(),
+                                        episodes = if (fetchedUpcoming != null) listOf(fetchedUpcoming) else emptyList()
+                                    )
+                                    s.copy(status = nextStatusBadge, episodesJson = updatedCompJson)
+                                } else null
+                            } else if (
+                                nextChanged ||
+                                fetchedAired.size > compMeta.totalEpisodes ||
+                                (!isCompactedCompleted && currentEps.size <= 1 && fetchedEps.size > currentEps.size) ||
+                                nextStatusBadge != s.status
+                            ) {
+                                val expandedWatched = TvTimeProgressCalculator.expandWatchedSetWithCompletedSeasons(
+                                    episodes = fetchedEps,
+                                    watchedCodes = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv),
+                                    completedSeasons = compMeta.completedSeasons,
+                                    rawUserStatus = s.userStatus,
+                                    previousWatchedAiredCount = compMeta.totalEpisodes,
+                                    isOngoingShow = true
+                                )
+                                val nextProg = TvTimeProgressCalculator.computeShowProgress(
+                                    episodes = fetchedEps,
+                                    watchedCodes = expandedWatched,
+                                    rawUserStatus = s.userStatus
+                                )
+                                val nextEff = TvTimeProgressCalculator.deriveEffectiveShowStatus(nextProg, s.userStatus)
+                                val updatedWatchedCsv = TvTimeProgressCalculator.serializeWatchedSet(expandedWatched)
+                                s.copy(
+                                    status = nextStatusBadge,
+                                    userStatus = nextEff,
+                                    episodesJson = TvTimeProgressCalculator.serializeEpisodeList(fetchedEps),
+                                    watchedCodesCsv = updatedWatchedCsv,
+                                    castCsv = if (s.castCsv.isBlank() && fetchedCast.isNotEmpty()) {
+                                        fetchedCast.joinToString(", ")
+                                    } else s.castCsv
+                                )
+                            } else null
                         }
-                    } else if (fetchedAired.size > compMeta.totalEpisodes || (!isCompactedCompleted && currentEps.size <= 1 && fetchedEps.size > currentEps.size)) {
-                        val expandedWatched = TvTimeProgressCalculator.expandWatchedSetWithCompletedSeasons(
-                            episodes = fetchedEps,
-                            watchedCodes = TvTimeProgressCalculator.parseWatchedSet(s.watchedCodesCsv),
-                            completedSeasons = compMeta.completedSeasons,
-                            rawUserStatus = s.userStatus,
-                            previousWatchedAiredCount = compMeta.totalEpisodes,
-                            isOngoingShow = true
-                        )
-                        val nextProg = TvTimeProgressCalculator.computeShowProgress(
-                            episodes = fetchedEps,
-                            watchedCodes = expandedWatched,
-                            rawUserStatus = s.userStatus
-                        )
-                        val nextEff = TvTimeProgressCalculator.deriveEffectiveShowStatus(nextProg, s.userStatus)
-                        val updatedWatchedCsv = TvTimeProgressCalculator.serializeWatchedSet(expandedWatched)
-                        pendingUpdates.add(
-                            s.copy(
-                                userStatus = nextEff,
-                                episodesJson = TvTimeProgressCalculator.serializeEpisodeList(fetchedEps),
-                                watchedCodesCsv = updatedWatchedCsv,
-                                castCsv = if (s.castCsv.isBlank() && fetchedCast.isNotEmpty()) {
-                                    fetchedCast.joinToString(", ")
-                                } else s.castCsv
-                            )
-                        )
-                    }
+                    }.mapNotNull { it.await() }
                 }
+                pendingUpdates.addAll(batchUpdates)
             }
             if (pendingUpdates.isNotEmpty()) {
                 for (upd in pendingUpdates) {

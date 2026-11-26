@@ -3394,85 +3394,118 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         this._refreshingUpcoming = true;
         try {
           const shows = Array.isArray(this.state.shows) ? this.state.shows : [];
+          const todayIso = new Date().toISOString().slice(0, 10);
           let updatedAny = false;
-          for (const s of shows) {
-            if (s.userStatus === "stopped") continue;
-            const isEnded = String(s.status || "").toLowerCase() === "ended";
-            const isCompleted = String(s.userStatus || "").toLowerCase() === "completed";
-            if (isEnded && (isCompleted || (Number(s.totalEpisodes) || 0) > 1)) continue;
-            if (isCompleted && isEnded) continue;
-            const eps = Array.isArray(s.episodes) ? s.episodes : [];
-            const compSeasons = s.completedSeasons && typeof s.completedSeasons === "object" ? s.completedSeasons : {};
-            const hasSeasonOne = Boolean(compSeasons["1"]) || eps.some((e) => Number(e.season) === 1);
-            const knownTotal = Math.max(Number(s.totalEpisodes) || 0, eps.length);
-            if (isEnded && knownTotal > 1 && hasSeasonOne) continue;
+          const candidates = shows.filter((s) => {
+            if (!s || s.userStatus === "stopped") return false;
+            const sid = String(s.id || "");
+            if (s.countOnly || sid.startsWith("imdb_tv_")) return false;
+            const eff = this.getEffectiveShowStatus(s, todayIso);
+            const statusLower = String(s.status || "").toLowerCase();
+            const isMarkedEnded =
+              statusLower === "ended" || statusLower === "canceled" || statusLower === "cancelled";
+            const isLegacyImport = sid.startsWith("csv_") || (sid.startsWith("tvmaze_") && !Number(s.tmdbId));
+            // Always check non-completed shows (in_progress & watchlist) AND any non-ended (or legacy CSV/TVMaze) show!
+            if (eff !== "completed") return true;
+            return !isMarkedEnded || isLegacyImport;
+          });
+
+          const checkCandidate = async (s) => {
             const detailsUrl = this.getShowDetailsUrl(s);
-            if (!detailsUrl) continue;
+            if (!detailsUrl) return;
             try {
               const res = await fetch(detailsUrl);
-              if (res.ok) {
-                const full = await res.json();
-                const fullEps = Array.isArray(full?.episodes) ? full.episodes : [];
-                const fullHasSeasonOne = fullEps.some((e) => Number(e.season) === 1);
-                if (full && fullEps.length > 0 && (fullEps.length > knownTotal || (!hasSeasonOne && fullHasSeasonOne))) {
-                  const sortedFull = fullEps
-                    .map((e) => this.compactEpisode(e))
-                    .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
-                  const airedFull = this.getAiredEpisodes(sortedFull);
-                  const isOngoing = String(full.status || s.status || "").toLowerCase() !== "ended";
-                  const todayIso = new Date().toISOString().slice(0, 10);
-                  let nextFutureEp = null;
-                  for (const ep of sortedFull) {
-                    if (this.isFutureEpisode(ep, todayIso)) {
-                      if (!nextFutureEp || ep.airDate < nextFutureEp.airDate) nextFutureEp = ep;
-                    }
+              if (!res.ok) return;
+              const full = await res.json();
+              if (!full) return;
+              if (full.countOnly && Number(full.totalEpisodes) > 0) return;
+              const fullEps = Array.isArray(full.episodes) ? full.episodes : [];
+              if (fullEps.length === 0) return;
+
+              const eps = Array.isArray(s.episodes) ? s.episodes : [];
+              const compSeasons = s.completedSeasons && typeof s.completedSeasons === "object" ? s.completedSeasons : {};
+              const hasSeasonOne = Boolean(compSeasons["1"]) || eps.some((e) => Number(e.season) === 1);
+              const knownTotal = Math.max(Number(s.totalEpisodes) || 0, eps.length);
+              const fullHasSeasonOne = fullEps.some((e) => Number(e.season) === 1);
+
+              const sortedFull = fullEps
+                .map((e) => this.compactEpisode(e))
+                .sort((a, b) => (Number(a.season) - Number(b.season)) || (Number(a.number) - Number(b.number)));
+              const airedFull = this.getAiredEpisodes(sortedFull, todayIso);
+              const liveStatusStr = String(full.status || s.status || "");
+              const isOngoing =
+                liveStatusStr.toLowerCase() !== "ended" &&
+                liveStatusStr.toLowerCase() !== "canceled" &&
+                liveStatusStr.toLowerCase() !== "cancelled";
+
+              let nextFutureEp = null;
+              for (const ep of sortedFull) {
+                if (this.isFutureEpisode(ep, todayIso)) {
+                  if (!nextFutureEp || ep.airDate < nextFutureEp.airDate) nextFutureEp = ep;
+                }
+              }
+              const curUpcoming = this.findNextUpcomingEpisode(s, todayIso);
+              const curNextCode = curUpcoming && curUpcoming.ep ? String(curUpcoming.ep.code || "") : "";
+              const curNextDate = curUpcoming && curUpcoming.ep ? String(curUpcoming.ep.airDate || "") : "";
+              const newNextCode = nextFutureEp ? String(nextFutureEp.code || "") : "";
+              const newNextDate = nextFutureEp ? String(nextFutureEp.airDate || "") : "";
+              const upcomingChanged = curNextCode !== newNextCode || curNextDate !== newNextDate;
+              const statusChanged = Boolean(full.status && full.status !== s.status);
+
+              if (String(s.userStatus || "").toLowerCase() === "completed") {
+                if (isOngoing && knownTotal > 1 && airedFull.length > knownTotal) {
+                  s.episodes = sortedFull;
+                  s.totalEpisodes = airedFull.length;
+                  s.watchedEpisodes = airedFull.slice(0, knownTotal).map((e) => e.code).sort();
+                  s.completedSeasons = {};
+                  s.userStatus = "in_progress";
+                  if (full.status) s.status = full.status;
+                  updatedAny = true;
+                } else if (knownTotal <= 1) {
+                  const targetWatched = airedFull.length > 0 ? airedFull : sortedFull.slice(0, 1);
+                  if (airedFull.length > 0) {
+                    const sumRt = airedFull.reduce((acc, ep) => acc + (Number(ep.runtimeMins) || Number(s.runtimeMins) || 45), 0);
+                    s.runtimeMins = Math.max(5, Math.round(sumRt / airedFull.length));
                   }
-                  if (String(s.userStatus || "").toLowerCase() === "completed") {
-                    if (isOngoing && knownTotal > 1 && airedFull.length > knownTotal) {
-                      // New aired episodes arrived on a previously caught-up returning series
-                      s.episodes = sortedFull;
-                      s.totalEpisodes = airedFull.length;
-                      s.watchedEpisodes = airedFull.slice(0, knownTotal).map((e) => e.code).sort();
-                      s.completedSeasons = {};
-                      s.userStatus = "in_progress";
-                      if (full.status) s.status = full.status;
-                      updatedAny = true;
-                    } else if (knownTotal <= 1) {
-                      const targetWatched = airedFull.length > 0 ? airedFull : sortedFull.slice(0, 1);
-                      if (airedFull.length > 0) {
-                        const sumRt = airedFull.reduce((acc, ep) => acc + (Number(ep.runtimeMins) || Number(s.runtimeMins) || 45), 0);
-                        s.runtimeMins = Math.max(5, Math.round(sumRt / airedFull.length));
-                      }
-                      s.episodes = nextFutureEp ? [nextFutureEp] : [];
-                      s.totalEpisodes = targetWatched.length;
-                      s.watchedEpisodes = [];
-                      s.completedSeasons = {};
-                      if (full.status) s.status = full.status;
-                      updatedAny = true;
-                    } else {
-                      // Keep completed returning series compacted so Statistics watch hours never jump mid-view!
-                      const curNextCode = eps.length === 1 ? String(eps[0].code || "") : "";
-                      const curNextDate = eps.length === 1 ? String(eps[0].airDate || "") : "";
-                      const newNextCode = nextFutureEp ? String(nextFutureEp.code || "") : "";
-                      const newNextDate = nextFutureEp ? String(nextFutureEp.airDate || "") : "";
-                      if (curNextCode !== newNextCode || curNextDate !== newNextDate) {
-                        s.episodes = nextFutureEp ? [nextFutureEp] : [];
-                        if (full.status) s.status = full.status;
-                        updatedAny = true;
-                      }
-                    }
-                  } else if (!hasSeasonOne && fullHasSeasonOne && eps.length <= 1) {
-                    const expandedWatched = this.expandCompactedWatchedSet(s, sortedFull);
-                    s.episodes = sortedFull;
-                    s.totalEpisodes = Math.max(airedFull.length, 1);
-                    s.watchedEpisodes = Array.from(expandedWatched).sort();
-                    s.completedSeasons = {};
-                    if (full.status) s.status = full.status;
-                    updatedAny = true;
-                  }
+                  s.episodes = nextFutureEp ? [nextFutureEp] : [];
+                  s.totalEpisodes = targetWatched.length;
+                  s.watchedEpisodes = [];
+                  s.completedSeasons = {};
+                  if (full.status) s.status = full.status;
+                  updatedAny = true;
+                } else if (upcomingChanged || statusChanged) {
+                  s.episodes = nextFutureEp ? [nextFutureEp] : [];
+                  if (full.status) s.status = full.status;
+                  updatedAny = true;
+                }
+              } else {
+                // Non-completed show (in_progress or interested Watchlist):
+                // Update immediately when a new episode airs OR when any future release date is announced/updated!
+                if (
+                  upcomingChanged ||
+                  airedFull.length > knownTotal ||
+                  (!hasSeasonOne && fullHasSeasonOne && eps.length <= 1) ||
+                  statusChanged
+                ) {
+                  const expandedWatched = this.expandCompactedWatchedSet(s, sortedFull);
+                  s.episodes = sortedFull;
+                  s.totalEpisodes = Math.max(airedFull.length, 1);
+                  s.watchedEpisodes = Array.from(expandedWatched).sort();
+                  s.completedSeasons = {};
+                  if (full.status) s.status = full.status;
+                  if (full.posterUrl && !s.posterUrl) s.posterUrl = full.posterUrl;
+                  updatedAny = true;
                 }
               }
             } catch (_) {}
+          };
+
+          const batchSize = 8;
+          for (let i = 0; i < candidates.length; i += batchSize) {
+            await Promise.all(candidates.slice(i, i + batchSize).map((cand) => checkCandidate(cand)));
+            if (updatedAny && this.homeSegment === "upcoming") {
+              this.renderHome();
+            }
           }
           if (updatedAny) {
             await this.persistState();
@@ -5693,51 +5726,43 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             '<p class="text-xs text-zinc-400 text-center py-8">Loading seasons &amp; episodes...</p>';
           return;
         }
-        const airedCountInGuide = episodes.filter(
-          (e) => !unairedCodes.has(String(e.code || "").trim().toUpperCase())
-        ).length;
-        const curT = isCountOnlySeries
-          ? Math.max(progForCount.total, 1)
-          : Math.max(airedCountInGuide, progForCount.total, 1);
-        const curW = Math.min(progForCount.watchedCount, curT);
-        const barPct = Math.min(100, Math.round((curW / curT) * 100));
-        const subCaption = isCountOnlySeries
-          ? "Confirmed total: " + curT + " episodes"
-          : "Enter how many episodes you watched (of " + curT + " aired)";
-        html +=
-          '<div class="tv-card rounded-2xl p-4 space-y-3 mb-3">' +
-          '<div class="flex items-center justify-between">' +
-          '<div><h3 class="text-sm font-extrabold text-white">📺 Watched Episode Count</h3>' +
-          '<p class="text-[11px] text-zinc-400">' +
-          subCaption +
-          "</p></div>" +
-          '<span class="px-2.5 py-1 rounded-full bg-zinc-800 text-xs font-black tv-yellow-text">' +
-          curW +
-          " / " +
-          curT +
-          "</span>" +
-          "</div>" +
-          '<div class="w-full h-2 rounded-full bg-zinc-900 overflow-hidden">' +
-          '<div class="h-full bg-emerald-500 rounded-full" style="width:' +
-          barPct +
-          '%"></div></div>' +
-          '<div class="flex items-end gap-2.5 pt-0.5">' +
-          '<div class="flex-1"><label class="block text-[10px] font-bold uppercase text-zinc-400 mb-1">Watched Episodes (of ' +
-          curT +
-          ")</label>" +
-          '<input id="count-only-watched-input" type="number" min="0" max="' +
-          curT +
-          '" value="' +
-          curW +
-          '" onkeydown="if(event.key===&quot;Enter&quot;){app.setCountOnlyProgress(&quot;' +
-          escapeHtml(item.id) +
-          '&quot;, this.value);}" class="w-full rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2.5 text-sm font-bold text-white" /></div>' +
-          '<button type="button" onclick="app.setCountOnlyProgress(&quot;' +
-          escapeHtml(item.id) +
-          '&quot;, document.getElementById(&quot;count-only-watched-input&quot;).value)" class="px-5 py-2.5 rounded-xl tv-yellow-bg text-xs font-extrabold shrink-0">Save</button>' +
-          "</div>" +
-          "</div>";
         if (isCountOnlySeries) {
+          const curT = Math.max(progForCount.total, 1);
+          const curW = Math.min(progForCount.watchedCount, curT);
+          const barPct = Math.min(100, Math.round((curW / curT) * 100));
+          html +=
+            '<div class="tv-card rounded-2xl p-4 space-y-3.5">' +
+            '<div class="flex items-center justify-between">' +
+            '<div><h3 class="text-sm font-extrabold text-white">📺 Watched Episode Count</h3>' +
+            '<p class="text-[11px] text-zinc-400">Confirmed total: ' +
+            curT +
+            " episodes</p></div>" +
+            '<span class="px-2.5 py-1 rounded-full bg-zinc-800 text-xs font-black tv-yellow-text">' +
+            curW +
+            " / " +
+            curT +
+            "</span>" +
+            "</div>" +
+            '<div class="w-full h-2 rounded-full bg-zinc-900 overflow-hidden">' +
+            '<div class="h-full bg-emerald-500 rounded-full" style="width:' +
+            barPct +
+            '%"></div></div>' +
+            '<div class="flex items-end gap-2.5 pt-1">' +
+            '<div class="flex-1"><label class="block text-[10px] font-bold uppercase text-zinc-400 mb-1">Watched Episodes (of ' +
+            curT +
+            ")</label>" +
+            '<input id="count-only-watched-input" type="number" min="0" max="' +
+            curT +
+            '" value="' +
+            curW +
+            '" onkeydown="if(event.key===&quot;Enter&quot;){app.setCountOnlyProgress(&quot;' +
+            escapeHtml(item.id) +
+            '&quot;, this.value);}" class="w-full rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2.5 text-sm font-bold text-white" /></div>' +
+            '<button type="button" onclick="app.setCountOnlyProgress(&quot;' +
+            escapeHtml(item.id) +
+            '&quot;, document.getElementById(&quot;count-only-watched-input&quot;).value)" class="px-5 py-2.5 rounded-xl tv-yellow-bg text-xs font-extrabold shrink-0">Save</button>' +
+            "</div>" +
+            "</div>";
           bodyEl.innerHTML = html;
           return;
         }

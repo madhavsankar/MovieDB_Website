@@ -2566,7 +2566,8 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
               app.renderDetailSheet();
               const fmEpisodesHtml = mockBodyEl.innerHTML;
               delete globalThis.document;
-              const fmHasUniversalCountUi = fmEpisodesHtml.includes('id="count-only-watched-input"') && fmEpisodesHtml.includes("Season 1") && fmEpisodesHtml.includes("Season 2");
+              // Shows with seasons & episodes must NOT render the Watched Episode Count box (only Season accordions)
+              const fmHasCleanSeasonUiOnly = !fmEpisodesHtml.includes('id="count-only-watched-input"') && fmEpisodesHtml.includes("Season 1") && fmEpisodesHtml.includes("Season 2");
               await app.setCountOnlyProgress("tmdb_tv_93352", 12);
               const fmProgPartial = app.computeShowProgress(fmShow);
               const fmStatusPartial = fmShow.userStatus;
@@ -2612,7 +2613,7 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 bigLastNumPass2: progBig.lastWatchedEp?.number,
                 bigRepoWatchedLen: repoPass2Big.watchedEpisodes?.length,
                 bigTrimmedWatched: progBigTrimmed.watchedCount,
-                fmHasUniversalCountUi,
+                fmHasCleanSeasonUiOnly,
                 fmWatchedPartial: fmProgPartial.watchedCount,
                 fmTotalPartial: fmProgPartial.total,
                 fmStatusPartial,
@@ -2660,13 +2661,244 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["bigLastNumPass2"], 450)
         self.assertEqual(out["bigRepoWatchedLen"], 450)
         self.assertEqual(out["bigTrimmedWatched"], 200)
-        self.assertTrue(out["fmHasUniversalCountUi"])
+        self.assertTrue(out["fmHasCleanSeasonUiOnly"])
         self.assertEqual(out["fmWatchedPartial"], 12)
         self.assertEqual(out["fmTotalPartial"], 19)
         self.assertEqual(out["fmStatusPartial"], "stopped")
         self.assertEqual(out["fmLastCodePartial"], "S02E02")
         self.assertEqual(out["fmWatchedFull"], 19)
         self.assertEqual(out["fmStatusFull"], "completed")
+
+    def test_upcoming_refresh_non_completed_and_broken_indian_seasons(self):
+        """Verifies Upcoming refreshes newly announced release dates on in_progress/watchlist/legacy-Ended shows, resolves broken multi-season Indian stubs, and preserves clean 1-season web miniseries."""
+        import re as _re
+
+        def load_cf_module(rel_path):
+            with open(os.path.join(ROOT_DIR, "cloudflare", "src", *rel_path), "r", encoding="utf-8") as f:
+                src = f.read()
+            src = _re.sub(r"^import\s+.*?;\s*$", "", src, flags=_re.MULTILINE)
+            return src.replace("export class ", "class ").replace("export function ", "function ").replace("export const ", "const ")
+
+        catalog_src = load_cf_module(("services", "LiveCatalogService.js"))
+        view_src = load_cf_module(("ui", "WebAppView.js"))
+        harness = (
+            catalog_src
+            + "\n"
+            + view_src
+            + """
+            (async () => {
+              const sStart = WEB_APP_HTML.lastIndexOf("<script>") + 8;
+              const sEnd = WEB_APP_HTML.lastIndexOf("</script>");
+              const clientJs = WEB_APP_HTML.slice(sStart, sEnd).replace("const app = new TvTimeClient();", "globalThis.TvTimeClientClass = TvTimeClient;");
+              (new Function(clientJs))();
+              const app = Object.create(globalThis.TvTimeClientClass.prototype);
+              app.persistState = async () => {};
+
+              // 1. Upcoming refresh for in_progress, watchlist (interested), and legacy tvmaze Ended->Returning shows
+              app.state = {
+                shows: [
+                  {
+                    id: "tmdb_tv_90282",
+                    tmdbId: 90282,
+                    title: "The Morning Show",
+                    year: 2019,
+                    status: "Ended",
+                    userStatus: "in_progress",
+                    totalEpisodes: 10,
+                    completedSeasons: { "1": 5 },
+                    watchedEpisodes: ["S02E01"],
+                    episodes: [
+                      { code: "S02E01", season: 2, number: 1, title: "Ep 1", airDate: "2021-09-17" },
+                      { code: "S02E02", season: 2, number: 2, title: "Ep 2", airDate: "2021-09-24" },
+                      { code: "S02E03", season: 2, number: 3, title: "Ep 3", airDate: "2021-10-01" },
+                      { code: "S02E04", season: 2, number: 4, title: "Ep 4", airDate: "2021-10-08" },
+                      { code: "S02E05", season: 2, number: 5, title: "Ep 5", airDate: "2021-10-15" }
+                    ]
+                  },
+                  {
+                    id: "tmdb_tv_224372",
+                    tmdbId: 224372,
+                    title: "A Knight of the Seven Kingdoms",
+                    year: 2026,
+                    status: "Returning Series",
+                    userStatus: "interested",
+                    totalEpisodes: 6,
+                    completedSeasons: {},
+                    watchedEpisodes: [],
+                    episodes: []
+                  },
+                  {
+                    id: "tvmaze_41632",
+                    tvmazeId: 41632,
+                    tmdbId: 0,
+                    title: "Emily in Paris",
+                    year: 2020,
+                    status: "Ended",
+                    userStatus: "completed",
+                    totalEpisodes: 50,
+                    completedSeasons: {},
+                    watchedEpisodes: [],
+                    episodes: []
+                  }
+                ],
+                movies: []
+              };
+
+              globalThis.fetch = async (url) => {
+                const u = String(url);
+                if (u.includes("tmdb_tv_90282")) {
+                  const fullEps = [];
+                  for (let i = 1; i <= 5; i++) fullEps.push({ code: "S01E0" + i, season: 1, number: i, title: "S1E" + i, airDate: "2019-11-0" + i });
+                  for (let i = 1; i <= 5; i++) fullEps.push({ code: "S02E0" + i, season: 2, number: i, title: "S2E" + i, airDate: "2021-09-1" + i });
+                  fullEps.push({ code: "S03E01", season: 3, number: 1, title: "Season 3 Premiere", airDate: "2099-03-10" });
+                  return { ok: true, json: async () => ({ status: "Returning Series", episodes: fullEps }) };
+                }
+                if (u.includes("tmdb_tv_224372")) {
+                  const fullEps = [];
+                  for (let i = 1; i <= 6; i++) fullEps.push({ code: "S01E0" + i, season: 1, number: i, title: "Ep " + i, airDate: "2026-06-0" + i });
+                  fullEps.push({ code: "S02E01", season: 2, number: 1, title: "Season 2 Premiere", airDate: "2099-04-20" });
+                  return { ok: true, json: async () => ({ status: "Returning Series", episodes: fullEps }) };
+                }
+                if (u.includes("tvmazeId=41632")) {
+                  const fullEps = [];
+                  for (let i = 1; i <= 50; i++) fullEps.push({ code: "S01E" + String(i).padStart(2, "0"), season: 1, number: i, title: "Ep " + i, airDate: "2022-01-01" });
+                  fullEps.push({ code: "S06E01", season: 6, number: 1, title: "Bonjour Again", airDate: "2099-12-24" });
+                  return { ok: true, json: async () => ({ status: "Returning Series", episodes: fullEps }) };
+                }
+                // 2. Broken Indian multi-season stub (D3: Dil Dostii Dance: S1=1 ep, S12=1 ep -> 857 on Wikipedia)
+                if (u.includes("api.themoviedb.org/3/tv/41519?append_to_response=credits")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      id: 41519,
+                      name: "D3: Dil Dostii Dance",
+                      first_air_date: "2013-04-11",
+                      original_language: "hi",
+                      origin_country: ["IN"],
+                      episode_run_time: [],
+                      seasons: [{ season_number: 1, episode_count: 1 }, { season_number: 12, episode_count: 1 }]
+                    })
+                  };
+                }
+                if (u.includes("api.themoviedb.org/3/tv/41519?append_to_response=season/1,season/12")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      "season/1": { episodes: [{ episode_number: 1, name: "Episode 1", air_date: "2013-04-11" }] },
+                      "season/12": { episodes: [{ episode_number: 1, name: "Episode 1", air_date: "2014-01-01" }] }
+                    })
+                  };
+                }
+                if (u.includes("en.wikipedia.org") && u.includes("list=search") && u.includes("Dil%20Dostii%20Dance")) {
+                  return { ok: true, json: async () => ({ query: { search: [{ title: "Dil Dosti Dance" }] } }) };
+                }
+                if (u.includes("en.wikipedia.org") && u.includes("Dil%20Dosti%20Dance")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      query: {
+                        pages: {
+                          "501": {
+                            pageid: 501,
+                            title: "Dil Dosti Dance",
+                            revisions: [{ "*": "{{Infobox television | country = India | network = [[Channel V India]] | first_aired = {{Start date|2011|4|11}} | last_aired = {{End date|2015|1|9}} | num_episodes = 857 | runtime = 22 minutes }}" }]
+                          }
+                        }
+                      }
+                    })
+                  };
+                }
+                // 3. Clean 2024 1-season Malayalam YouTube miniseries (JAM!: 3 eps) must NOT be hijacked by 1999 Jam! (456 eps)
+                if (u.includes("api.themoviedb.org/3/tv/271476?append_to_response=credits")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      id: 271476,
+                      name: "JAM!",
+                      first_air_date: "2024-08-10",
+                      original_language: "ml",
+                      origin_country: ["IN"],
+                      episode_run_time: [25],
+                      seasons: [{ season_number: 1, episode_count: 3 }]
+                    })
+                  };
+                }
+                if (u.includes("api.themoviedb.org/3/tv/271476?append_to_response=season/1")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      "season/1": {
+                        episodes: [
+                          { episode_number: 1, name: "Part 1", air_date: "2024-08-10", runtime: 24 },
+                          { episode_number: 2, name: "Part 2", air_date: "2024-08-17", runtime: 25 },
+                          { episode_number: 3, name: "Part 3", air_date: "2024-08-24", runtime: 26 }
+                        ]
+                      }
+                    })
+                  };
+                }
+                if (u.includes("en.wikipedia.org") && u.includes("JAM")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      query: {
+                        pages: {
+                          "601": {
+                            pageid: 601,
+                            title: "Jam!",
+                            revisions: [{ "*": "{{Infobox television | country = United Kingdom | network = [[Cartoon Network]] | first_aired = {{Start date|1999|3|1}} | num_episodes = 456 }}" }]
+                          }
+                        }
+                      }
+                    })
+                  };
+                }
+                return { ok: true, json: async () => ({ results: [] }) };
+              };
+
+              await app.refreshUpcomingEpisodesIfNeeded();
+              const tmsNext = app.findNextUpcomingEpisode(app.state.shows[0], "2026-11-25");
+              const tmsProg = app.computeShowProgress(app.state.shows[0], "2026-11-25");
+              const knightNext = app.findNextUpcomingEpisode(app.state.shows[1], "2026-11-25");
+              const emilyNext = app.findNextUpcomingEpisode(app.state.shows[2], "2026-11-25");
+
+              const d3Res = await LiveCatalogService.fetchFullShowFromTvMaze("tmdb_tv_41519", {
+                title: "D3: Dil Dostii Dance",
+                fetchImpl: globalThis.fetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
+              const jamRes = await LiveCatalogService.fetchFullShowFromTvMaze("tmdb_tv_271476", {
+                title: "JAM!",
+                fetchImpl: globalThis.fetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
+
+              const out = JSON.stringify({
+                tmsNextCode: tmsNext?.ep?.code,
+                tmsWatchedPreserved: tmsProg.watchedCount,
+                knightNextCode: knightNext?.ep?.code,
+                emilyNextCode: emilyNext?.ep?.code,
+                emilyStatus: app.state.shows[2].status,
+                d3CountOnly: Boolean(d3Res?.countOnly),
+                d3Total: d3Res?.totalEpisodes,
+                jamCountOnly: Boolean(jamRes?.countOnly),
+                jamEpsLen: jamRes?.episodes?.length
+              });
+              if (typeof console !== "undefined" && console.log) console.log(out);
+              else if (typeof print !== "undefined") print(out);
+            })();
+            """
+        )
+        out = self._run_js(harness)
+        self.assertEqual(out["tmsNextCode"], "S03E01")
+        self.assertEqual(out["tmsWatchedPreserved"], 6)
+        self.assertEqual(out["knightNextCode"], "S02E01")
+        self.assertEqual(out["emilyNextCode"], "S06E01")
+        self.assertEqual(out["emilyStatus"], "Returning Series")
+        self.assertTrue(out["d3CountOnly"])
+        self.assertEqual(out["d3Total"], 857)
+        self.assertFalse(out["jamCountOnly"])
+        self.assertEqual(out["jamEpsLen"], 3)
 
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""

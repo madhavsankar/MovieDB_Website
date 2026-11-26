@@ -695,7 +695,7 @@ fun ShowDetailBottomSheet(
                         if (targetSeason != null) {
                             val idx = groupedBySeason.keys.indexOf(targetSeason)
                             if (idx >= 0) {
-                                listState.scrollToItem(idx + 1)
+                                listState.scrollToItem(idx)
                             }
                         }
                     }
@@ -892,132 +892,12 @@ fun ShowDetailBottomSheet(
                     )
                 }
 
-                val airedSorted = remember(episodes, unairedCodes) {
-                    val sorted = episodes.sortedWith(compareBy({ it.season }, { it.number }))
-                    val aired = sorted.filter { !unairedCodes.contains(it.code.trim().uppercase()) }
-                    if (aired.isNotEmpty()) aired else sorted
-                }
-                val totalAiredCount = maxOf(airedSorted.size, prog.totalEpisodes, 1)
-                val curWatchedCount = prog.watchedCount.coerceIn(0, totalAiredCount)
-                var epCountInputText by remember(curWatchedCount, totalAiredCount) {
-                    mutableStateOf(curWatchedCount.toString())
-                }
-
-                fun applyEpisodeCountProgress(rawVal: Int) {
-                    val cleanTotal = airedSorted.size.coerceAtLeast(1)
-                    val cleanWatched = rawVal.coerceIn(0, cleanTotal)
-                    val chosenEps = airedSorted.take(cleanWatched)
-                    val nextSet = chosenEps
-                        .map { it.code.trim().uppercase() }
-                        .filter { it.isNotEmpty() }
-                        .toSet()
-                    val nextStat = if (cleanWatched >= cleanTotal) "completed" else "stopped"
-                    completedSeasons = emptyMap()
-                    watchedSet = nextSet
-                    totalEpisodesOverride = cleanTotal
-                    userStatus = nextStat
-                    openSeasons = if (nextStat == "stopped" && chosenEps.isNotEmpty()) {
-                        setOf(chosenEps.last().season)
-                    } else {
-                        emptySet()
-                    }
-                    persistUpdatedShow(
-                        nextWatchedSet = nextSet,
-                        nextStatus = nextStat,
-                        nextCompletedSeasons = emptyMap(),
-                        nextTotalOverride = cleanTotal,
-                        nextCountOnly = false
-                    )
-                }
-
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    item(key = "universal_ep_count_bar") {
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = TvTimePalette.SurfaceCard,
-                            border = BorderStroke(1.dp, TvTimePalette.Border),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "📺 Watched Episode Count",
-                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold),
-                                            color = Color.White
-                                        )
-                                        Text(
-                                            text = "Enter how many episodes you watched (of $totalAiredCount aired)",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = TvTimePalette.TextSecondary
-                                        )
-                                    }
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = TvTimePalette.SurfacePill
-                                    ) {
-                                        Text(
-                                            text = "$curWatchedCount / $totalAiredCount",
-                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
-                                            color = TvTimePalette.Yellow,
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                                        )
-                                    }
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    OutlinedTextField(
-                                        value = epCountInputText,
-                                        onValueChange = { epCountInputText = it.filter(Char::isDigit) },
-                                        label = { Text("Watched Episodes (of $totalAiredCount)", fontSize = 11.sp) },
-                                        singleLine = true,
-                                        keyboardOptions = KeyboardOptions(
-                                            keyboardType = KeyboardType.Number,
-                                            imeAction = ImeAction.Done
-                                        ),
-                                        keyboardActions = KeyboardActions(
-                                            onDone = {
-                                                val wVal = epCountInputText.toIntOrNull() ?: curWatchedCount
-                                                applyEpisodeCountProgress(wVal)
-                                            }
-                                        ),
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Button(
-                                        onClick = {
-                                            val wVal = epCountInputText.toIntOrNull() ?: curWatchedCount
-                                            applyEpisodeCountProgress(wVal)
-                                        },
-                                        shape = RoundedCornerShape(14.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = TvTimePalette.Yellow,
-                                            contentColor = TvTimePalette.OnYellow
-                                        ),
-                                        modifier = Modifier.height(54.dp)
-                                    ) {
-                                        Text("Save", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     groupedBySeason.forEach { (seasonNum, seasonEps) ->
                         val isSeasonOpen = openSeasons.contains(seasonNum)
                         val airedSeasonEps = seasonEps.filter { !unairedCodes.contains(it.code.trim().uppercase()) }
