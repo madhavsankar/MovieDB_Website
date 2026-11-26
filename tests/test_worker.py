@@ -2459,16 +2459,17 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 env: { TMDB_API_KEY: "dummy" }
               });
 
-              // Verify compacted normal show never flashes "Watched Episode Count" while loading seasons
+              // Verify compacted non-Indian show never flashes "Watched Episode Count" while loading seasons
               const mockBodyEl = { innerHTML: "" };
               globalThis.document = {
                 getElementById: (id) => (id === "detail-body" ? mockBodyEl : null)
               };
               const compactedNormal = {
-                id: "tmdb_tv_93352",
-                tmdbId: 93352,
-                title: "The Family Man",
-                year: 2019,
+                id: "tmdb_tv_95396",
+                tmdbId: 95396,
+                title: "Severance",
+                network: "Apple TV+",
+                year: 2022,
                 runtimeMins: 49,
                 userStatus: "completed",
                 totalEpisodes: 19,
@@ -2541,13 +2542,14 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
               await app.markEpisodesUpTo("tmdb_tv_999600", "S01E200", true);
               const progBigTrimmed = app.computeShowProgress(bigShow);
 
-              // Test Universal Watched Episode Count on a multi-season show with real episodes (The Family Man: 19 eps across S1 & S2)
+              // Test Indian show renders BOTH Watched Episode Count at top AND Season accordions below (The Family Man: 19 eps across S1 & S2)
               const fmShow = {
                 id: "tmdb_tv_93352",
                 tmdbId: 93352,
                 title: "The Family Man",
                 year: 2019,
                 runtimeMins: 45,
+                isIndian: Boolean(familyManDetails.isIndian),
                 userStatus: "interested",
                 totalEpisodes: 19,
                 completedSeasons: {},
@@ -2566,8 +2568,7 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
               app.renderDetailSheet();
               const fmEpisodesHtml = mockBodyEl.innerHTML;
               delete globalThis.document;
-              // Shows with seasons & episodes must NOT render the Watched Episode Count box (only Season accordions)
-              const fmHasCleanSeasonUiOnly = !fmEpisodesHtml.includes('id="count-only-watched-input"') && fmEpisodesHtml.includes("Season 1") && fmEpisodesHtml.includes("Season 2");
+              const fmHasIndianCountAndSeasonsUi = fmEpisodesHtml.includes('id="count-only-watched-input"') && fmEpisodesHtml.includes("Season 1") && fmEpisodesHtml.includes("Season 2");
               await app.setCountOnlyProgress("tmdb_tv_93352", 12);
               const fmProgPartial = app.computeShowProgress(fmShow);
               const fmStatusPartial = fmShow.userStatus;
@@ -2613,7 +2614,7 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 bigLastNumPass2: progBig.lastWatchedEp?.number,
                 bigRepoWatchedLen: repoPass2Big.watchedEpisodes?.length,
                 bigTrimmedWatched: progBigTrimmed.watchedCount,
-                fmHasCleanSeasonUiOnly,
+                fmHasIndianCountAndSeasonsUi,
                 fmWatchedPartial: fmProgPartial.watchedCount,
                 fmTotalPartial: fmProgPartial.total,
                 fmStatusPartial,
@@ -2632,11 +2633,11 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["searchTopTotal"], 1173)
         self.assertEqual(out["searchShowIds"], ["imdb_tv_tt10339970"])
         self.assertEqual(out["chandanamazhaTotal"], 1173)
-        self.assertEqual(out["chandanamazhaEpsLen"], 0)
+        self.assertEqual(out["chandanamazhaEpsLen"], 1173)
         self.assertEqual(out["chandanamazhaNet"], "Asianet")
         self.assertEqual(out["parasparamTotal"], 1524)
         self.assertEqual(out["parasparamRt"], 22)
-        self.assertEqual(out["parasparamEpsLen"], 0)
+        self.assertEqual(out["parasparamEpsLen"], 1524)
         self.assertEqual(out["britishEpsLen"], 2)
         self.assertFalse(out["britishCountOnly"])
         self.assertEqual(out["uppumTotal"], 2400)
@@ -2661,7 +2662,7 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["bigLastNumPass2"], 450)
         self.assertEqual(out["bigRepoWatchedLen"], 450)
         self.assertEqual(out["bigTrimmedWatched"], 200)
-        self.assertTrue(out["fmHasCleanSeasonUiOnly"])
+        self.assertTrue(out["fmHasIndianCountAndSeasonsUi"])
         self.assertEqual(out["fmWatchedPartial"], 12)
         self.assertEqual(out["fmTotalPartial"], 19)
         self.assertEqual(out["fmStatusPartial"], "stopped")
@@ -2853,6 +2854,55 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                     })
                   };
                 }
+                // 4. Sadda Haq: My Life, My Choice (broken TMDB S1=2 eps, S678=1 ep -> Wikipedia Season 1=537->560 + Season 2=116 = 676 eps)
+                if (u.includes("api.themoviedb.org/3/tv/61800?append_to_response=credits")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      id: 61800,
+                      name: "Sadda Haq: My Life, My Choice",
+                      first_air_date: "2013-11-25",
+                      original_language: "hi",
+                      origin_country: ["IN"],
+                      episode_run_time: [22],
+                      seasons: [{ season_number: 1, episode_count: 2 }, { season_number: 678, episode_count: 1 }]
+                    })
+                  };
+                }
+                if (u.includes("api.themoviedb.org/3/tv/61800?append_to_response=season/1,season/678")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      "season/1": {
+                        episodes: [
+                          { episode_number: 1, name: "Sanyukta Enters FITE", air_date: "2013-11-25", runtime: 22 },
+                          { episode_number: 2, name: "Randhir vs Sanyukta", air_date: "2013-11-26", runtime: 22 }
+                        ]
+                      },
+                      "season/678": {
+                        episodes: [{ episode_number: 1, name: "Stub", air_date: "2016-01-01" }]
+                      }
+                    })
+                  };
+                }
+                if (u.includes("en.wikipedia.org") && u.includes("Sadda%20Haq")) {
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      query: {
+                        pages: {
+                          "701": {
+                            pageid: 701,
+                            title: "Sadda Haq (TV series)",
+                            revisions: [{
+                              "*": "{{Infobox television | country = India | network = [[Channel V India]] | first_aired = {{Start date|2013|11|25}} | last_aired = {{End date|2016|6|30}} | num_seasons = 2 | num_episodes = 676 | runtime = 22 minutes }}\\n== Series overview ==\\n{| class='wikitable'\\n|-\\n! rowspan='2' | Season\\n! rowspan='2' | Total no. of<br>episodes\\n! colspan='2' | Originally aired\\n|-\\n! Season premiere\\n! Season finale\\n|-\\n| 1\\n| 537\\n| 25 November 2013\\n| 25 December 2015\\n|-\\n| 2\\n| 116\\n| 19 January 2016\\n| 30 June 2016\\n|}"
+                            }]
+                          }
+                        }
+                      }
+                    })
+                  };
+                }
                 return { ok: true, json: async () => ({ results: [] }) };
               };
 
@@ -2872,6 +2922,29 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 fetchImpl: globalThis.fetch,
                 env: { TMDB_API_KEY: "dummy" }
               });
+              const saddaRes = await LiveCatalogService.fetchFullShowFromTvMaze("tmdb_tv_61800", {
+                title: "Sadda Haq: My Life, My Choice",
+                fetchImpl: globalThis.fetch,
+                env: { TMDB_API_KEY: "dummy" }
+              });
+
+              const mockDetailBody = { innerHTML: "" };
+              globalThis.document = {
+                getElementById: (id) => (id === "detail-body" ? mockDetailBody : null)
+              };
+              const saddaShow = { ...saddaRes, userStatus: "completed", watchedEpisodes: [] };
+              app.state.shows.push(saddaShow);
+              app.detailItem = saddaShow;
+              app.detailType = "show";
+              app.detailTab = "episodes";
+              app.openSeasons = new Set();
+              app.renderDetailSheet();
+              const saddaHtml = mockDetailBody.innerHTML;
+
+              app.detailItem = app.state.shows[2]; // Emily in Paris (non-Indian)
+              app.renderDetailSheet();
+              const emilyHtml = mockDetailBody.innerHTML;
+              delete globalThis.document;
 
               const out = JSON.stringify({
                 tmsNextCode: tmsNext?.ep?.code,
@@ -2879,10 +2952,22 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
                 knightNextCode: knightNext?.ep?.code,
                 emilyNextCode: emilyNext?.ep?.code,
                 emilyStatus: app.state.shows[2].status,
-                d3CountOnly: Boolean(d3Res?.countOnly),
+                d3IsIndian: Boolean(d3Res?.isIndian),
                 d3Total: d3Res?.totalEpisodes,
-                jamCountOnly: Boolean(jamRes?.countOnly),
-                jamEpsLen: jamRes?.episodes?.length
+                d3EpsLen: d3Res?.episodes?.length,
+                jamIsIndian: Boolean(jamRes?.isIndian),
+                jamEpsLen: jamRes?.episodes?.length,
+                saddaTotal: saddaRes?.totalEpisodes,
+                saddaS1Len: (saddaRes?.episodes || []).filter((e) => e.season === 1).length,
+                saddaS2Len: (saddaRes?.episodes || []).filter((e) => e.season === 2).length,
+                saddaEp1Title: saddaRes?.episodes?.[0]?.title,
+                saddaHasCountAndBothSeasons:
+                  saddaHtml.includes("Watched Episode Count") &&
+                  saddaHtml.includes("Season 1") &&
+                  saddaHtml.includes("560/560 watched") &&
+                  saddaHtml.includes("Season 2") &&
+                  saddaHtml.includes("116/116 watched"),
+                emilyHasNoCountBox: !emilyHtml.includes("Watched Episode Count") && emilyHtml.includes("Season 6")
               });
               if (typeof console !== "undefined" && console.log) console.log(out);
               else if (typeof print !== "undefined") print(out);
@@ -2895,10 +2980,17 @@ class TestCloudflareWorkerEngine(unittest.TestCase):
         self.assertEqual(out["knightNextCode"], "S02E01")
         self.assertEqual(out["emilyNextCode"], "S06E01")
         self.assertEqual(out["emilyStatus"], "Returning Series")
-        self.assertTrue(out["d3CountOnly"])
+        self.assertTrue(out["d3IsIndian"])
         self.assertEqual(out["d3Total"], 857)
-        self.assertFalse(out["jamCountOnly"])
+        self.assertEqual(out["d3EpsLen"], 857)
+        self.assertTrue(out["jamIsIndian"])
         self.assertEqual(out["jamEpsLen"], 3)
+        self.assertEqual(out["saddaTotal"], 676)
+        self.assertEqual(out["saddaS1Len"], 560)
+        self.assertEqual(out["saddaS2Len"], 116)
+        self.assertEqual(out["saddaEp1Title"], "Sanyukta Enters FITE")
+        self.assertTrue(out["saddaHasCountAndBothSeasons"])
+        self.assertTrue(out["emilyHasNoCountBox"])
 
     def test_public_repo_security_invariants(self):
         """Verifies no hardcoded Firebase project IDs, API keys, or unencrypted APK artifacts exist in tracked files."""

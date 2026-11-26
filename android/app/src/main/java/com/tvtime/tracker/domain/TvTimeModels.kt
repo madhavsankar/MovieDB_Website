@@ -120,7 +120,8 @@ data class CompactedShowMeta(
     val totalEpisodes: Int = 0,
     val completedSeasons: Map<Int, Int> = emptyMap(),
     val episodes: List<EpisodeModel> = emptyList(),
-    val countOnly: Boolean = false
+    val countOnly: Boolean = false,
+    val isIndian: Boolean = false
 )
 
 object TvTimeProgressCalculator {
@@ -347,7 +348,8 @@ object TvTimeProgressCalculator {
                     totalEpisodes = maxOf(total, compMap.values.sum() + eps.size),
                     completedSeasons = compMap,
                     episodes = eps,
-                    countOnly = root.optBoolean("countOnly", false) && eps.isEmpty()
+                    countOnly = root.optBoolean("countOnly", false) && eps.isEmpty(),
+                    isIndian = root.optBoolean("isIndian", false)
                 )
             } else {
                 val arr = JSONArray(trimmed)
@@ -356,7 +358,7 @@ object TvTimeProgressCalculator {
                     val obj = arr.optJSONObject(i) ?: continue
                     eps.add(EpisodeModel.fromJson(obj))
                 }
-                CompactedShowMeta(totalEpisodes = eps.size, completedSeasons = emptyMap(), episodes = eps, countOnly = false)
+                CompactedShowMeta(totalEpisodes = eps.size, completedSeasons = emptyMap(), episodes = eps, countOnly = false, isIndian = false)
             }
         } catch (_: Exception) {
             CompactedShowMeta()
@@ -367,12 +369,13 @@ object TvTimeProgressCalculator {
         totalEpisodes: Int,
         completedSeasons: Map<Int, Int>,
         episodes: List<EpisodeModel>,
-        countOnly: Boolean = false
+        countOnly: Boolean = false,
+        isIndian: Boolean = false
     ): String {
         val cleanComp = completedSeasons.filter { it.key > 0 && it.value > 0 }
         val cleanTotal = maxOf(totalEpisodes, cleanComp.values.sum() + episodes.size)
         val effectiveCountOnly = countOnly && episodes.isEmpty()
-        if (!effectiveCountOnly && cleanComp.isEmpty() && (cleanTotal <= 0 || cleanTotal == episodes.size)) {
+        if (!effectiveCountOnly && !isIndian && cleanComp.isEmpty() && (cleanTotal <= 0 || cleanTotal == episodes.size)) {
             return serializeEpisodeList(episodes)
         }
         val arr = JSONArray()
@@ -380,6 +383,7 @@ object TvTimeProgressCalculator {
         return JSONObject().apply {
             put("totalEpisodes", cleanTotal)
             if (effectiveCountOnly) put("countOnly", true)
+            if (isIndian) put("isIndian", true)
             if (cleanComp.isNotEmpty()) {
                 val csObj = JSONObject()
                 cleanComp.toSortedMap().forEach { (sNum, cnt) -> csObj.put(sNum.toString(), cnt) }

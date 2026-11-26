@@ -1760,35 +1760,72 @@ export class LiveCatalogService {
     );
   }
 
+  static isIndianBroadcasterOrPlatform(text) {
+    const s = String(text || "").trim();
+    if (!s) return false;
+    if (LiveCatalogService.isIndianSeriesMetadata(s)) return true;
+    return /\b(starplus|star\s+plus|star\s+one|star\s+bharat|star\s+vijay|vijay\s+tv|star\s+maa|star\s+jalsha|star\s+pravah|star\s+suvarna|life\s+ok|channel\s+v|bindass|zee\s*tv|zee5|zee\s+keralam|zee\s+tamil|zee\s+telugu|zee\s+kannada|zee\s+bangla|zee\s+marathi|colors|sony\s+sab|sab\s+tv|sonyliv|sony\s+entertainment\s+television|asianet|flowers\s*tv|surya\s+tv|mazhavil|kairali|amrita\s+tv|sun\s+tv|udaya\s+tv|etv|karikku|tvf|viral\s+fever|dice\s+media|filtercopy|jiocinema|jiohotstar|hotstar|aha|hoichoi|mx\s+player|voot|altbalaji|minitv|doordarshan|dd\s+national|sahara\s+one|hungama)\b/i.test(
+      s
+    );
+  }
+
   static hasIndianWikiCategories(categories) {
     if (!Array.isArray(categories)) return false;
     return categories.some((c) => LiveCatalogService.isIndianSeriesMetadata(c?.title || ""));
   }
 
-  static parseWikiDateMs(raw) {
-    const clean = String(raw || "")
+  static parseWikiDateIso(raw) {
+    const str = String(raw || "").trim();
+    if (/^[12][0-9]{3}-[0-9]{2}-[0-9]{2}$/.test(str)) return str;
+    const mTpl = /\{\{\s*(?:start|end|air)\s*date[^|}]*\|\s*(?:df=[a-z]+\s*\|\s*)?([12][0-9]{3})\s*\|\s*([0-9]{1,2})\s*\|\s*([0-9]{1,2})/i.exec(
+      str
+    );
+    if (mTpl) {
+      const y = parseInt(mTpl[1], 10);
+      const mo = parseInt(mTpl[2], 10);
+      const d = parseInt(mTpl[3], 10);
+      if (y >= 1950 && y <= 2035 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+        return `${String(y).padStart(4, "0")}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      }
+    }
+    const clean = str
       .replace(/\[\[|\]\]/g, " ")
       .replace(/\{\{[^}]*\}\}/g, " ")
       .replace(/<[^>]*>/g, " ")
       .trim();
     const months = {
-      january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
-      july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+      january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+      july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
     };
     const m1 = /\b([0-9]{1,2})\s+([A-Za-z]+)\s+([12][0-9]{3})\b/.exec(clean);
     if (m1 && months[m1[2].toLowerCase()] !== undefined) {
-      return Date.UTC(parseInt(m1[3], 10), months[m1[2].toLowerCase()], parseInt(m1[1], 10));
+      const y = parseInt(m1[3], 10);
+      const mo = months[m1[2].toLowerCase()];
+      const d = parseInt(m1[1], 10);
+      return `${String(y).padStart(4, "0")}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     }
     const m2 = /\b([A-Za-z]+)\s+([0-9]{1,2}),?\s+([12][0-9]{3})\b/.exec(clean);
     if (m2 && months[m2[1].toLowerCase()] !== undefined) {
-      return Date.UTC(parseInt(m2[3], 10), months[m2[1].toLowerCase()], parseInt(m2[2], 10));
+      const y = parseInt(m2[3], 10);
+      const mo = months[m2[1].toLowerCase()];
+      const d = parseInt(m2[2], 10);
+      return `${String(y).padStart(4, "0")}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     }
-    return 0;
+    return "";
   }
 
-  static parseSeasonTableEpisodes(wt, queryTitle = "", pageTitle = "") {
-    if (!wt) return 0;
-    const cleanQueryWords = String(queryTitle || "")
+  static parseWikiDateMs(raw) {
+    const iso = LiveCatalogService.parseWikiDateIso(raw);
+    if (!iso) return 0;
+    const parts = iso.split("-").map((x) => parseInt(x, 10));
+    return Date.UTC(parts[0], parts[1] - 1, parts[2]);
+  }
+
+  static parseSeasonBreakdown(wt, queryTitle = "", pageTitle = "", infoboxTotal = 0) {
+    if (!wt) return { seasonCounts: [], totalEpisodes: Number(infoboxTotal) || 0 };
+    const cleanWt = String(wt).replace(/<ref[\s\S]*?(?:<\/ref>|\/>)/gi, "");
+    const baseQuery = String(queryTitle || "").split(":")[0].trim();
+    const cleanQueryWords = baseQuery
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, " ")
       .trim()
@@ -1801,76 +1838,248 @@ export class LiveCatalogService {
         .trim()
         .split(/\s+/)
     );
-    const sponsorTokens = cleanQueryWords.filter((w) => !pageWords.has(w) && w !== "series" && w !== "the");
+    const sponsorTokens = cleanQueryWords.filter((w) => !pageWords.has(w) && w !== "series" && w !== "the" && w !== "indian");
 
-    const tables = String(wt).match(/\{\|[\s\S]*?\|\}/g) || [];
+    // 1. {{Series overview | episodes1 = ... | start1 = ... }}
+    const soRe = /\|\s*episodes([0-9]{1,2})\s*=\s*([0-9][0-9,]*)/gi;
+    const soMap = new Map();
+    let soMatch;
+    while ((soMatch = soRe.exec(cleanWt)) !== null) {
+      const sn = parseInt(soMatch[1], 10);
+      const en = parseInt(soMatch[2].replace(/,/g, ""), 10);
+      if (sn >= 1 && sn <= 50 && en >= 1 && en <= 15000) {
+        const stMatch = new RegExp(`\\|\\s*start${sn}\\s*=\\s*([^\\n|]+)`, "i").exec(cleanWt);
+        const airIso = stMatch ? LiveCatalogService.parseWikiDateIso(stMatch[1]) : "";
+        soMap.set(sn, { season: sn, episodes: en, airDate: airIso });
+      }
+    }
+    if (soMap.size >= 1) {
+      const list = Array.from(soMap.values()).sort((a, b) => a.season - b.season);
+      let sum = list.reduce((acc, s) => acc + s.episodes, 0);
+      if (Number(infoboxTotal) > sum && list.length >= 1) {
+        list[list.length - 1].episodes += Number(infoboxTotal) - sum;
+        sum = Number(infoboxTotal);
+      }
+      return { seasonCounts: list, totalEpisodes: sum };
+    }
+
+    // 2. Wikitables with Season header (supports multi-row ! headers, explicit episode counts, or date-range estimation)
+    const tables = cleanWt.match(/\{\|[\s\S]*?\|\}/g) || [];
     const nowMs = Date.now();
+    let dateEstimatedFallback = null;
+
     for (const tb of tables) {
-      const cleanTb = tb.replace(/<ref[\s\S]*?(?:<\/ref>|\/>)/gi, "");
-      const rows = cleanTb.split(/\n\|-/);
-      const header = rows[0] || "";
-      if (!/season/i.test(header)) continue;
+      const rows = tb.split(/\n\|-/);
+      const headerLines = [];
+      let dataStart = 0;
+      for (let idx = 0; idx < rows.length; idx++) {
+        const s = rows[idx].trim();
+        if (idx === 0 && s.startsWith("{|")) {
+          if (s.includes("!")) headerLines.push(s);
+          dataStart = idx + 1;
+          continue;
+        }
+        if (s.startsWith("!")) {
+          headerLines.push(s);
+          dataStart = idx + 1;
+        } else {
+          break;
+        }
+      }
+      const header = headerLines.join("\n");
+      if (!/\bseason\b/i.test(header)) continue;
       const hasEpisodesCol = /\bepisodes?\b/i.test(header);
-      const hasAiredCols = /aired|first\s+aired|original\s+release/i.test(header);
+      const hasAiredCols = /aired|premiere|finale|original\s+release/i.test(header);
       if (!hasEpisodesCol && !hasAiredCols) continue;
 
-      let totalAll = 0;
-      let totalSponsor = 0;
       let headerEpIdx = -1;
-      if (hasEpisodesCol) {
-        const hCells = header
+      if (hasEpisodesCol && headerLines.length > 0) {
+        const hCells = headerLines[0]
           .split(/!!|\n!/)
           .map((c) => c.replace(/^[\s!|]+/, "").trim())
-          .filter(Boolean);
+          .filter((c) => c && !/^class\s*=/i.test(c) && !/^style\s*=/i.test(c))
+          .map((c) => (c.includes("|") ? c.split("|").pop().trim() : c));
         headerEpIdx = hCells.findIndex((c) => /\bepisodes?\b/i.test(c));
       }
 
-      for (let ri = 1; ri < rows.length; ri++) {
+      const allSeasons = [];
+      const sponsorSeasons = [];
+      let nextS = 1;
+      let usedExplicitEps = false;
+
+      for (let ri = dataStart; ri < rows.length; ri++) {
         const row = rows[ri];
         const cells = row
           .split(/\|\||\n\|/)
           .map((c) => c.trim())
-          .filter(Boolean);
+          .filter((c) => c && !c.startsWith("}"));
         if (cells.length < 2) continue;
+        const rawC0 = cells[0]
+          .replace(/\[\[[^\]|]*\|([^\]]+)\]\]/g, "$1")
+          .replace(/[\[\]'"]/g, "");
+        const c0 = (rawC0.includes("|") ? rawC0.split("|").pop() : rawC0).trim();
+        const mS = /^(?:Season\s+)?([0-9]{1,2})$/i.exec(c0);
+        const sn = mS ? parseInt(mS[1], 10) : nextS;
+
         let rowEps = 0;
         if (headerEpIdx >= 0 && cells[headerEpIdx]) {
-          const mEp = /^([0-9]{1,4})$/.exec(cells[headerEpIdx].replace(/,/g, "").trim());
-          if (mEp) rowEps = parseInt(mEp[1], 10);
-        }
-        if (rowEps === 0 && hasAiredCols) {
-          const dateValues = [];
-          for (const cell of cells) {
-            const dMs = LiveCatalogService.parseWikiDateMs(cell);
-            if (dMs > 0) dateValues.push(dMs);
-          }
-          if (dateValues.length >= 2 && dateValues[1] > dateValues[0]) {
-            const startMs = dateValues[0];
-            const endMs = Math.min(dateValues[1], nowMs);
-            if (endMs > startMs) {
-              const rowLower = row.toLowerCase();
-              const perWeek =
-                /mon[^a-z0-9]{1,5}sat/.test(rowLower)
-                  ? 6
-                  : /mon[^a-z0-9]{1,5}fri/.test(rowLower)
-                    ? 5
-                    : /\bdaily\b/.test(rowLower)
-                      ? 7
-                      : 2;
-              rowEps = Math.max(1, Math.round(((endMs - startMs) / (7 * 86400000)) * perWeek));
-            }
+          const rawEpCell = cells[headerEpIdx].includes("|") ? cells[headerEpIdx].split("|").pop() : cells[headerEpIdx];
+          const mEp = /^([0-9]{1,4})\+?$/.exec(rawEpCell.replace(/,/g, "").trim());
+          if (mEp) {
+            rowEps = parseInt(mEp[1], 10);
+            usedExplicitEps = true;
           }
         }
-        if (rowEps > 0) {
-          totalAll += rowEps;
+        const dateIsos = [];
+        for (const cell of cells) {
+          const dIso = LiveCatalogService.parseWikiDateIso(cell);
+          if (dIso) dateIsos.push(dIso);
+        }
+        if (rowEps === 0 && hasAiredCols && dateIsos.length >= 2) {
+          const startMs = LiveCatalogService.parseWikiDateMs(dateIsos[0]);
+          const endMs = Math.min(LiveCatalogService.parseWikiDateMs(dateIsos[1]), nowMs);
+          if (endMs > startMs) {
+            const rowLower = row.toLowerCase();
+            const perWeek =
+              /mon[^a-z0-9]{1,5}sat/.test(rowLower)
+                ? 6
+                : /mon[^a-z0-9]{1,5}fri/.test(rowLower)
+                  ? 5
+                  : /\bdaily\b/.test(rowLower)
+                    ? 7
+                    : 2;
+            rowEps = Math.max(1, Math.round(((endMs - startMs) / (7 * 86400000)) * perWeek));
+          }
+        }
+        if (rowEps > 0 && sn >= 1 && sn <= 50) {
+          const airDate = dateIsos[0] || "";
+          allSeasons.push({ season: sn, episodes: rowEps, airDate });
           if (sponsorTokens.length > 0 && sponsorTokens.every((tk) => row.toLowerCase().includes(tk))) {
-            totalSponsor += rowEps;
+            sponsorSeasons.push({ season: sponsorSeasons.length + 1, episodes: rowEps, airDate });
+          }
+          nextS = sn + 1;
+        }
+      }
+      const sumSponsor = sponsorSeasons.reduce((acc, s) => acc + s.episodes, 0);
+      const sumAll = allSeasons.reduce((acc, s) => acc + s.episodes, 0);
+      const chosen = sumSponsor >= 5 ? sponsorSeasons : allSeasons;
+      let chosenTotal = sumSponsor >= 5 ? sumSponsor : sumAll;
+      if (chosenTotal >= 5) {
+        if (sumSponsor < 5 && Number(infoboxTotal) > chosenTotal && chosen.length >= 1) {
+          chosen[0].episodes += Number(infoboxTotal) - chosenTotal;
+          chosenTotal = Number(infoboxTotal);
+        }
+        if (usedExplicitEps || sumSponsor >= 5) {
+          return { seasonCounts: chosen, totalEpisodes: chosenTotal };
+        }
+        if (!dateEstimatedFallback) {
+          dateEstimatedFallback = { seasonCounts: chosen, totalEpisodes: chosenTotal };
+        }
+      }
+    }
+
+    // 3. Section == Season N == sub-infoboxes (`num_episodes = ...`)
+    const secParts = cleanWt.split(/^==+\s*(?:[^=\n]*?\b)?Season\s+([0-9]{1,2})\b[^=\n]*==+/im);
+    if (secParts.length >= 5) {
+      const secMap = new Map();
+      for (let i = 1; i < secParts.length - 1; i += 2) {
+        const sn = parseInt(secParts[i], 10);
+        const body = secParts[i + 1] || "";
+        const mEp = /num_episodes\s*=\s*([0-9][0-9,]*)/i.exec(body);
+        if (mEp && sn >= 1 && sn <= 50 && !secMap.has(sn)) {
+          const en = parseInt(mEp[1].replace(/,/g, ""), 10);
+          if (en >= 1 && en <= 5000) {
+            const mAir = /first_aired\s*=\s*([^\n|]+)/i.exec(body);
+            secMap.set(sn, { season: sn, episodes: en, airDate: mAir ? LiveCatalogService.parseWikiDateIso(mAir[1]) : "" });
           }
         }
       }
-      if (totalSponsor >= 5) return totalSponsor;
-      if (totalAll >= 5) return totalAll;
+      if (secMap.size >= 2) {
+        const list = Array.from(secMap.values()).sort((a, b) => a.season - b.season);
+        const sum = list.reduce((acc, s) => acc + s.episodes, 0);
+        return { seasonCounts: list, totalEpisodes: Number(infoboxTotal) > 0 ? Number(infoboxTotal) : sum };
+      }
     }
-    return 0;
+
+    if (dateEstimatedFallback) {
+      return dateEstimatedFallback;
+    }
+    return { seasonCounts: [], totalEpisodes: Number(infoboxTotal) || 0 };
+  }
+
+  static parseSeasonTableEpisodes(wt, queryTitle = "", pageTitle = "") {
+    return LiveCatalogService.parseSeasonBreakdown(wt, queryTitle, pageTitle, 0).totalEpisodes;
+  }
+
+  static buildEnrichedSeasonEpisodes({ existingEps = [], seasonCounts = [], totalEpisodes = 0, baseYear = 2015, runtimeMins = 22 } = {}) {
+    const cleanRt = Math.max(5, Number(runtimeMins) || 22);
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const currentYear = parseInt(todayIso.slice(0, 4), 10) || 2026;
+    const safeYear = Math.min(Math.max(Number(baseYear) || 2015, 1960), currentYear);
+    const fallbackPastDate = `${safeYear}-01-01` <= todayIso ? `${safeYear}-01-01` : "2020-01-01";
+
+    const existingMap = new Map();
+    for (const ep of Array.isArray(existingEps) ? existingEps : []) {
+      const s = Number(ep?.season) || 1;
+      const n = Number(ep?.number) || 1;
+      const key = `${s}:${n}`;
+      if (!existingMap.has(key)) existingMap.set(key, ep);
+    }
+
+    let targets = Array.isArray(seasonCounts) && seasonCounts.length > 0
+      ? seasonCounts.filter((s) => Number(s.season) >= 1 && Number(s.episodes) >= 1)
+      : [];
+    if (targets.length === 0) {
+      const tot = Math.max(1, Number(totalEpisodes) || existingEps.length || 1);
+      targets = [{ season: 1, episodes: tot, airDate: fallbackPastDate }];
+    }
+
+    const out = [];
+    for (const sc of targets) {
+      const sNum = Number(sc.season) || 1;
+      const eCount = Math.max(1, Number(sc.episodes) || 1);
+      const seasonStartIso =
+        sc.airDate && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(sc.airDate) && sc.airDate <= todayIso
+          ? sc.airDate
+          : fallbackPastDate;
+
+      let hasPastDatedInSeason = false;
+      for (let eNum = 1; eNum <= eCount; eNum++) {
+        const ex = existingMap.get(`${sNum}:${eNum}`);
+        if (ex?.airDate && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(ex.airDate) && ex.airDate <= todayIso) {
+          hasPastDatedInSeason = true;
+          break;
+        }
+      }
+
+      for (let eNum = 1; eNum <= eCount; eNum++) {
+        const code = `S${String(sNum).padStart(2, "0")}E${String(eNum).padStart(2, "0")}`;
+        const ex = existingMap.get(`${sNum}:${eNum}`);
+        if (ex) {
+          out.push({
+            ...ex,
+            code,
+            season: sNum,
+            number: eNum,
+            airDate: ex.airDate || (!hasPastDatedInSeason && eNum === 1 ? seasonStartIso : ""),
+            runtimeMins: Number(ex.runtimeMins) || cleanRt,
+          });
+        } else {
+          const epObj = {
+            code,
+            season: sNum,
+            number: eNum,
+            title: `Episode ${eNum}`,
+            runtimeMins: cleanRt,
+          };
+          if (!hasPastDatedInSeason && eNum === 1) {
+            epObj.airDate = seasonStartIso;
+          }
+          out.push(epObj);
+        }
+      }
+    }
+    return out;
   }
 
   /**
@@ -1880,7 +2089,17 @@ export class LiveCatalogService {
   static async lookupWikipediaShowMeta({ title = "", year = 0, imdbId = "", fetchImpl = fetch } = {}) {
     const cleanTitle = String(title || "").trim();
     const cleanImdb = /^tt\d+$/i.test(String(imdbId || "").trim()) ? String(imdbId).trim().toLowerCase() : "";
-    const out = { totalEpisodes: 0, runtimeMins: 0, year: 0, network: "", overview: "", posterUrl: "", status: "", isIndian: false };
+    const out = {
+      totalEpisodes: 0,
+      seasonCounts: [],
+      runtimeMins: 0,
+      year: 0,
+      network: "",
+      overview: "",
+      posterUrl: "",
+      status: "",
+      isIndian: false,
+    };
     if (!cleanTitle && !cleanImdb) return out;
     const wikiHeaders = { "User-Agent": "MovieDBTracker/1.0 (https://moviedb-website.madhavsankar.workers.dev)" };
 
@@ -1978,7 +2197,7 @@ export class LiveCatalogService {
         candidates.push(afterColonTitle, `${afterColonTitle} (Indian TV series)`, `${afterColonTitle} (TV series)`);
       }
       try {
-        const directUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(candidates.join("|"))}&prop=revisions|extracts|pageimages|categories&cllimit=30&exintro=1&explaintext=1&rvprop=content&rvsection=0&piprop=thumbnail&pithumbsize=500&format=json&redirects=1&origin=*`;
+        const directUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(candidates.join("|"))}&prop=revisions|extracts|pageimages|categories&cllimit=30&exintro=1&explaintext=1&rvprop=content&piprop=thumbnail&pithumbsize=500&format=json&redirects=1&origin=*`;
         const resp = await fetchImpl(directUrl, { headers: wikiHeaders });
         if (resp && resp.ok) {
           const data = await resp.json();
@@ -1990,10 +2209,11 @@ export class LiveCatalogService {
           for (const page of pages) {
             const rev = page.revisions?.[0];
             const wt = rev?.slots?.main?.["*"] || rev?.["*"] || "";
-            if (!/infobox\s+television/i.test(wt) && !/num_episodes/i.test(wt)) continue;
+            const leadWt = wt.split(/\n==/)[0] || wt;
+            if (!/infobox\s+television/i.test(leadWt) && !/num_episodes/i.test(leadWt)) continue;
             const prevYear = out.year;
-            parseInfoboxWikitext(wt);
-            if (Number(year) > 1950 && out.year === prevYear && /first_aired\s*=\s*[^\n]*?\b(19[5-9][0-9]|20[0-3][0-9])\b/i.test(wt)) {
+            parseInfoboxWikitext(leadWt);
+            if (Number(year) > 1950 && out.year === prevYear && /first_aired\s*=\s*[^\n]*?\b(19[5-9][0-9]|20[0-3][0-9])\b/i.test(leadWt)) {
               continue;
             }
             if (LiveCatalogService.hasIndianWikiCategories(page.categories)) out.isIndian = true;
@@ -2002,19 +2222,25 @@ export class LiveCatalogService {
               if (!out.overview) out.overview = String(page.extract).trim().slice(0, 500);
             }
             if (page.title && LiveCatalogService.isIndianSeriesMetadata(page.title)) out.isIndian = true;
+            if (out.network && LiveCatalogService.isIndianBroadcasterOrPlatform(out.network)) out.isIndian = true;
             if (page.thumbnail?.source && !out.posterUrl) {
               out.posterUrl = String(page.thumbnail.source);
             }
             matchedInfoboxPageId = Number(page.pageid) || 0;
             matchedInfoboxTitle = String(page.title || "");
+            const breakdown = LiveCatalogService.parseSeasonBreakdown(wt, cleanTitle, matchedInfoboxTitle, out.totalEpisodes);
+            if (breakdown.seasonCounts.length > 0) out.seasonCounts = breakdown.seasonCounts;
+            if (breakdown.totalEpisodes >= 5 && (out.totalEpisodes === 0 || breakdown.seasonCounts.length > 0)) {
+              out.totalEpisodes = Math.max(out.totalEpisodes, breakdown.totalEpisodes);
+              if (!out.status) out.status = "Ended";
+            }
             if (out.totalEpisodes > 0) break;
           }
         }
       } catch (_) {}
     }
 
-    // 1b. If an Indian Infobox television page lacked `num_episodes`, parse its full Wikipedia Season Table generically
-    if (out.totalEpisodes === 0 && out.isIndian && matchedInfoboxPageId > 0) {
+    if (out.totalEpisodes === 0 && out.seasonCounts.length === 0 && out.isIndian && matchedInfoboxPageId > 0) {
       try {
         const fullUrl = `https://en.wikipedia.org/w/api.php?action=query&pageids=${matchedInfoboxPageId}&prop=revisions&rvprop=content&format=json&origin=*`;
         const fResp = await fetchImpl(fullUrl, { headers: wikiHeaders });
@@ -2023,9 +2249,10 @@ export class LiveCatalogService {
           const fPage = fData?.query?.pages?.[String(matchedInfoboxPageId)];
           const fRev = fPage?.revisions?.[0];
           const fullWt = fRev?.slots?.main?.["*"] || fRev?.["*"] || "";
-          const tableEps = LiveCatalogService.parseSeasonTableEpisodes(fullWt, cleanTitle, matchedInfoboxTitle);
-          if (tableEps >= 15) {
-            out.totalEpisodes = tableEps;
+          const breakdown = LiveCatalogService.parseSeasonBreakdown(fullWt, cleanTitle, matchedInfoboxTitle, 0);
+          if (breakdown.seasonCounts.length > 0) out.seasonCounts = breakdown.seasonCounts;
+          if (breakdown.totalEpisodes >= 15) {
+            out.totalEpisodes = breakdown.totalEpisodes;
             if (!out.status) out.status = "Ended";
           }
         }
@@ -2058,10 +2285,23 @@ export class LiveCatalogService {
                 const pageTitleStr = String(page?.title || "");
                 const pageHasIndianCat = LiveCatalogService.hasIndianWikiCategories(page?.categories);
                 if (doesWikiPageMatchQuery(pageTitleStr)) {
-                  parseInfoboxWikitext(wt);
-                  if (out.totalEpisodes > 0) {
-                    if (pageHasIndianCat || LiveCatalogService.isIndianSeriesMetadata(pageTitleStr)) out.isIndian = true;
-                    break;
+                  const leadWt = wt.split(/\n==/)[0] || wt;
+                  const prevYr = out.year;
+                  parseInfoboxWikitext(leadWt);
+                  const yrRejected =
+                    Number(year) > 1950 && out.year === prevYr && /first_aired\s*=\s*[^\n]*?\b(19[5-9][0-9]|20[0-3][0-9])\b/i.test(leadWt);
+                  if (!yrRejected) {
+                    const breakdown = LiveCatalogService.parseSeasonBreakdown(wt, cleanTitle, pageTitleStr, out.totalEpisodes);
+                    if (breakdown.seasonCounts.length > 0) out.seasonCounts = breakdown.seasonCounts;
+                    if (breakdown.totalEpisodes >= 5 && (out.totalEpisodes === 0 || breakdown.seasonCounts.length > 0)) {
+                      out.totalEpisodes = Math.max(out.totalEpisodes, breakdown.totalEpisodes);
+                    }
+                    if (out.totalEpisodes > 0) {
+                      if (pageHasIndianCat || LiveCatalogService.isIndianSeriesMetadata(pageTitleStr) || LiveCatalogService.isIndianBroadcasterOrPlatform(out.network)) {
+                        out.isIndian = true;
+                      }
+                      break;
+                    }
                   }
                 }
                 const tables = wt.match(/\{\|[\s\S]*?\|\}/g) || [];
@@ -2257,23 +2497,38 @@ export class LiveCatalogService {
           }
         } catch (_) {}
         const resolvedTotal = Math.max(wikiMeta.totalEpisodes || 0, 1);
+        const resolvedRt = wikiMeta.runtimeMins || 22;
+        const isIndImdb = Boolean(
+          wikiMeta.isIndian || LiveCatalogService.isIndianBroadcasterOrPlatform(wikiMeta.network)
+        );
+        const enrichedImdbEps =
+          resolvedTotal > 1 || (wikiMeta.seasonCounts && wikiMeta.seasonCounts.length > 0)
+            ? LiveCatalogService.buildEnrichedSeasonEpisodes({
+                existingEps: [],
+                seasonCounts: wikiMeta.seasonCounts,
+                totalEpisodes: resolvedTotal,
+                baseYear: wikiMeta.year || imdbYear,
+                runtimeMins: resolvedRt,
+              })
+            : [];
         return {
           id: rawStr,
           tvmazeId: 0,
           tmdbId: 0,
           title: cleanTitle || "Untitled Show",
-          year: imdbYear,
+          year: wikiMeta.year || imdbYear,
           network: wikiMeta.network || "Television",
           status: wikiMeta.status || "Ended",
-          runtimeMins: wikiMeta.runtimeMins || 22,
+          runtimeMins: resolvedRt,
           genres: ["TV Series"],
           cast: imdbCast,
           rating: 8.0,
           posterUrl: imdbPoster || wikiMeta.posterUrl || "",
           overview: wikiMeta.overview || (imdbCast.length > 0 ? `TV Series · Starring ${imdbCast.join(", ")}` : "TV Series"),
-          totalEpisodes: resolvedTotal,
-          countOnly: true,
-          episodes: [],
+          totalEpisodes: Math.max(resolvedTotal, enrichedImdbEps.length),
+          isIndian: isIndImdb,
+          countOnly: enrichedImdbEps.length === 0,
+          episodes: enrichedImdbEps,
         };
       }
     }
@@ -2430,7 +2685,11 @@ export class LiveCatalogService {
             const hasSeasonGap = sNums.length > 0 && (minS > 1 || maxS - minS + 1 > sNums.length);
             const hasBrokenSeasons = nonFinalStubSeasons > 0 || hasSeasonGap;
             const hasCompleteMultiSeasonGuide = sNums.length >= 2 && !hasBrokenSeasons;
-            const tmdbIsIndian = originCountries.includes("IN") || indianLangSet.has(origLang);
+            const tmdbIsIndian =
+              originCountries.includes("IN") ||
+              indianLangSet.has(origLang) ||
+              LiveCatalogService.isIndianBroadcasterOrPlatform(rawNet) ||
+              LiveCatalogService.isIndianBroadcasterOrPlatform(network);
             const tmdbExplicitlyNonIndian =
               episodes.length > 0 &&
               !tmdbIsIndian &&
@@ -2442,7 +2701,7 @@ export class LiveCatalogService {
             if (lacksDetailedGuide && !tmdbExplicitlyNonIndian) {
               const wikiMeta = await LiveCatalogService.lookupWikipediaShowMeta({
                 title: show.name || cleanTitle,
-                year: firstAir ? year : 0,
+                year: firstAir && episodes.length >= 2 ? year : 0,
                 fetchImpl,
               });
               const wikiConfirmedTotal = Number(wikiMeta.totalEpisodes) || 0;
@@ -2456,23 +2715,33 @@ export class LiveCatalogService {
                     : yearVerifiedForCleanSingleSeason && wikiConfirmedTotal >= 60 && wikiConfirmedTotal >= episodes.length * 4;
               if ((tmdbIsIndian || wikiMeta.isIndian) && meetsSerialThreshold) {
                 const hasExplicitTmdbRt = Array.isArray(show.episode_run_time) && Number(show.episode_run_time[0]) > 0;
+                const resolvedRt = hasExplicitTmdbRt ? defaultRuntime : wikiMeta.runtimeMins || 22;
+                const resolvedYr = firstAir ? year : wikiMeta.year || year;
+                const enrichedEps = LiveCatalogService.buildEnrichedSeasonEpisodes({
+                  existingEps: episodes,
+                  seasonCounts: wikiMeta.seasonCounts,
+                  totalEpisodes: wikiConfirmedTotal,
+                  baseYear: wikiMeta.year || resolvedYr,
+                  runtimeMins: resolvedRt,
+                });
                 return {
                   id: `tmdb_tv_${show.id}`,
                   tvmazeId: 0,
                   tmdbId: show.id,
                   title: show.name || "Untitled Show",
-                  year: firstAir ? year : wikiMeta.year || year,
+                  year: resolvedYr,
                   network: wikiMeta.network && network === "Streaming" ? wikiMeta.network : network,
                   status: wikiMeta.status || show.status || "Running",
-                  runtimeMins: hasExplicitTmdbRt ? defaultRuntime : wikiMeta.runtimeMins || 22,
+                  runtimeMins: resolvedRt,
                   genres: (show.genres || []).map((g) => g?.name).filter(Boolean),
                   cast: castList,
                   rating: show.vote_average ? Math.round(Number(show.vote_average) * 10) / 10 : 8.0,
                   posterUrl: posterUrl || wikiMeta.posterUrl || "",
                   overview: stripHtml(show.overview) || wikiMeta.overview || "",
-                  totalEpisodes: wikiConfirmedTotal,
-                  countOnly: true,
-                  episodes: [],
+                  totalEpisodes: Math.max(wikiConfirmedTotal, enrichedEps.length),
+                  isIndian: true,
+                  countOnly: false,
+                  episodes: enrichedEps,
                 };
               }
             }
@@ -2491,6 +2760,7 @@ export class LiveCatalogService {
               rating: show.vote_average ? Math.round(Number(show.vote_average) * 10) / 10 : 8.0,
               posterUrl,
               overview: stripHtml(show.overview),
+              isIndian: tmdbIsIndian,
               episodes,
             };
           }

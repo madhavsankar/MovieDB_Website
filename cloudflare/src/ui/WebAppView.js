@@ -1572,6 +1572,27 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         window.location.reload();
       }
 
+      isIndianShow(item) {
+        if (!item || typeof item !== "object") return false;
+        if (item.isIndian || item.countOnly || String(item.id || "").startsWith("imdb_tv_")) return true;
+        const net = String(item.network || "").toLowerCase();
+        if (!net) return false;
+        const tokens = [
+          "india", "indian", "starplus", "star plus", "star one", "star bharat", "star vijay",
+          "vijay tv", "star maa", "star jalsha", "star pravah", "star suvarna", "life ok",
+          "channel v", "bindass", "zee tv", "zee5", "zee keralam", "zee tamil", "zee telugu",
+          "zee kannada", "zee bangla", "zee marathi", "colors", "sony sab", "sab tv", "sonyliv",
+          "sony entertainment television", "asianet", "flowers", "surya tv", "mazhavil", "kairali",
+          "amrita", "sun tv", "udaya", "etv", "karikku", "tvf", "viral fever", "dice media",
+          "filtercopy", "jiocinema", "jiohotstar", "hotstar", "aha", "hoichoi", "mx player",
+          "voot", "altbalaji", "minitv", "doordarshan", "dd national", "sahara one", "hungama"
+        ];
+        for (const tk of tokens) {
+          if (net.includes(tk)) return true;
+        }
+        return false;
+      }
+
       isSyntheticEpisodeList(eps) {
         if (!Array.isArray(eps) || eps.length === 0) return true;
         if (eps.length === 1) {
@@ -1720,6 +1741,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         };
         if (s.lastWatchedAt) {
           base.lastWatchedAt = String(s.lastWatchedAt);
+        }
+        if (s.isIndian || this.isIndianShow(s)) {
+          base.isIndian = true;
         }
         const hasRealEpisodeGuide = eps.length > 0 && !this.isSyntheticEpisodeList(eps);
         if (!hasRealEpisodeGuide && (Boolean(s.countOnly) || String(s.id || "").startsWith("imdb_tv_"))) {
@@ -1870,7 +1894,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
           ...base,
           totalEpisodes: Math.max(computedTotal, eps.length),
           watchedEpisodes: watchedOutsideComp,
-          episodes: eps,
+          episodes: eps.length > 1 ? [] : eps,
         };
         if (Object.keys(completedSeasons).length > 0) {
           out.completedSeasons = completedSeasons;
@@ -4741,6 +4765,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                 target.totalEpisodes = Math.max(Number(full.totalEpisodes) || 1, 1);
                 target.countOnly = true;
               }
+              if (full.isIndian) target.isIndian = true;
               if (full.runtimeMins && Number(full.runtimeMins) > 0) target.runtimeMins = Number(full.runtimeMins);
               if (full.posterUrl && !target.posterUrl) target.posterUrl = full.posterUrl;
               if (full.tvmazeId && !target.tvmazeId) target.tvmazeId = full.tvmazeId;
@@ -4898,6 +4923,10 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                     show.watchedEpisodes = [];
                     show.completedSeasons = {};
                   }
+                  changed = true;
+                }
+                if (full.isIndian && !show.isIndian) {
+                  show.isIndian = true;
                   changed = true;
                 }
                 if (full.tvmazeId && !show.tvmazeId) {
@@ -5526,6 +5555,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               if (res.ok) {
                 const full = await res.json();
                 if (full && Array.isArray(full.episodes) && full.episodes.length > 0) {
+                  if (full.isIndian) show.isIndian = true;
                   show.episodes = full.episodes
                     .map((e) => this.compactEpisode(e))
                     .sort((a, b) => (Number(a.season || 1) - Number(b.season || 1)) || (Number(a.number || 1) - Number(b.number || 1)));
@@ -5533,6 +5563,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   delete show.countOnly;
                   curEps = show.episodes;
                 } else if (full && full.countOnly && Number(full.totalEpisodes) > 0) {
+                  if (full.isIndian) show.isIndian = true;
                   show.episodes = [];
                   show.totalEpisodes = Math.max(Number(full.totalEpisodes) || 1, 1);
                   show.countOnly = true;
@@ -5545,7 +5576,9 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const sortedEps = [...curEps].sort(
           (a, b) => (Number(a.season || 1) - Number(b.season || 1)) || (Number(a.number || 1) - Number(b.number || 1))
         );
-        const hasRealGuide = sortedEps.length > 0 && !this.isSyntheticEpisodeList(sortedEps) && !show.countOnly;
+        const hasRealGuide =
+          sortedEps.length > 1 ||
+          (sortedEps.length === 1 && !this.isSyntheticEpisodeList(sortedEps) && !show.countOnly);
         if (hasRealGuide) {
           const compObj =
             show.completedSeasons && typeof show.completedSeasons === "object" && !Array.isArray(show.completedSeasons)
@@ -5600,6 +5633,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         }
         show.lastWatchedAt = new Date().toISOString();
         await this.persistState();
+      }
+
+      expandSeasonEpisodes(seasonNum) {
+        if (!this.seasonRenderLimits) this.seasonRenderLimits = {};
+        const key = String(seasonNum);
+        const cur = Number(this.seasonRenderLimits[key]) || 200;
+        this.seasonRenderLimits[key] = cur + 300;
+        this.renderDetailSheet();
       }
 
       renderDetailSheet() {
@@ -5717,26 +5758,31 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
         const progForCount = this.computeShowProgress(item);
         const isCountOnlySeries =
           (Boolean(item.countOnly) || String(item.id || "").startsWith("imdb_tv_")) &&
-          (episodes.length === 0 || this.isSyntheticEpisodeList(episodes));
+          (episodes.length === 0 || (episodes.length === 1 && this.isSyntheticEpisodeList(episodes)));
+        const isIndianSeries = this.isIndianShow(item);
+        const showWatchedCountCard = isIndianSeries || isCountOnlySeries;
         const isPlaceholderSingleEp =
           episodes.length === 1 && episodes[0].title === "Pilot" && (Number(item.totalEpisodes) || 0) <= 1;
-        if (item._loadingGuide && !isCountOnlySeries && (episodes.length === 0 || isPlaceholderSingleEp)) {
-          bodyEl.innerHTML =
-            html +
-            '<p class="text-xs text-zinc-400 text-center py-8">Loading seasons &amp; episodes...</p>';
-          return;
-        }
-        if (isCountOnlySeries) {
-          const curT = Math.max(progForCount.total, 1);
+        if (showWatchedCountCard) {
+          const airedCountInGuide = episodes.filter(
+            (e) => !unairedCodes.has(String(e.code || "").trim().toUpperCase())
+          ).length;
+          const curT = isCountOnlySeries
+            ? Math.max(progForCount.total, 1)
+            : Math.max(airedCountInGuide, progForCount.total, 1);
           const curW = Math.min(progForCount.watchedCount, curT);
           const barPct = Math.min(100, Math.round((curW / curT) * 100));
+          const subCaption =
+            episodes.length === 0
+              ? "Confirmed total: " + curT + " episodes"
+              : "Enter how many episodes you watched (of " + curT + " aired)";
           html +=
-            '<div class="tv-card rounded-2xl p-4 space-y-3.5">' +
+            '<div class="tv-card rounded-2xl p-4 space-y-3 mb-3">' +
             '<div class="flex items-center justify-between">' +
             '<div><h3 class="text-sm font-extrabold text-white">📺 Watched Episode Count</h3>' +
-            '<p class="text-[11px] text-zinc-400">Confirmed total: ' +
-            curT +
-            " episodes</p></div>" +
+            '<p class="text-[11px] text-zinc-400">' +
+            subCaption +
+            "</p></div>" +
             '<span class="px-2.5 py-1 rounded-full bg-zinc-800 text-xs font-black tv-yellow-text">' +
             curW +
             " / " +
@@ -5747,7 +5793,7 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             '<div class="h-full bg-emerald-500 rounded-full" style="width:' +
             barPct +
             '%"></div></div>' +
-            '<div class="flex items-end gap-2.5 pt-1">' +
+            '<div class="flex items-end gap-2.5 pt-0.5">' +
             '<div class="flex-1"><label class="block text-[10px] font-bold uppercase text-zinc-400 mb-1">Watched Episodes (of ' +
             curT +
             ")</label>" +
@@ -5763,6 +5809,14 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
             '&quot;, document.getElementById(&quot;count-only-watched-input&quot;).value)" class="px-5 py-2.5 rounded-xl tv-yellow-bg text-xs font-extrabold shrink-0">Save</button>' +
             "</div>" +
             "</div>";
+        }
+        if (item._loadingGuide && (episodes.length === 0 || isPlaceholderSingleEp)) {
+          bodyEl.innerHTML =
+            html +
+            '<p class="text-xs text-zinc-400 text-center py-8">Loading seasons &amp; episodes...</p>';
+          return;
+        }
+        if (isCountOnlySeries && episodes.length === 0) {
           bodyEl.innerHTML = html;
           return;
         }
@@ -5824,7 +5878,13 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
               html +=
                 '<div class="py-2 text-[11px] font-medium text-zinc-400">Tip: Long-press (or right-click) any episode tick to mark all episodes till there.</div>';
             }
-            for (const ep of sEps) {
+            const baseLimit = Math.max(200, watchedInSeason < sEps.length ? watchedInSeason + 50 : 200);
+            const curLimit = Math.max(
+              baseLimit,
+              Number((this.seasonRenderLimits || {})[String(seasonNum)]) || 0
+            );
+            const visibleSeasonEps = sEps.length > curLimit ? sEps.slice(0, curLimit) : sEps;
+            for (const ep of visibleSeasonEps) {
               const epCodeUpper = String(ep.code || "").trim().toUpperCase();
               const isUnaired = unairedCodes.has(epCodeUpper);
               const isWatched =
@@ -5905,6 +5965,16 @@ export const WEB_APP_HTML = String.raw`<!DOCTYPE html>
                   "</button>" +
                   "</div>";
               }
+            }
+            if (sEps.length > visibleSeasonEps.length) {
+              html +=
+                '<div class="pt-3 pb-1 text-center"><button type="button" onclick="app.expandSeasonEpisodes(' +
+                seasonNum +
+                ')" class="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-zinc-200 transition">Load more episodes (' +
+                visibleSeasonEps.length +
+                " of " +
+                sEps.length +
+                " shown)</button></div>";
             }
             html += "</div>";
           }

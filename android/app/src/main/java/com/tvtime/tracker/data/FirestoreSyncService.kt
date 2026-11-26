@@ -112,11 +112,16 @@ object FirestoreSyncService {
         val extId = s.optString("id", "show_$fallbackIdx")
         val rawTotal = s.optInt("totalEpisodes", 0).coerceAtLeast(0)
         val isCountOnly = parsedEps.isEmpty() && (s.optBoolean("countOnly", false) || extId.startsWith("imdb_tv_"))
+        val isIndianShow = s.optBoolean("isIndian", false) ||
+            s.optBoolean("countOnly", false) ||
+            extId.startsWith("imdb_tv_") ||
+            LiveMediaCatalogService.isIndianBroadcasterOrKnown(s.optString("network", ""), s.optInt("tmdbId", 0))
         val episodesJson = TvTimeProgressCalculator.serializeCompactedMeta(
             totalEpisodes = rawTotal,
             completedSeasons = compMap,
             episodes = parsedEps,
-            countOnly = isCountOnly
+            countOnly = isCountOnly,
+            isIndian = isIndianShow
         )
         return ShowEntity(
             userId = userId,
@@ -206,6 +211,9 @@ object FirestoreSyncService {
             put("posterUrl", s.posterUrl)
             put("userStatus", effStatus)
             if (s.lastWatchedAt.isNotBlank()) put("lastWatchedAt", s.lastWatchedAt)
+            if (meta.isIndian || meta.countOnly || s.externalId.startsWith("imdb_tv_") || LiveMediaCatalogService.isIndianBroadcasterOrKnown(s.network, s.tmdbId)) {
+                put("isIndian", true)
+            }
             if (meta.episodes.isEmpty() && (meta.countOnly || s.externalId.startsWith("imdb_tv_"))) {
                 put("countOnly", true)
             }

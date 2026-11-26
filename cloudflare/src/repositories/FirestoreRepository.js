@@ -29,6 +29,14 @@ export class FirestoreRepository {
     return FirestoreRepository.sanitizeUserId(userId);
   }
 
+  static isIndianBroadcasterOrPlatform(text) {
+    const s = String(text || "").trim();
+    if (!s) return false;
+    return /\b(india|indian|starplus|star\s+plus|star\s+one|star\s+bharat|star\s+vijay|vijay\s+tv|star\s+maa|star\s+jalsha|star\s+pravah|star\s+suvarna|life\s+ok|channel\s+v|bindass|zee\s*tv|zee5|zee\s+keralam|zee\s+tamil|zee\s+telugu|zee\s+kannada|zee\s+bangla|zee\s+marathi|colors|sony\s+sab|sab\s+tv|sonyliv|sony\s+entertainment\s+television|asianet|flowers\s*tv|surya\s+tv|mazhavil|kairali|amrita\s+tv|sun\s+tv|udaya\s+tv|etv|karikku|tvf|viral\s+fever|dice\s+media|filtercopy|jiocinema|jiohotstar|hotstar|aha|hoichoi|mx\s+player|voot|altbalaji|minitv|doordarshan|dd\s+national|sahara\s+one|hungama)\b/i.test(
+      s
+    );
+  }
+
   static isSyntheticEpisodeList(eps) {
     if (!Array.isArray(eps) || eps.length === 0) return true;
     if (eps.length === 1) {
@@ -189,6 +197,9 @@ export class FirestoreRepository {
     if (s.lastWatchedAt) {
       base.lastWatchedAt = String(s.lastWatchedAt);
     }
+    if (s.isIndian || s.countOnly || String(s.id || "").startsWith("imdb_tv_") || FirestoreRepository.isIndianBroadcasterOrPlatform(base.network)) {
+      base.isIndian = true;
+    }
     const hasRealEpisodeGuide = eps.length > 0 && !FirestoreRepository.isSyntheticEpisodeList(eps);
     if (!hasRealEpisodeGuide && (Boolean(s.countOnly) || String(s.id || "").startsWith("imdb_tv_"))) {
       base.countOnly = true;
@@ -347,7 +358,7 @@ export class FirestoreRepository {
       ...base,
       totalEpisodes: Math.max(computedTotal, eps.length),
       watchedEpisodes: watchedOutsideComp,
-      episodes: eps,
+      episodes: eps.length > 1 ? [] : eps,
     };
     if (Object.keys(completedSeasons).length > 0) {
       out.completedSeasons = completedSeasons;
