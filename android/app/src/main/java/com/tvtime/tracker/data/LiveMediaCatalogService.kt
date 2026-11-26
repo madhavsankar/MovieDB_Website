@@ -1694,7 +1694,7 @@ object LiveMediaCatalogService {
                 val hCells = headerLines[0]
                     .split(Regex("!!|\\n!"))
                     .map { it.trimStart('!', '|', ' ').trim() }
-                    .filter { it.isNotEmpty() && !it.startsWith("class=", true) && !it.startsWith("style=", true) }
+                    .filter { it.isNotEmpty() && !it.startsWith("class=", true) && (it.contains("|") || !it.startsWith("style=", true)) }
                     .map { if (it.contains("|")) it.substringAfterLast("|").trim() else it }
                 headerEpIdx = hCells.indexOfFirst { Regex("\\bepisodes?\\b", RegexOption.IGNORE_CASE).containsMatchIn(it) }
             }

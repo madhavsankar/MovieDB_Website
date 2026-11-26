@@ -1897,7 +1897,7 @@ export class LiveCatalogService {
         const hCells = headerLines[0]
           .split(/!!|\n!/)
           .map((c) => c.replace(/^[\s!|]+/, "").trim())
-          .filter((c) => c && !/^class\s*=/i.test(c) && !/^style\s*=/i.test(c))
+          .filter((c) => c && !/^\{?\|?\s*class\s*=/i.test(c) && (c.includes("|") || !/^style\s*=/i.test(c)))
           .map((c) => (c.includes("|") ? c.split("|").pop().trim() : c));
         headerEpIdx = hCells.findIndex((c) => /\bepisodes?\b/i.test(c));
       }
